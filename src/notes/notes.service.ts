@@ -1,3 +1,4 @@
+import { joursDepuis } from '../common/jours';
 import {
   BadRequestException,
   Injectable,
@@ -1181,8 +1182,7 @@ export class NotesService {
     const lots = new Map((await this.lots.find()).map((l) => [l.id, l]));
     const lib = (n: NoteService) =>
       this.libelle(n, n.lotPublicationId ? lots.get(n.lotPublicationId) : null);
-    const jours = (d: Date | null) =>
-      d ? Math.floor((Date.now() - new Date(d).getTime()) / 86400000) : null;
+    const jours = (d: Date | null) => joursDepuis(d);
     const notes: {
       id: string;
       libelle: string;

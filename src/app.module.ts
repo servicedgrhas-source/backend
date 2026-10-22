@@ -33,6 +33,7 @@ import {
 import { DashboardController } from './dashboard.controller';
 import { ENTITES } from './entities';
 import { optionsBase } from './base-de-donnees';
+import { SessionService } from './auth/session.service';
 import { AmorcageService } from './amorcage/amorcage.service';
 import { AmorcageController } from './amorcage/amorcage.controller';
 import { MutationController } from './mutation/mutation.controller';
@@ -81,6 +82,7 @@ import { RecrutementController } from './recrutement/recrutement.controller';
   ],
   providers: [
     { provide: APP_GUARD, useClass: AuthGuard },
+    SessionService,
     JournalService,
     ParametresService,
     InitialisationService,

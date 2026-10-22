@@ -1,9 +1,13 @@
 import { Controller, Get } from '@nestjs/common';
 import { InjectDataSource } from '@nestjs/typeorm';
 import { DataSource } from 'typeorm';
-import { Public } from './auth/auth';
+import { Public, Roles, ROLES_TRAITEMENT } from './auth/auth';
 
 type Ligne = Record<string, string | number | null>;
+
+// IS NOT DISTINCT FROM : vrai ou faux, jamais NULL (sinon NOT (…) perd les demandes sans décision)
+const ACCORDEE = `(decision IS NOT DISTINCT FROM 'ACCORDEE' OR (decision IS NULL AND "instructionMinistre" IS NOT DISTINCT FROM 'ACCORDEE'))`;
+const REFUSEE = `(decision IS NOT DISTINCT FROM 'REJETEE' OR (decision IS NULL AND "instructionMinistre" IS NOT DISTINCT FROM 'REFUSEE'))`;
 
 @Controller()
 export class DashboardController {
@@ -45,6 +49,11 @@ export class DashboardController {
     return c;
   }
 
+  /**
+   * Tableau de bord de la DGRHAS (chiffres de tout le pays). Les comptes du circuit
+   * (DDEPPSA, cabinet, secrétariat) ont le leur : GET circuit/tableau.
+   */
+  @Roles(...ROLES_TRAITEMENT)
   @Get('tableau-de-bord')
   async tableau() {
     const [agents] = await this.db.query<Ligne[]>(`
@@ -61,12 +70,16 @@ export class DashboardController {
     const [recos] = await this.db.query<Ligne[]>(
       `SELECT count(*) FILTER (WHERE statut = 'EN_ATTENTE')::int AS "enAttente", count(*)::int AS total FROM recommandation`,
     );
+    // Demandes retirées exclues ; état : décision du circuit, sinon instruction des anciens dossiers
+    // (mêmes règles que la liste des mutations : total = en cours + en instance + accordées + refusées)
     const [mutations] = await this.db.query<Ligne[]>(`
       SELECT count(*)::int AS total,
-        count(*) FILTER (WHERE NOT retiree AND "instructionMinistre" = 'ACCORDEE')::int AS accordees,
-        count(*) FILTER (WHERE NOT retiree AND "instructionMinistre" = 'REFUSEE')::int AS refusees,
-        count(*) FILTER (WHERE NOT retiree AND "instructionMinistre" IS NULL)::int AS "enCours"
-      FROM demande_mutation`);
+        count(*) FILTER (WHERE ${ACCORDEE})::int AS accordees,
+        count(*) FILTER (WHERE ${REFUSEE})::int AS refusees,
+        count(*) FILTER (WHERE decision = 'EN_INSTANCE')::int AS "enInstance",
+        count(*) FILTER (WHERE NOT ${ACCORDEE} AND NOT ${REFUSEE}
+                           AND decision IS DISTINCT FROM 'EN_INSTANCE')::int AS "enCours"
+      FROM demande_mutation WHERE NOT retiree`);
     // Textes reçus par paquet (un envoi de la FP)
     const lots = await this.db.query<Ligne[]>(`
       SELECT p.numero, p."dateReception"::text AS "dateReception", count(a.id)::int AS agents,

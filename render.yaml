@@ -27,6 +27,8 @@ services:
         sync: false
       - key: JWT_SECRET
         sync: false
+      - key: CODE_SECRET
+        sync: false
       - key: ADMIN_EMAIL
         sync: false
       - key: ADMIN_PASSWORD

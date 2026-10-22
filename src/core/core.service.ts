@@ -1,4 +1,5 @@
 import { sqlLibelleLot } from '../common/lots';
+import { rechiffrerCode } from '../common/code-personnel';
 import {
   BadRequestException,
   Injectable,
@@ -322,7 +323,7 @@ export class InitialisationService implements OnApplicationBootstrap {
       const mdp = this.config.get<string>('ADMIN_PASSWORD');
       if (email && mdp) {
         await this.users.insert({
-          email: email.toLowerCase(),
+          email: email.trim().toLowerCase(),
           nom: 'Administrateur',
           initiales: 'ADM',
           role: 'ADMIN',
@@ -334,6 +335,27 @@ export class InitialisationService implements OnApplicationBootstrap {
           'Aucun utilisateur : définissez ADMIN_EMAIL et ADMIN_PASSWORD',
         );
       }
+    }
+
+    // CODE_SECRET ajouté : les codes encore chiffrés avec l'ancienne clé passent sur la nouvelle
+    if (process.env.CODE_SECRET) {
+      const avecCode = await this.users
+        .createQueryBuilder('u')
+        .select(['u.id', 'u.codeChiffre'])
+        .where('u.codeChiffre IS NOT NULL')
+        .getMany();
+      let n = 0;
+      for (const u of avecCode) {
+        const nouveau = rechiffrerCode(u.codeChiffre!);
+        if (nouveau) {
+          await this.users.update(u.id, { codeChiffre: nouveau });
+          n++;
+        }
+      }
+      if (n)
+        this.logger.log(
+          `${n} code(s) personnel(s) re-chiffré(s) avec CODE_SECRET`,
+        );
     }
   }
 }

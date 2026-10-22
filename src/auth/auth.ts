@@ -8,9 +8,9 @@ import {
   UnauthorizedException,
 } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
-import { JwtService } from '@nestjs/jwt';
 import type { Request } from 'express';
 import type { Role } from '../entities';
+import { SessionService } from './session.service';
 
 export interface UtilisateurConnecte {
   id: string;
@@ -20,6 +20,8 @@ export interface UtilisateurConnecte {
   role: Role;
   departementId: number | null;
   structureId?: number | null;
+  /** A un code personnel (sinon, invitation à en créer un). */
+  aCode?: boolean;
 }
 
 const CLE_PUBLIC = 'public';
@@ -70,7 +72,7 @@ export const ROLES_CONTROLE: Role[] = [
 @Injectable()
 export class AuthGuard implements CanActivate {
   constructor(
-    private readonly jwt: JwtService,
+    private readonly sessions: SessionService,
     private readonly reflector: Reflector,
   ) {}
 
@@ -83,13 +85,10 @@ export class AuthGuard implements CanActivate {
       .switchToHttp()
       .getRequest<Request & { user?: UtilisateurConnecte }>();
     const entete = req.headers.authorization ?? '';
-    const jeton = entete.startsWith('Bearer ') ? entete.slice(7) : null;
+    const jeton = entete.startsWith('Bearer ') ? entete.slice(7).trim() : null;
     if (!jeton) throw new UnauthorizedException('Authentification requise');
-    try {
-      req.user = await this.jwt.verifyAsync<UtilisateurConnecte>(jeton);
-    } catch {
-      throw new UnauthorizedException('Session expirée, reconnectez-vous');
-    }
+    // Le compte est relu en base : désactivation, rôle et sessions fermées valent tout de suite
+    req.user = await this.sessions.profilDuJeton(jeton);
 
     const roles = this.reflector.getAllAndOverride<Role[]>(CLE_ROLES, cibles);
     // Comptes des structures (écoles, inspections…) : seulement les routes qui les citent

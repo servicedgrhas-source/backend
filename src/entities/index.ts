@@ -61,6 +61,18 @@ export class Utilisateur {
     string | null;
   @Column({ type: 'timestamptz', nullable: true }) codeCreeLe: Date | null;
   @Column({ default: true }) actif: boolean;
+  /**
+   * Version des sessions : chaque jeton porte la version du moment où il a été donné.
+   * L'augmenter ferme toutes les sessions ouvertes (mot de passe ou code changé, « déconnecter »).
+   */
+  @Column({ type: 'int', default: 0, select: false }) versionSession: number;
+  /** Échecs de connexion d'affilée (remis à zéro à la connexion réussie). */
+  @Column({ type: 'int', default: 0, select: false }) echecsConnexion: number;
+  /** Heure du dernier échec : les échecs comptent sur une fenêtre de 15 minutes. */
+  @Column({ type: 'timestamptz', nullable: true, select: false })
+  dernierEchec: Date | null;
+  /** Trop d'échecs : connexion refusée jusqu'à cette heure. */
+  @Column({ type: 'timestamptz', nullable: true }) bloqueJusqua: Date | null;
   @CreateDateColumn() creeLe: Date;
 }
 

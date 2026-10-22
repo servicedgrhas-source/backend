@@ -49,7 +49,22 @@ npm run migration:generer -- src/migrations/NomDuChangement   # contre une base 
 npm run migration:jouer                                        # ou au prochain démarrage
 ```
 
+### Connexion et sessions
+
+- Connexion : e-mail + mot de passe + code personnel (si le compte en a un).
+- **10 essais ratés en 15 minutes** : le compte est bloqué 15 minutes (même avec le bon mot de
+  passe). L'administrateur ou le DG peut le débloquer (Administration → « Débloquer »).
+  Depuis une même adresse, 60 échecs en 15 minutes bloquent l'adresse 15 minutes.
+- Le compte est relu en base à chaque requête : désactivation et changement de rôle valent
+  tout de suite. Mot de passe ou code changé, ou « Déconnecter » : les sessions ouvertes se ferment.
+- Il reste toujours au moins un administrateur actif ; personne ne change son propre rôle
+  ni ne désactive son propre compte.
+- Tous les refus et blocages sont au journal (`CONNEXION_REFUSEE`, `CONNEXION_BLOQUEE`).
+
 ### Secrets
 
-`JWT_SECRET` ne doit **jamais** changer une fois en service : il chiffre aussi les codes
-personnels. Ne jamais versionner `.env`.
+- `JWT_SECRET` signe les sessions. `CODE_SECRET` chiffre les codes personnels.
+- Sans `CODE_SECRET`, les codes sont chiffrés avec `JWT_SECRET` : dans ce cas, ne pas changer
+  `JWT_SECRET`. Pour pouvoir le changer : ajouter `CODE_SECRET`, redémarrer (les codes sont
+  re-chiffrés), puis changer `JWT_SECRET` (tout le monde devra se reconnecter).
+- Ne jamais changer `CODE_SECRET` une fois en service. Ne jamais versionner `.env`.

@@ -4,26 +4,34 @@ import {
   Body,
   Controller,
   Get,
+  HttpCode,
+  Ip,
   NotFoundException,
   Param,
+  ParseUUIDPipe,
   Post,
   Put,
   Query,
-  UnauthorizedException,
+  Res,
 } from '@nestjs/common';
-import { JwtService } from '@nestjs/jwt';
 import { InjectRepository } from '@nestjs/typeorm';
 import * as bcrypt from 'bcryptjs';
 import {
+  ArrayMaxSize,
+  IsArray,
   IsBoolean,
   IsEmail,
   IsIn,
   IsInt,
   IsOptional,
   IsString,
+  IsUUID,
+  MaxLength,
   MinLength,
 } from 'class-validator';
-import { Repository } from 'typeorm';
+import type { Response } from 'express';
+import { Not, Repository } from 'typeorm';
+import { SessionService } from '../auth/session.service';
 import {
   Public,
   Roles,
@@ -52,31 +60,55 @@ import {
 } from '../entities';
 import { JournalService, ParametresService } from './core.service';
 
+/** Longueurs maximales : un envoi démesuré est refusé avant tout calcul. */
 class ConnexionDto {
-  @IsString() email: string;
-  @IsString() motDePasse: string;
+  @IsString() @MaxLength(254, { message: 'E-mail trop long.' }) email: string;
+  @IsString()
+  @MaxLength(128, {
+    message: 'Mot de passe trop long (128 caractères au plus).',
+  })
+  motDePasse: string;
   /** Code personnel de 12 caractères (avec ou sans tirets). */
-  @IsOptional() @IsString() code?: string;
+  @IsOptional()
+  @IsString()
+  @MaxLength(32, { message: 'Code personnel trop long.' })
+  code?: string;
 }
 
 /** Voir ou régénérer des codes personnels : l'administrateur ou le DG confirme avec son mot de passe et son code. */
 class CodesDto {
   @IsIn(['voir', 'regenerer']) action: 'voir' | 'regenerer';
   /** Comptes choisis ; sans liste : tous les comptes sauf celui qui demande. */
-  @IsOptional() @IsString({ each: true }) ids?: string[];
-  @IsString() motDePasse: string;
-  @IsOptional() @IsString() code?: string;
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(1000)
+  @IsUUID('all', { each: true, message: 'Liste de comptes invalide.' })
+  ids?: string[];
+  @IsString() @MaxLength(128) motDePasse: string;
+  @IsOptional() @IsString() @MaxLength(32) code?: string;
 }
 
 class UtilisateurDto {
-  @IsEmail() email: string;
-  @IsString() @MinLength(2) nom: string;
-  @IsOptional() @IsString() initiales?: string;
+  @IsEmail({}, { message: 'Adresse e-mail invalide.' })
+  @MaxLength(254, { message: 'E-mail trop long.' })
+  email: string;
+  @IsString()
+  @MinLength(2, { message: 'Nom trop court.' })
+  @MaxLength(120, { message: 'Nom trop long (120 caractères au plus).' })
+  nom: string;
+  @IsOptional()
+  @IsString()
+  @MaxLength(10, { message: 'Initiales : 10 caractères au plus.' })
+  initiales?: string;
   @IsIn(ROLES) role: Role;
   @IsOptional() @IsInt() departementId?: number | null;
   /** Structure de l'organigramme (école, inspection, bureau de la DGRHAS…). */
   @IsOptional() @IsInt() structureId?: number | null;
-  @IsOptional() @IsString() @MinLength(8) motDePasse?: string;
+  @IsOptional()
+  @IsString()
+  @MinLength(8, { message: 'Mot de passe : 8 caractères au moins.' })
+  @MaxLength(128, { message: 'Mot de passe : 128 caractères au plus.' })
+  motDePasse?: string;
   @IsOptional() @IsBoolean() actif?: boolean;
 }
 
@@ -89,7 +121,7 @@ export class CoreController {
     private readonly deps: Repository<Departement>,
     @InjectRepository(RegleDiplome)
     private readonly regles: Repository<RegleDiplome>,
-    private readonly jwt: JwtService,
+    private readonly sessions: SessionService,
     private readonly journal: JournalService,
     private readonly params: ParametresService,
   ) {}
@@ -98,50 +130,33 @@ export class CoreController {
 
   @Public()
   @Post('auth/connexion')
-  async connexion(@Body() dto: ConnexionDto) {
-    const u = await this.users
-      .createQueryBuilder('u')
-      .addSelect('u.motDePasseHash')
-      .addSelect('u.codeChiffre')
-      .where('lower(u.email) = lower(:e)', { e: dto.email.trim() })
-      .getOne();
-    if (
-      !u ||
-      !u.actif ||
-      !(await bcrypt.compare(dto.motDePasse, u.motDePasseHash))
-    )
-      throw new UnauthorizedException('Identifiants incorrects');
-    // Troisième verrou : même avec l'e-mail et le mot de passe de quelqu'un, il faut son code
-    if (u.codeChiffre && !codeValide(dto.code, u.codeChiffre)) {
-      await this.journal.log(
-        { id: u.id, nom: u.nom } as UtilisateurConnecte,
-        'CONNEXION_REFUSEE_CODE',
-        'utilisateur',
-        u.id,
-      );
-      throw new UnauthorizedException(
-        dto.code?.trim()
-          ? 'Code personnel incorrect. Vérifiez les 12 caractères (ex. T3G8-GH6J-FG3U).'
-          : 'Tapez votre code personnel de 12 caractères (remis par l’administrateur).',
-      );
-    }
-    const profil: UtilisateurConnecte = {
-      id: u.id,
-      email: u.email,
-      nom: u.nom,
-      initiales: u.initiales,
-      role: u.role,
-      departementId: u.departementId,
-      structureId: u.structureId,
-    };
-    await this.journal.log(profil, 'CONNEXION', 'utilisateur', u.id);
-    return { jeton: await this.jwt.signAsync(profil), utilisateur: profil };
+  @HttpCode(200)
+  connexion(@Body() dto: ConnexionDto, @Ip() ip: string) {
+    return this.sessions.connexion(dto, ip);
   }
 
   @Roles(...TOUS_LES_ROLES)
   @Get('auth/moi')
   moi(@Moi() u: UtilisateurConnecte) {
+    // Profil relu en base à chaque requête (voir AuthGuard)
     return u;
+  }
+
+  /**
+   * Fermer ses autres sessions (poste oublié allumé, téléphone perdu…) : celle-ci reste
+   * ouverte grâce au nouveau jeton renvoyé.
+   */
+  @Roles(...TOUS_LES_ROLES)
+  @Post('auth/deconnecter-ailleurs')
+  @HttpCode(200)
+  async deconnecterAilleurs(
+    @Moi() moi: UtilisateurConnecte,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    await this.sessions.fermerSessions([moi.id]);
+    await this.renouvelerJeton(moi, [moi.id], res);
+    await this.journal.log(moi, 'SESSIONS_FERMEES', 'utilisateur', moi.id);
+    return { ok: true };
   }
 
   /**
@@ -244,7 +259,11 @@ export class CoreController {
    */
   @Roles('ADMIN', 'DG')
   @Post('utilisateurs/codes')
-  async codes(@Moi() moi: UtilisateurConnecte, @Body() dto: CodesDto) {
+  async codes(
+    @Moi() moi: UtilisateurConnecte,
+    @Body() dto: CodesDto,
+    @Res({ passthrough: true }) res: Response,
+  ) {
     const lui = await this.users
       .createQueryBuilder('u')
       .addSelect('u.motDePasseHash')
@@ -285,7 +304,7 @@ export class CoreController {
       cibles = cibles.filter((c) => c.role !== 'ADMIN');
     }
     if (!cibles.length) throw new BadRequestException('Aucun compte choisi.');
-    const res: {
+    const liste: {
       id: string;
       nom: string;
       email: string;
@@ -298,14 +317,20 @@ export class CoreController {
           codeChiffre: chiffrerCode(code),
           codeCreeLe: new Date(),
         });
-        res.push({ id: c.id, nom: c.nom, email: c.email, code });
+        liste.push({ id: c.id, nom: c.nom, email: c.email, code });
       } else
-        res.push({
+        liste.push({
           id: c.id,
           nom: c.nom,
           email: c.email,
           code: c.codeChiffre ? dechiffrerCode(c.codeChiffre) : null,
         });
+    }
+    if (dto.action === 'regenerer') {
+      // Code changé : les sessions ouvertes avec l'ancien se ferment (la sienne est renouvelée)
+      const ids = cibles.map((c) => c.id);
+      await this.sessions.fermerSessions(ids);
+      await this.renouvelerJeton(moi, ids, res);
     }
     await this.journal.log(
       moi,
@@ -314,9 +339,9 @@ export class CoreController {
         : 'CODES_PERSONNELS_CONSULTES',
       'utilisateur',
       tous ? null : (dto.ids ?? []).join(','),
-      { comptes: res.length, tous },
+      { comptes: liste.length, tous },
     );
-    return res;
+    return liste;
   }
 
   @Roles('ADMIN', 'DG')
@@ -333,13 +358,13 @@ export class CoreController {
       throw new BadRequestException(
         'Mot de passe requis (8 caractères minimum)',
       );
+    const email = dto.email.trim().toLowerCase();
+    await this.emailLibre(email);
     const code = nouveauCode();
-    if (await this.users.findOne({ where: { email: dto.email.toLowerCase() } }))
-      throw new BadRequestException('Cet e-mail est déjà utilisé');
     const u = await this.users.save({
-      email: dto.email.toLowerCase(),
-      nom: dto.nom,
-      initiales: dto.initiales ?? null,
+      email,
+      nom: dto.nom.trim(),
+      initiales: dto.initiales?.trim() || null,
       role: dto.role,
       departementId: dto.departementId ?? null,
       structureId: dto.structureId ?? null,
@@ -361,32 +386,132 @@ export class CoreController {
   @Put('utilisateurs/:id')
   async modifierUtilisateur(
     @Moi() moi: UtilisateurConnecte,
-    @Param('id') id: string,
+    @Param('id', ParseUUIDPipe) id: string,
     @Body() dto: UtilisateurDto,
+    @Res({ passthrough: true }) res: Response,
   ) {
-    const u = await this.users.findOne({ where: { id } });
-    if (!u) throw new NotFoundException();
-    if (moi.role !== 'ADMIN' && (u.role === 'ADMIN' || dto.role === 'ADMIN'))
-      throw new ForbiddenException(
-        'Seul l’administrateur modifie un compte administrateur.',
+    const u = await this.cible(moi, id, dto.role);
+    const email = dto.email.trim().toLowerCase();
+    if (email !== u.email.toLowerCase()) await this.emailLibre(email, id);
+    const actif = dto.actif ?? u.actif;
+
+    // Personne ne se retire lui-même ses droits (fausse manipulation = plus d'accès)
+    if (id === moi.id && (dto.role !== u.role || !actif))
+      throw new BadRequestException(
+        'Vous ne pouvez pas changer votre propre rôle ni désactiver votre propre compte : demandez-le à un autre administrateur.',
       );
+    // Il reste toujours au moins un administrateur actif
+    if (u.role === 'ADMIN' && u.actif && (dto.role !== 'ADMIN' || !actif))
+      await this.garderUnAdministrateur(id);
+
     const maj: Partial<Utilisateur> = {
-      email: dto.email.toLowerCase(),
-      nom: dto.nom,
-      initiales: dto.initiales ?? null,
+      email,
+      nom: dto.nom.trim(),
+      initiales: dto.initiales?.trim() || null,
       role: dto.role,
       departementId: dto.departementId ?? null,
       structureId: dto.structureId ?? null,
-      actif: dto.actif ?? u.actif,
+      actif,
     };
-    if (dto.motDePasse)
-      maj.motDePasseHash = await bcrypt.hash(dto.motDePasse, 10);
+    const nouveauMotDePasse = !!dto.motDePasse;
+    if (nouveauMotDePasse) {
+      maj.motDePasseHash = await bcrypt.hash(dto.motDePasse!, 10);
+      // Mot de passe redonné : le blocage pour essais ratés est levé
+      maj.echecsConnexion = 0;
+      maj.dernierEchec = null;
+      maj.bloqueJusqua = null;
+    }
     await this.users.update(id, maj);
+    // Mot de passe changé ou compte désactivé : ses sessions ouvertes se ferment
+    if (nouveauMotDePasse || (u.actif && !actif)) {
+      await this.sessions.fermerSessions([id]);
+      await this.renouvelerJeton(moi, [id], res);
+    }
     await this.journal.log(moi, 'MODIFICATION_UTILISATEUR', 'utilisateur', id, {
       role: dto.role,
-      actif: maj.actif,
+      actif,
+      ...(nouveauMotDePasse ? { motDePasse: 'changé' } : {}),
     });
     return this.users.findOne({ where: { id } });
+  }
+
+  /** Lève le blocage d'un compte après trop d'essais ratés. */
+  @Roles('ADMIN', 'DG')
+  @Post('utilisateurs/:id/debloquer')
+  @HttpCode(200)
+  async debloquerUtilisateur(
+    @Moi() moi: UtilisateurConnecte,
+    @Param('id', ParseUUIDPipe) id: string,
+  ) {
+    await this.cible(moi, id);
+    await this.sessions.debloquer(id);
+    await this.journal.log(moi, 'COMPTE_DEBLOQUE', 'utilisateur', id);
+    return { ok: true };
+  }
+
+  /** Ferme toutes les sessions ouvertes d'un compte (poste volé, départ…). */
+  @Roles('ADMIN', 'DG')
+  @Post('utilisateurs/:id/deconnecter')
+  @HttpCode(200)
+  async deconnecterUtilisateur(
+    @Moi() moi: UtilisateurConnecte,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    await this.cible(moi, id);
+    await this.sessions.fermerSessions([id]);
+    await this.renouvelerJeton(moi, [id], res);
+    await this.journal.log(moi, 'SESSIONS_FERMEES', 'utilisateur', id);
+    return { ok: true };
+  }
+
+  /** Compte visé par une action d'administration ; le DG ne touche pas aux administrateurs. */
+  private async cible(
+    moi: UtilisateurConnecte,
+    id: string,
+    nouveauRole?: Role,
+  ) {
+    const u = await this.users.findOne({ where: { id } });
+    if (!u) throw new NotFoundException('Compte introuvable.');
+    if (moi.role !== 'ADMIN' && (u.role === 'ADMIN' || nouveauRole === 'ADMIN'))
+      throw new ForbiddenException(
+        'Seul l’administrateur modifie un compte administrateur.',
+      );
+    return u;
+  }
+
+  /** E-mail déjà pris par un autre compte (sans tenir compte des majuscules) ? */
+  private async emailLibre(email: string, saufId?: string) {
+    const pris = await this.users
+      .createQueryBuilder('u')
+      .where('lower(u.email) = :e', { e: email })
+      .andWhere(saufId ? 'u.id <> :id' : 'TRUE', { id: saufId })
+      .getExists();
+    if (pris) throw new BadRequestException('Cet e-mail est déjà utilisé.');
+  }
+
+  /** Refuse de retirer le dernier administrateur actif. */
+  private async garderUnAdministrateur(saufId: string) {
+    const autres = await this.users.count({
+      where: { role: 'ADMIN', actif: true, id: Not(saufId) },
+    });
+    if (!autres)
+      throw new BadRequestException(
+        'C’est le dernier administrateur actif : créez ou activez d’abord un autre administrateur.',
+      );
+  }
+
+  /**
+   * Ses propres sessions viennent d'être fermées (son code ou son mot de passe a changé) :
+   * un nouveau jeton est renvoyé dans l'en-tête X-Jeton, pour rester connecté sur ce poste.
+   */
+  private async renouvelerJeton(
+    moi: UtilisateurConnecte,
+    ids: string[],
+    res: Response,
+  ) {
+    if (ids.includes(moi.id))
+      res.setHeader('X-Jeton', await this.sessions.jetonPour(moi.id));
   }
 
   /* --------------------------- Référentiels -------------------------- */

@@ -1,10 +1,11 @@
 import { Logger, ValidationPipe } from '@nestjs/common';
-import { NestFactory } from '@nestjs/core';
+import { HttpAdapterHost, NestFactory } from '@nestjs/core';
 import type { NestExpressApplication } from '@nestjs/platform-express';
 import helmet from 'helmet';
 import { types } from 'pg';
 import { AmorcageService } from './amorcage/amorcage.service';
 import { AppModule } from './app.module';
+import { ErreursBaseFilter } from './common/erreurs-base.filter';
 
 // Les colonnes DATE restent des chaînes « AAAA-MM-JJ » : sans cela, le pilote
 // les convertit en minuit heure locale et elles reculent d'un jour en UTC.
@@ -17,8 +18,12 @@ async function bootstrap() {
   app.set('trust proxy', Number(process.env.TRUST_PROXY ?? 1));
   app.setGlobalPrefix('api');
   app.use(helmet());
-  app.enableCors({ origin: originesAutorisees() });
+  // X-Jeton : nouveau jeton après changement de son propre code ou mot de passe
+  app.enableCors({ origin: originesAutorisees(), exposedHeaders: ['X-Jeton'] });
   app.useGlobalPipes(new ValidationPipe({ whitelist: true, transform: true }));
+  app.useGlobalFilters(
+    new ErreursBaseFilter(app.get(HttpAdapterHost).httpAdapter),
+  );
   const port = Number(process.env.PORT ?? 4000);
   // Tables à jour (migrations) et valeurs par défaut créées, puis configuration d'amorçage
   await app.init();

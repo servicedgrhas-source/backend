@@ -4,6 +4,7 @@ import {
   Controller,
   Delete,
   Get,
+  HttpCode,
   NotFoundException,
   Param,
   ParseIntPipe,
@@ -73,13 +74,23 @@ class InstructionDto {
   @IsOptional() @Matches(/^\d{4}-\d{2}-\d{2}$/) echeance?: string | null;
 }
 
-/** Tous ceux qui interviennent dans un circuit : DGRHAS, DDEPPSA, écoles, inspections… */
+/**
+ * Tous ceux qui interviennent dans un circuit : DGRHAS, DDEPPSA, écoles, inspections, cabinet,
+ * secrétariat (qui imprime les dossiers accordés : il doit les ouvrir, voir leurs alertes).
+ * Les actions restent contrôlées une à une (étape en cours, rang dans le circuit, rôle DG).
+ */
 const ROLES_CIRCUIT = [
   ...ROLES_TRAITEMENT,
   'DDEPPSA',
   'STRUCTURE',
   'CABINET',
+  'SECRETARIAT',
 ] as const;
+
+const entier = (v?: string) => {
+  const n = Number(v);
+  return v && Number.isInteger(n) && n > 0 ? n : undefined;
+};
 
 @Roles(...ROLES_CIRCUIT)
 @Controller()
@@ -159,8 +170,31 @@ export class CircuitController {
   /* ---------------------------- Travail de chacun ---------------------------- */
 
   @Get('circuit/a-traiter')
-  aTraiter(@Utilisateur() u: UtilisateurConnecte) {
-    return this.service.aTraiter(u);
+  aTraiter(
+    @Utilisateur() u: UtilisateurConnecte,
+    @Query('onglet') onglet?: string,
+    @Query('recherche') recherche?: string,
+    @Query('type') type?: string,
+    @Query('etape') etape?: string,
+    @Query('retard') retard?: string,
+    @Query('page') page?: string,
+    @Query('taille') taille?: string,
+  ) {
+    return this.service.aTraiter(u, {
+      onglet: onglet === 'aSuivre' ? 'aSuivre' : 'aTraiter',
+      recherche: recherche?.slice(0, 100),
+      type: type?.slice(0, 80) || undefined,
+      etape: etape?.slice(0, 120) || undefined,
+      retard: retard === '1',
+      page: entier(page),
+      taille: entier(taille),
+    });
+  }
+
+  /** Tableau de bord des comptes du circuit (DDEPPSA, cabinet, secrétariat…). */
+  @Get('circuit/tableau')
+  tableau(@Utilisateur() u: UtilisateurConnecte) {
+    return this.service.tableau(u);
   }
 
   @Get('circuit/compteur')
@@ -169,17 +203,29 @@ export class CircuitController {
   }
 
   @Get('circuit/alertes')
-  alertes(@Utilisateur() u: UtilisateurConnecte) {
-    return this.service.mesAlertes(u);
+  alertes(
+    @Utilisateur() u: UtilisateurConnecte,
+    @Query('avant') avant?: string,
+  ) {
+    return this.service.mesAlertes(u, entier(avant));
   }
 
+  /** Alertes lues : celles de la liste `ids`, ou toutes (`tout: true`). */
   @Post('circuit/alertes/lues')
-  lues(@Utilisateur() u: UtilisateurConnecte, @Body('ids') ids: number[]) {
-    if (!Array.isArray(ids)) throw new BadRequestException('Liste attendue.');
-    return this.service.marquerLues(
-      u,
-      ids.filter((x) => Number.isInteger(x)).slice(0, 200),
-    );
+  @HttpCode(200)
+  lues(
+    @Utilisateur() u: UtilisateurConnecte,
+    @Body() body: { ids?: unknown; tout?: unknown },
+  ) {
+    const tout = body?.tout === true;
+    if (!tout && !Array.isArray(body?.ids))
+      throw new BadRequestException('Liste attendue.');
+    const ids = tout
+      ? []
+      : (body.ids as unknown[])
+          .filter((x): x is number => Number.isInteger(x))
+          .slice(0, 500);
+    return this.service.marquerLues(u, ids, tout);
   }
 
   /* --------------------------- Circuit d'une demande --------------------------- */

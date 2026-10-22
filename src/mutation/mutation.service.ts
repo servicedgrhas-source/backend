@@ -1,3 +1,4 @@
+import { joursDepuis } from '../common/jours';
 import {
   BadRequestException,
   ForbiddenException,
@@ -184,11 +185,7 @@ export class MutationService {
             nom: e.nom,
             rang: d.etapeCourante! + 1,
             etapes: d.circuit!.length,
-            depuis: e.arriveeLe
-              ? Math.floor(
-                  (Date.now() - new Date(e.arriveeLe).getTime()) / 86400000,
-                )
-              : null,
+            depuis: joursDepuis(e.arriveeLe),
           }
         : null,
     };

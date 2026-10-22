@@ -22,6 +22,55 @@ import {
   type EtapeCircuit,
 } from '../entities';
 import { CATALOGUE, STRUCTURES_DGRHAS, TYPES_STRUCTURE } from './catalogue';
+import { joursDepuis, SQL_AUJOURDHUI, sqlJourLocal } from '../common/jours';
+
+/* --------- Requêtes du travail de chacun ($1 : structures du compte) --------- */
+
+/** Étape en cours d'une demande (objet JSON). */
+const SQL_ETAPE = `(d.circuit -> d."etapeCourante")`;
+/** Arrivée à l'étape en cours. */
+const SQL_ARRIVEE = `(${SQL_ETAPE} ->> 'arriveeLe')::timestamptz`;
+/** Demande en route dans son circuit (ni décidée, ni retirée, ni déjà dans une note). */
+const SQL_EN_CIRCUIT = `d."etapeCourante" IS NOT NULL AND d.circuit IS NOT NULL AND NOT d.retiree AND d."noteId" IS NULL`;
+/** L'étape en cours est chez le compte. */
+const SQL_CHEZ_MOI = `(${SQL_ETAPE} ->> 'structureId')::int = ANY($1)`;
+const SQL_A_TRAITER = `(${SQL_EN_CIRCUIT} AND ${SQL_CHEZ_MOI})`;
+/** Le compte intervient plus loin dans le circuit (et le dossier n'est pas déjà chez lui). */
+const SQL_A_SUIVRE = `(${SQL_EN_CIRCUIT} AND NOT coalesce(${SQL_CHEZ_MOI}, false) AND EXISTS (
+  SELECT 1 FROM jsonb_array_elements(d.circuit) WITH ORDINALITY e(x, n)
+   WHERE e.n - 1 > d."etapeCourante" AND (e.x ->> 'structureId')::int = ANY($1)))`;
+/** Plus de 7 jours (du calendrier) à l'étape en cours. */
+const SQL_EN_RETARD = `${sqlJourLocal(`${SQL_ETAPE} ->> 'arriveeLe'`)} < ${SQL_AUJOURDHUI} - 7`;
+/** Alerte adressée à une des structures du compte. */
+const SQL_ALERTE_A_MOI = `EXISTS (SELECT 1 FROM jsonb_array_elements(a.structures) x WHERE (x)::int = ANY($1))`;
+/** État d'une demande : décision du circuit, sinon instruction reprise des anciens dossiers. */
+// IS NOT DISTINCT FROM : toujours vrai ou faux, jamais « inconnu » (NULL) avec des champs vides,
+// sinon NOT (…) écarterait la demande de tous les comptes
+const SQL_ETAT_ACCORDEE = `(d.decision IS NOT DISTINCT FROM 'ACCORDEE' OR (d.decision IS NULL AND d."instructionMinistre" IS NOT DISTINCT FROM 'ACCORDEE'))`;
+const SQL_ETAT_REFUSEE = `(d.decision IS NOT DISTINCT FROM 'REJETEE' OR (d.decision IS NULL AND d."instructionMinistre" IS NOT DISTINCT FROM 'REFUSEE'))`;
+
+export interface FiltresDossiers {
+  onglet?: 'aTraiter' | 'aSuivre';
+  recherche?: string;
+  type?: string;
+  etape?: string;
+  retard?: boolean;
+  page?: number;
+  taille?: number;
+}
+
+interface LigneDossier {
+  id: string;
+  numero: number;
+  nomComplet: string;
+  objet: string | null;
+  typePrestation: string | null;
+  canal: string;
+  decision: string | null;
+  etapeCourante: number;
+  etapes: number;
+  etape: EtapeCircuit | null;
+}
 
 const maintenant = () => new Date().toISOString();
 
@@ -910,32 +959,40 @@ export class CircuitService implements OnModuleInit {
     });
   }
 
-  async mesAlertes(u: UtilisateurConnecte) {
+  /* ------------------------------ Alertes ------------------------------ */
+
+  /**
+   * Alertes du compte : celles de ses structures (et de ses délégations). Une alerte plus
+   * ancienne que le compte compte comme lue : un nouvel arrivant ne trouve pas des
+   * centaines d'alertes passées « non lues ».
+   * Liste par pages de 50 (de la plus récente à la plus ancienne) ; `avant` : suite.
+   */
+  async mesAlertes(u: UtilisateurConnecte, avant?: number) {
     const mes = await this.structuresDe(u);
-    if (!mes.length) return { nonLues: 0, alertes: [] };
-    const miennes = await this.alertesNumeriques(mes);
-    const lues = new Set(
-      (
-        await this.lues.find({
-          where: {
-            utilisateurId: u.id,
-            alerteId: In(miennes.map((a) => a.id).concat(-1)),
-          },
-        })
-      ).map((l) => l.alerteId),
+    if (!mes.length) return { nonLues: 0, alertes: [], suite: false };
+    const PAGE = 50;
+    const lignes: (Alerte & { lue: boolean })[] = await this.alertes.query(
+      `SELECT a.id, a."demandeId", a.type, a.texte, a.structures, a."creeLe",
+              (l."alerteId" IS NOT NULL OR a."creeLe" < u."creeLe") AS lue
+         FROM alerte a
+         JOIN utilisateur u ON u.id = $2
+    LEFT JOIN alerte_lue l ON l."alerteId" = a.id AND l."utilisateurId" = $2
+        WHERE ${SQL_ALERTE_A_MOI}
+          AND ($3::int IS NULL OR a.id < $3)
+     ORDER BY a.id DESC
+        LIMIT ${PAGE + 1}`,
+      [mes, u.id, avant ?? null],
     );
+    const suite = lignes.length > PAGE;
+    const page = lignes.slice(0, PAGE);
     // Une alerte raconte ce qui s'est passé ; on y joint où en est la demande aujourd'hui
     const demandes = new Map(
-      (
-        await this.demandes.find({
-          where: {
-            id: In(
-              [...new Set(miennes.map((a) => a.demandeId))].concat(
-                '00000000-0000-0000-0000-000000000000',
-              ),
-            ),
-          },
-        })
+      (page.length
+        ? await this.demandes.find({
+            where: { id: In([...new Set(page.map((a) => a.demandeId))]) },
+            select: ['id', 'retiree', 'decision', 'circuit', 'etapeCourante'],
+          })
+        : []
       ).map((d) => [d.id, d]),
     );
     const aujourdhui = (id: string) => {
@@ -950,106 +1007,226 @@ export class CircuitService implements OnModuleInit {
       return null;
     };
     return {
-      nonLues: miennes.filter((a) => !lues.has(a.id)).length,
-      alertes: miennes.map((a) => ({
+      nonLues: await this.nombreAlertesNonLues(u, mes),
+      alertes: page.map((a) => ({
         ...a,
-        lue: lues.has(a.id),
+        lue: !!a.lue,
         aujourdhui: aujourdhui(a.demandeId),
       })),
+      suite,
     };
   }
 
-  private alertesNumeriques(mes: number[]) {
-    return this.alertes
-      .createQueryBuilder('a')
-      .where(
-        `EXISTS (SELECT 1 FROM jsonb_array_elements(a.structures) x WHERE (x)::int = ANY(:mes))`,
-        { mes },
-      )
-      .orderBy('a.creeLe', 'DESC')
-      .take(60)
-      .getMany();
+  /** Alertes non lues du compte (toutes, pas seulement la première page). */
+  private async nombreAlertesNonLues(u: UtilisateurConnecte, mes: number[]) {
+    if (!mes.length) return 0;
+    const [r] = await this.alertes.query<{ n: number }[]>(
+      `SELECT count(*)::int AS n
+         FROM alerte a
+         JOIN utilisateur u ON u.id = $2
+        WHERE ${SQL_ALERTE_A_MOI}
+          AND a."creeLe" >= u."creeLe"
+          AND NOT EXISTS (SELECT 1 FROM alerte_lue l
+                           WHERE l."alerteId" = a.id AND l."utilisateurId" = $2)`,
+      [mes, u.id],
+    );
+    return r?.n ?? 0;
   }
 
-  async marquerLues(u: UtilisateurConnecte, ids: number[]) {
-    for (const alerteId of ids)
-      await this.lues.upsert({ alerteId, utilisateurId: u.id }, [
-        'alerteId',
-        'utilisateurId',
-      ]);
+  /** Marque comme lues ces alertes, ou toutes celles du compte (`tout`). */
+  async marquerLues(u: UtilisateurConnecte, ids: number[], tout = false) {
+    const mes = await this.structuresDe(u);
+    if (!mes.length || (!tout && !ids.length)) return { ok: true };
+    // Seulement ses propres alertes, en une requête ; déjà lues : rien ne change
+    await this.lues.query(
+      `INSERT INTO alerte_lue ("alerteId", "utilisateurId")
+       SELECT a.id, $2 FROM alerte a
+        WHERE ${SQL_ALERTE_A_MOI} AND ($3::bool OR a.id = ANY($4::int[]))
+       ON CONFLICT DO NOTHING`,
+      [mes, u.id, tout, ids],
+    );
     return { ok: true };
   }
 
-  /** Demandes dont l'étape en cours revient à ce compte, avec le temps d'attente. */
-  async aTraiter(u: UtilisateurConnecte) {
+  /* ------------------------- Dossiers à traiter ------------------------- */
+
+  /**
+   * Dossiers du compte, page par page : « à traiter » (l'étape en cours est chez lui) ou
+   * « à suivre » (il intervient plus loin dans le circuit ; un dossier à traiter n'y est pas
+   * répété). Du plus ancien au plus récent. Recherche (nom, n°, objet), filtres par type de
+   * demande, par étape en cours et « en retard » (plus de 7 jours à l'étape).
+   */
+  async aTraiter(u: UtilisateurConnecte, f: FiltresDossiers = {}) {
     const mes = await this.structuresDe(u);
-    const enCours = await this.demandes
-      .createQueryBuilder('d')
-      .where('d.etapeCourante IS NOT NULL')
-      .andWhere('d.retiree = false')
-      .getMany();
-    const jours = (iso: string | null) =>
-      iso
-        ? Math.floor((Date.now() - new Date(iso).getTime()) / 86400000)
-        : null;
-    const instr = await this.instructions.find({
-      where: {
-        demandeId: In(
-          enCours
-            .map((d) => d.id)
-            .concat('00000000-0000-0000-0000-000000000000'),
-        ),
-      },
-      order: { creeLe: 'DESC' },
-    });
-    const resume = (d: DemandeMutation) => {
-      const e = d.circuit![d.etapeCourante!];
-      return {
+    const onglet = f.onglet === 'aSuivre' ? 'aSuivre' : 'aTraiter';
+    const taille = Math.min(Math.max(f.taille ?? 50, 1), 100);
+    const page = Math.max(f.page ?? 1, 1);
+    const vide = {
+      onglet,
+      page,
+      taille,
+      total: 0,
+      lignes: [],
+      compte: { aTraiter: 0, aSuivre: 0, enRetard: 0 },
+      filtres: { types: [], etapes: [] },
+    };
+    if (!mes.length) return vide;
+
+    const params: unknown[] = [mes];
+    const p = (v: unknown) => {
+      params.push(v);
+      return `$${params.length}`;
+    };
+    const conditions = [onglet === 'aTraiter' ? SQL_A_TRAITER : SQL_A_SUIVRE];
+    const mots = (f.recherche ?? '')
+      .trim()
+      .toLowerCase()
+      .split(/\s+/)
+      .filter(Boolean)
+      .slice(0, 6);
+    for (const m of mots)
+      conditions.push(
+        `lower(d."nomComplet" || ' ' || coalesce(d.objet, '') || ' ' || d."numeroEnregistrement") LIKE ${p(`%${m.replace(/[\\%_]/g, '\\$&')}%`)}`,
+      );
+    // Choix des filtres : sur l'onglet et la recherche, sans les filtres eux-mêmes
+    const filtresSeuls = [...conditions];
+    const paramsFiltres = [...params];
+    if (f.type) conditions.push(`d."typePrestation" = ${p(f.type)}`);
+    if (f.etape) conditions.push(`${SQL_ETAPE} ->> 'sigle' = ${p(f.etape)}`);
+    if (f.retard) conditions.push(SQL_EN_RETARD);
+    const ou = conditions.join(' AND ');
+
+    const [{ total }] = await this.demandes.query<{ total: number }[]>(
+      `SELECT count(*)::int AS total FROM demande_mutation d WHERE ${ou}`,
+      params,
+    );
+    const lignes = await this.demandes.query<LigneDossier[]>(
+      `SELECT d.id, d."numeroEnregistrement" AS numero, d."nomComplet", d.objet,
+              d."typePrestation", d.canal, d.decision, d."etapeCourante",
+              jsonb_array_length(d.circuit) AS etapes, ${SQL_ETAPE} AS etape
+         FROM demande_mutation d
+        WHERE ${ou}
+     ORDER BY ${SQL_ARRIVEE} ASC NULLS LAST, d."numeroEnregistrement" ASC
+        LIMIT ${taille} OFFSET ${(page - 1) * taille}`,
+      params,
+    );
+
+    // Compteurs des onglets et choix des filtres (sur l'onglet, recherche comprise)
+    const [compte] = await this.demandes.query<
+      { aTraiter: number; aSuivre: number; enRetard: number }[]
+    >(
+      `SELECT count(*) FILTER (WHERE ${SQL_A_TRAITER})::int AS "aTraiter",
+              count(*) FILTER (WHERE ${SQL_A_SUIVRE})::int AS "aSuivre",
+              count(*) FILTER (WHERE ${SQL_A_TRAITER} AND ${SQL_EN_RETARD})::int AS "enRetard"
+         FROM demande_mutation d WHERE ${SQL_EN_CIRCUIT}`,
+      [mes],
+    );
+    const ouFiltres = filtresSeuls.join(' AND ');
+    const types = await this.demandes.query<
+      { code: string; libelle: string; n: number }[]
+    >(
+      `SELECT d."typePrestation" AS code, coalesce(t.libelle, d."typePrestation") AS libelle, count(*)::int AS n
+         FROM demande_mutation d LEFT JOIN type_prestation t ON t.code = d."typePrestation"
+        WHERE ${ouFiltres} AND d."typePrestation" IS NOT NULL
+     GROUP BY 1, 2 ORDER BY 3 DESC`,
+      paramsFiltres,
+    );
+    const etapes = await this.demandes.query<{ sigle: string; n: number }[]>(
+      `SELECT ${SQL_ETAPE} ->> 'sigle' AS sigle, count(*)::int AS n
+         FROM demande_mutation d WHERE ${ouFiltres}
+     GROUP BY 1 ORDER BY 2 DESC`,
+      paramsFiltres,
+    );
+
+    // Instructions en cours (la dernière donnée à l'étape actuelle), pour la page seulement
+    const instr = lignes.length
+      ? await this.instructions.find({
+          where: { demandeId: In(lignes.map((d) => d.id)) },
+          order: { creeLe: 'DESC' },
+        })
+      : [];
+    return {
+      onglet,
+      page,
+      taille,
+      total,
+      compte,
+      filtres: { types, etapes: etapes.filter((e) => e.sigle) },
+      lignes: lignes.map((d) => ({
         id: d.id,
-        numero: d.numeroEnregistrement,
+        numero: d.numero,
         nomComplet: d.nomComplet,
         objet: d.objet,
         typePrestation: d.typePrestation,
         canal: d.canal,
-        etape: { sigle: e.sigle, nom: e.nom, phase: e.phase },
-        rang: d.etapeCourante! + 1,
-        etapes: d.circuit!.length,
-        depuis: jours(e.arriveeLe),
+        etape: {
+          sigle: d.etape?.sigle,
+          nom: d.etape?.nom,
+          phase: d.etape?.phase,
+        },
+        rang: d.etapeCourante + 1,
+        etapes: d.etapes,
+        arriveeLe: d.etape?.arriveeLe ?? null,
+        depuis: joursDepuis(d.etape?.arriveeLe),
         decision: d.decision,
         instruction:
           instr.find(
             (x) => x.demandeId === d.id && x.etape === d.etapeCourante,
           ) ?? null,
-      };
-    };
-    const miennes = enCours.filter((d) => {
-      const e = d.circuit?.[d.etapeCourante!];
-      return !!e?.structureId && mes.includes(e.structureId) && !d.noteId;
-    });
-    // Dossiers où le compte intervient plus haut : il suit, il peut donner une instruction
-    const aSuivre = enCours.filter((d) =>
-      d.circuit?.some(
-        (e, i) =>
-          i > d.etapeCourante! &&
-          !!e.structureId &&
-          mes.includes(e.structureId),
-      ),
-    );
-    return {
-      aTraiter: miennes
-        .map(resume)
-        .sort((a, b) => (b.depuis ?? 0) - (a.depuis ?? 0)),
-      aSuivre: aSuivre
-        .map(resume)
-        .sort((a, b) => (b.depuis ?? 0) - (a.depuis ?? 0)),
+      })),
     };
   }
 
-  /** Nombre de dossiers à traiter (compteur du menu). */
+  /** Compteurs du menu : dossiers à traiter et alertes non lues (calculés en base). */
   async compteur(u: UtilisateurConnecte) {
-    const r = await this.aTraiter(u);
-    const a = await this.mesAlertes(u);
-    return { aTraiter: r.aTraiter.length, alertes: a.nonLues };
+    const mes = await this.structuresDe(u);
+    if (!mes.length) return { aTraiter: 0, alertes: 0 };
+    const [r] = await this.demandes.query<{ n: number }[]>(
+      `SELECT count(*)::int AS n FROM demande_mutation d WHERE ${SQL_A_TRAITER}`,
+      [mes],
+    );
+    return {
+      aTraiter: r?.n ?? 0,
+      alertes: await this.nombreAlertesNonLues(u, mes),
+    };
+  }
+
+  /**
+   * Tableau de bord des comptes du circuit (DDEPPSA, cabinet, secrétariat…) : leurs dossiers
+   * et les demandes où leurs structures interviennent. Sans structure : toutes les demandes.
+   */
+  async tableau(u: UtilisateurConnecte) {
+    const mes = await this.structuresDe(u);
+    const sigles = mes.length
+      ? (await this.structures.find({ where: { id: In(mes) } }))
+          .map((s) => s.sigle || s.nom)
+          .sort()
+      : [];
+    const perimetre = mes.length
+      ? `EXISTS (SELECT 1 FROM jsonb_array_elements(d.circuit) x WHERE (x ->> 'structureId')::int = ANY($1))`
+      : 'TRUE';
+    const [m] = await this.demandes.query<Record<string, number>[]>(
+      `SELECT count(*)::int AS total,
+              count(*) FILTER (WHERE ${SQL_ETAT_ACCORDEE})::int AS accordees,
+              count(*) FILTER (WHERE ${SQL_ETAT_REFUSEE})::int AS refusees,
+              count(*) FILTER (WHERE d.decision = 'EN_INSTANCE')::int AS "enInstance",
+              count(*) FILTER (WHERE NOT (${SQL_ETAT_ACCORDEE}) AND NOT (${SQL_ETAT_REFUSEE})
+                                 AND d.decision IS DISTINCT FROM 'EN_INSTANCE')::int AS "enCours"
+         FROM demande_mutation d WHERE NOT d.retiree AND ${perimetre}`,
+      mes.length ? [mes] : [],
+    );
+    const dossiers = mes.length
+      ? await this.aTraiter(u, { onglet: 'aTraiter', taille: 5 })
+      : null;
+    return {
+      perimetre: mes.length
+        ? { national: false, structures: sigles }
+        : { national: true, structures: [] },
+      dossiers: dossiers?.compte ?? { aTraiter: 0, aSuivre: 0, enRetard: 0 },
+      plusAnciens: dossiers?.lignes ?? [],
+      alertesNonLues: await this.nombreAlertesNonLues(u, mes),
+      mutations: m,
+    };
   }
 
   /** Comptes qui peuvent agir à l'étape en cours (pour l'afficher). */
