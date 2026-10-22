@@ -1,0 +1,43 @@
+# Plan Render (Blueprint) — les secrets sont à saisir dans le tableau de bord (sync: false)
+services:
+  - type: web
+    name: dgrhas-backend
+    runtime: node
+    region: frankfurt
+    plan: free
+    buildCommand: npm ci --include=dev && npm run build
+    startCommand: npm run start:prod
+    healthCheckPath: /api/sante
+    envVars:
+      - key: NODE_VERSION
+        value: "22"
+      - key: NODE_ENV
+        value: production
+      - key: DB_SYNC
+        value: "false"
+      - key: DB_POOL_MAX
+        value: "5"
+      - key: TRUST_PROXY
+        value: "1"
+      - key: STOCKAGE
+        value: r2
+      - key: R2_BUCKET
+        sync: false
+      - key: DATABASE_URL
+        sync: false
+      - key: JWT_SECRET
+        sync: false
+      - key: ADMIN_EMAIL
+        sync: false
+      - key: ADMIN_PASSWORD
+        sync: false
+      - key: FRONTEND_ORIGIN
+        sync: false
+      - key: R2_ACCOUNT_ID
+        sync: false
+      - key: R2_ENDPOINT
+        sync: false
+      - key: R2_ACCESS_KEY_ID
+        sync: false
+      - key: R2_SECRET_ACCESS_KEY
+        sync: false

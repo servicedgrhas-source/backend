@@ -1,0 +1,860 @@
+import {
+  Column,
+  CreateDateColumn,
+  Entity,
+  Index,
+  JoinColumn,
+  ManyToOne,
+  OneToOne,
+  PrimaryColumn,
+  PrimaryGeneratedColumn,
+  UpdateDateColumn,
+} from 'typeorm';
+
+/* ============================ Utilisateurs ============================ */
+
+export const ROLES = [
+  'ADMIN',
+  'AGENT',
+  'CHEF_SERVICE',
+  'DIRECTEUR',
+  'DG',
+  'DDEPPSA',
+  'CABINET',
+  /** Chef du bureau d'études : contrôle du traitement, au même niveau que la DRSC. */
+  'BUREAU_ETUDES',
+  /**
+   * Chef du secrétariat du DG : reçoit les dossiers accordés et les notes validées pour imprimer
+   * (fiche individuelle, pièces jointes, note) avant l'envoi à la signature du ministre.
+   */
+  'SECRETARIAT',
+  /**
+   * Responsable d'une structure hors DGRHAS (établissement, inspection, service, direction
+   * centrale ou générale) : vise et donne son avis sur les demandes de son circuit.
+   */
+  'STRUCTURE',
+] as const;
+export type Role = (typeof ROLES)[number];
+
+@Entity('utilisateur')
+export class Utilisateur {
+  @PrimaryGeneratedColumn('uuid') id: string;
+  @Index({ unique: true }) @Column() email: string;
+  @Column() nom: string;
+  /** Initiales affichées dans la traçabilité des lignes (ex. « HM »). */
+  @Column({ type: 'varchar', length: 10, nullable: true }) initiales:
+    string | null;
+  @Column({ type: 'varchar' }) role: Role;
+  /** Département pour un utilisateur DDEPPSA. */
+  @Column({ type: 'int', nullable: true }) departementId: number | null;
+  /** Structure de l'organigramme où il travaille (vise et donne son avis à cette étape). */
+  @Index() @Column({ type: 'int', nullable: true }) structureId: number | null;
+  /** Délégation pendant une absence : ce collègue agit à sa place jusqu'à la date de fin. */
+  @Column({ type: 'uuid', nullable: true }) delegueId: string | null;
+  @Column({ type: 'date', nullable: true }) delegationFin: string | null;
+  @Column({ select: false }) motDePasseHash: string;
+  /**
+   * Code personnel de 12 caractères demandé à la connexion (avec l'e-mail et le mot de passe).
+   * Chiffré (l'administrateur et le DG peuvent le relire), jamais renvoyé avec le compte.
+   */
+  @Column({ type: 'varchar', nullable: true, select: false }) codeChiffre:
+    string | null;
+  @Column({ type: 'timestamptz', nullable: true }) codeCreeLe: Date | null;
+  @Column({ default: true }) actif: boolean;
+  @CreateDateColumn() creeLe: Date;
+}
+
+@Entity('journal')
+export class Journal {
+  @PrimaryGeneratedColumn() id: number;
+  @Index() @CreateDateColumn() date: Date;
+  @Column({ type: 'uuid', nullable: true }) utilisateurId: string | null;
+  @Column({ type: 'varchar', nullable: true }) utilisateurNom: string | null;
+  @Column() action: string;
+  @Column({ type: 'varchar', nullable: true }) entite: string | null;
+  @Column({ type: 'varchar', nullable: true }) entiteId: string | null;
+  @Column({ type: 'jsonb', nullable: true }) details: unknown;
+}
+
+@Entity('parametre')
+export class Parametre {
+  @PrimaryColumn() cle: string;
+  @Column({ type: 'text' }) valeur: string;
+  @Column({ type: 'varchar', nullable: true }) description: string | null;
+}
+
+/* ============================ Référentiels ============================ */
+
+@Entity('departement')
+export class Departement {
+  @PrimaryGeneratedColumn() id: number;
+  @Index({ unique: true }) @Column() code: string;
+  @Column() nom: string;
+  @Column() article: string;
+  @Column({ type: 'int' }) ordre: number;
+}
+
+@Entity('regle_diplome')
+export class RegleDiplome {
+  @PrimaryColumn() code: string;
+  @Column() libelle: string;
+  @Column() cycle: string;
+  @Column() typeNote: string;
+  /** Grade donné par le diplôme (liste des grades). */
+  @Column({ type: 'varchar', nullable: true }) gradeCode: string | null;
+  /** Façons dont le diplôme est écrit dans les fichiers Excel (ex. « BAC A4 »). */
+  @Column({ type: 'jsonb', default: () => "'[]'" }) ecritures: string[];
+  /* Copie des valeurs du grade, tenue à jour automatiquement (lecture rapide). */
+  @Column({ type: 'varchar', nullable: true }) grade: string | null;
+  @Column({ type: 'varchar', nullable: true }) gradeLibelle: string | null;
+  @Column({ type: 'varchar', nullable: true }) categorie: string | null;
+  @Column({ type: 'int', nullable: true }) echelle: number | null;
+  @Column({ type: 'int', nullable: true }) echelon: number | null;
+  @Column({ type: 'int', nullable: true }) indice: number | null;
+}
+
+/** Grade de la fonction publique et sa classification. */
+@Entity('grade')
+export class Grade {
+  @PrimaryColumn() code: string;
+  /** Abréviation imprimée sur les notes (ex. « Inst »). */
+  @Column() abreviation: string;
+  @Column() libelle: string;
+  @Column({ type: 'varchar', nullable: true }) categorie: string | null;
+  @Column({ type: 'int', nullable: true }) echelle: number | null;
+  @Column({ type: 'int', nullable: true }) echelon: number | null;
+  /** Indice au recrutement : salaire brut = indice × point indiciaire. */
+  @Column({ type: 'int', nullable: true }) indice: number | null;
+}
+
+/* ============================ Recrutement ============================= */
+
+/** Paquet = un envoi de textes par la FP, reconnu à sa date de réception (types et quotas mélangés). */
+@Entity('paquet_reception')
+export class PaquetReception {
+  @PrimaryGeneratedColumn() id: number;
+  /** Ordre d'arrivée (1er paquet, 2e paquet…). */
+  @Index({ unique: true }) @Column({ type: 'int' }) numero: number;
+  @Index() @Column({ type: 'date', nullable: true }) dateReception:
+    string | null;
+  /** Référence du soit-transmis de la FP, si connue. */
+  @Column({ type: 'varchar', nullable: true }) reference: string | null;
+  @Column({ type: 'text', nullable: true }) observation: string | null;
+  @CreateDateColumn() creeLe: Date;
+}
+
+/**
+ * Lot de réception : dans un paquet, les textes d'un même quota et d'un même type
+ * (Arrêtés, Décrets PM, Décrets PR). Chaque couple quota + type a sa numérotation (rang).
+ */
+@Entity('lot_publication')
+export class LotPublication {
+  @PrimaryGeneratedColumn() id: number;
+  /** N° technique unique (adresses des pages) ; l'agent voit le libellé. */
+  @Index({ unique: true }) @Column({ type: 'int' }) numero: number;
+  @Index() @Column({ type: 'int', nullable: true }) paquetId: number | null;
+  /** ARRETE, DECRET_PM ou DECRET_PR. */
+  @Column({ type: 'varchar', nullable: true }) typeTexte: string | null;
+  @Column({ type: 'int', nullable: true }) quota: number | null;
+  /** Lot du quota « Autres ». */
+  @Column({ type: 'boolean', default: false }) autres: boolean;
+  /** N° du lot dans son quota et son type : « Arrêtés quota 2024 — lot 3 ». */
+  @Column({ type: 'int', nullable: true }) rang: number | null;
+  @Column({ type: 'date', nullable: true }) dateReception: string | null;
+  /** Date de signature appliquée par défaut aux arrêtés du lot (ex. 31/12/2025). */
+  @Column({ type: 'date', nullable: true }) dateSignatureArretes: string | null;
+  @Column({ type: 'date', nullable: true }) dateSignatureDecrets: string | null;
+  @Column({ type: 'text', nullable: true }) observation: string | null;
+  @CreateDateColumn() creeLe: Date;
+}
+
+/** Une personne recrutée (ligne de la base générale). */
+@Entity('agent')
+export class Agent {
+  @PrimaryGeneratedColumn('uuid') id: string;
+  @Index({ unique: true }) @Column() cle: string;
+  /** MEPPSA (liste du ministère) ou QUOTA_AUTRES. */
+  @Column() feuille: string;
+  @Column({ type: 'int', nullable: true }) quota: number | null;
+  @Column({ type: 'int', nullable: true }) numeroOrdre: number | null;
+  @Column({ type: 'int', nullable: true }) numeroListe: number | null;
+  @Column() nomComplet: string;
+  @Index() @Column() nomNormalise: string;
+  @Column({ type: 'date', nullable: true }) dateNaissance: string | null;
+  @Column({ type: 'varchar', nullable: true }) dateNaissanceBrute:
+    string | null;
+  @Column({ type: 'varchar', nullable: true }) lieuNaissance: string | null;
+  @Column({ type: 'varchar', nullable: true }) diplomeBrut: string | null;
+  @Column({ type: 'varchar', nullable: true }) diplomeCode: string | null;
+  @Column({ type: 'varchar', nullable: true }) departementBrut: string | null;
+  @ManyToOne(() => Departement, { nullable: true, eager: true })
+  @JoinColumn({ name: 'departementId' })
+  departement: Departement | null;
+  @Column({ type: 'int', nullable: true }) departementId: number | null;
+  @Column({ type: 'varchar', nullable: true }) source: string | null;
+  @Column({ type: 'varchar', nullable: true }) cycleBrut: string | null;
+  @Column({ type: 'varchar', nullable: true }) lotCommission: string | null;
+  @Column({ type: 'varchar', nullable: true }) statut: string | null;
+  @Column({ type: 'varchar', nullable: true }) transmission: string | null;
+  @Column({ type: 'varchar', nullable: true }) parapheur: string | null;
+  @Column({ type: 'varchar', nullable: true }) lieuServiceBrut: string | null;
+  @Column({ type: 'varchar', nullable: true }) origineBrute: string | null;
+  @Column({ type: 'text', nullable: true }) observation: string | null;
+  /* ---- Retour Fonction Publique ---- */
+  @Column({ type: 'varchar', nullable: true }) typeTexte:
+    'ARRETE' | 'DECRET' | null;
+  @Column({ type: 'varchar', nullable: true }) numeroTexte: string | null;
+  /** Date de signature propre à ce texte (sinon celle du lot). */
+  @Column({ type: 'date', nullable: true }) dateSignatureTexte: string | null;
+  @Column({ type: 'date', nullable: true }) dateReception: string | null;
+  @ManyToOne(() => LotPublication, { nullable: true, eager: true })
+  @JoinColumn({ name: 'lotPublicationId' })
+  lotPublication: LotPublication | null;
+  @Column({ type: 'int', nullable: true }) lotPublicationId: number | null;
+  /** Statut contractuel imposé par l'arrêté (null = calcul automatique par l'âge). */
+  @Column({ type: 'boolean', nullable: true }) contractuelForce: boolean | null;
+  @Column({ type: 'jsonb', default: () => "'[]'" }) anomalies: string[];
+  /** Anomalies vérifiées à la main : elles ne reviennent pas à la réimportation du fichier. */
+  @Column({ type: 'jsonb', default: () => "'[]'" })
+  anomaliesVerifiees: string[];
+  /* ---- Saisie dans le système (au lieu du fichier Excel) ---- */
+  /** IMPORT = ligne du fichier Excel ; SAISIE = fiche enregistrée dans le système. */
+  @Column({ type: 'varchar', default: 'IMPORT' }) origineFiche:
+    'IMPORT' | 'SAISIE';
+  /** Fiche saisie : à contrôler (relecture du dossier), contrôlée, puis validée par le DG. */
+  @Column({ type: 'varchar', nullable: true }) etatFiche:
+    'A_CONTROLER' | 'CONTROLEE' | 'VALIDEE' | null;
+  @Column({ type: 'varchar', nullable: true }) saisiePar: string | null;
+  @Column({ type: 'varchar', nullable: true }) controleePar: string | null;
+  @Column({ type: 'varchar', nullable: true }) valideePar: string | null;
+  /** Date de dépôt du dossier : l'âge minimum (18 ans) s'apprécie à cette date. */
+  @Column({ type: 'date', nullable: true }) dateDepot: string | null;
+  /** Au-delà de l'âge maximum : dossier en contentieux, décidé par le DG. */
+  @Column({ type: 'varchar', nullable: true }) contentieuxAge:
+    'EN_ATTENTE' | 'APPROUVE' | 'REJETE' | null;
+  @Column({ type: 'varchar', nullable: true }) contentieuxPar: string | null;
+  /** Département attribué par une répartition automatique du quota « Autres ». */
+  @Column({ type: 'uuid', nullable: true }) repartitionId: string | null;
+  /** Fiche corrigée après son envoi à la Fonction Publique (à signaler à la FP). */
+  @Column({ type: 'boolean', default: false }) rectifiee: boolean;
+  /** Remarque du contrôleur quand il renvoie la fiche pour correction. */
+  @Column({ type: 'text', nullable: true }) remarqueControle: string | null;
+  /**
+   * Nature du lot de la commission : VOLONTAIRE (un seul diplôme professionnel),
+   * COMMUNAUTAIRE (diplômes du cycle mélangés) ou MIXTE (volontaires et communautaires
+   * du même cycle). Vide pour les fiches anciennes : déduite du statut.
+   */
+  @Column({ type: 'varchar', nullable: true }) lotNature:
+    'VOLONTAIRE' | 'COMMUNAUTAIRE' | 'MIXTE' | null;
+  /**
+   * Dossier validé mis à part (budget ou quota dépassé) : quota d'où il vient. Il passe
+   * au quota suivant, où il part en priorité.
+   */
+  @Column({ type: 'int', nullable: true }) reporteDe: number | null;
+  @Column({ type: 'text', nullable: true }) reportMotif: string | null;
+  @Column({ type: 'varchar', nullable: true }) reportePar: string | null;
+  @Column({ type: 'timestamptz', nullable: true }) reporteLe: Date | null;
+  /** Membre de la commission qui a apporté le dossier (sur une de ses places). */
+  @Index() @Column({ type: 'uuid', nullable: true }) membreCommissionId:
+    string | null;
+  /** N° de la transmission à la Fonction Publique (1ère, 2ème…), propre à chaque quota. */
+  @Index() @Column({ type: 'int', nullable: true }) transmissionNumero:
+    number | null;
+  /**
+   * Dossier mis de côté après son envoi (la FP le dit incomplet) : n° de la
+   * transmission d'où il sort, pour pouvoir l'y rattacher une fois corrigé.
+   */
+  @Column({ type: 'int', nullable: true }) transmissionOrigine: number | null;
+  @Column({ type: 'text', nullable: true }) misDeCoteMotif: string | null;
+  @Column({ type: 'varchar', nullable: true }) misDeCotePar: string | null;
+  @Column({ type: 'timestamptz', nullable: true }) misDeCoteLe: Date | null;
+  @Column({ type: 'date', nullable: true }) transmisLe: string | null;
+  /** Texte de la FP enregistré dans le système : protégé lors d'un import Excel. */
+  @Column({ type: 'varchar', nullable: true }) textePointePar: string | null;
+  @Column({ type: 'timestamptz', nullable: true }) textePointeLe: Date | null;
+  @CreateDateColumn() creeLe: Date;
+  @UpdateDateColumn() modifieLe: Date;
+}
+
+/* ============================ Affectations ============================ */
+
+export const STATUTS_AFFECTATION = ['A_TRAITER', 'EXCLU', 'AFFECTE'] as const;
+
+@Entity('affectation')
+export class Affectation {
+  @PrimaryGeneratedColumn('uuid') id: string;
+  @OneToOne(() => Agent, { eager: true, onDelete: 'CASCADE' })
+  @JoinColumn({ name: 'agentId' })
+  agent: Agent;
+  @Index({ unique: true }) @Column() agentId: string;
+  @Index() @Column({ type: 'int' }) lotPublicationId: number;
+  @Column() typeNote: string;
+  @ManyToOne(() => Departement, { nullable: true, eager: true })
+  @JoinColumn({ name: 'departementId' })
+  departement: Departement | null;
+  @Column({ type: 'int', nullable: true }) departementId: number | null;
+  @Column({ type: 'varchar', nullable: true }) structure: string | null;
+  @Column({ type: 'varchar', nullable: true }) etablissement: string | null;
+  @Column({ type: 'varchar', nullable: true }) specialite: string | null;
+  @Column({ type: 'varchar', nullable: true }) obs: string | null;
+  /** Origine interne (recommandation) — non imprimée sur la note. */
+  @Column({ type: 'text', nullable: true }) origine: string | null;
+  @Column({ type: 'varchar', default: 'A_TRAITER' }) statut: string;
+  @Column({ type: 'text', nullable: true }) motifExclusion: string | null;
+  @Column({ type: 'uuid', nullable: true }) noteId: string | null;
+  @Column({ type: 'varchar', nullable: true }) traitePar: string | null;
+  @CreateDateColumn() creeLe: Date;
+  @UpdateDateColumn() modifieLe: Date;
+}
+
+@Entity('recommandation')
+export class Recommandation {
+  @PrimaryGeneratedColumn('uuid') id: string;
+  @ManyToOne(() => Affectation, { eager: true, onDelete: 'CASCADE' })
+  @JoinColumn({ name: 'affectationId' })
+  affectation: Affectation;
+  @Column() affectationId: string;
+  /** Nouvelles valeurs proposées. */
+  @Column({ type: 'varchar', nullable: true }) typeNote: string | null;
+  @Column({ type: 'int', nullable: true }) departementId: number | null;
+  @Column({ type: 'varchar', nullable: true }) structure: string | null;
+  @Column({ type: 'varchar', nullable: true }) etablissement: string | null;
+  /** Qui recommande (ex. « S/C Conseiller X »). */
+  @Column({ type: 'text' }) origine: string;
+  @Column({ type: 'text', nullable: true }) motif: string | null;
+  @Column({ type: 'varchar', default: 'EN_ATTENTE' }) statut:
+    'EN_ATTENTE' | 'VALIDEE' | 'REJETEE';
+  @Column({ type: 'jsonb', nullable: true }) avant: Record<
+    string,
+    unknown
+  > | null;
+  @Column({ type: 'varchar', nullable: true }) soumisPar: string | null;
+  @Column({ type: 'varchar', nullable: true }) decidePar: string | null;
+  @Column({ type: 'timestamptz', nullable: true }) dateDecision: Date | null;
+  @Column({ type: 'text', nullable: true }) commentaireDecision: string | null;
+  @CreateDateColumn() creeLe: Date;
+}
+
+/* ========================== Notes de service ========================== */
+
+export const STATUTS_NOTE = [
+  'BROUILLON',
+  'SOUMISE',
+  'VALIDEE',
+  'SIGNEE',
+] as const;
+export type StatutNote = (typeof STATUTS_NOTE)[number];
+
+@Entity('note_service')
+export class NoteService {
+  @PrimaryGeneratedColumn('uuid') id: string;
+  @Column() module: 'AFFECTATION' | 'MUTATION' | 'ENROLEMENT';
+  /** Affectation : type de note ; mutation : groupe de cycles. */
+  @Column() typeNote: string;
+  @Column({ type: 'varchar', nullable: true }) motif: string | null;
+  @Column({ type: 'int', nullable: true }) lotPublicationId: number | null;
+  /** Note d'enrôlement : campagne d'où viennent les volontaires. */
+  @Column({ type: 'int', nullable: true }) campagneId: number | null;
+  @Column() anneeScolaire: string;
+  @Column({ type: 'int', default: 1 }) rang: number;
+  @Column({ type: 'varchar', nullable: true }) numero: string | null;
+  @Column({ type: 'date', nullable: true }) dateSignature: string | null;
+  @Column({ type: 'varchar', default: 'BROUILLON' }) statut: StatutNote;
+  @Column({ type: 'text' }) introduction: string;
+  /** Contenu figé lors de la validation par le DG. */
+  @Column({ type: 'jsonb', nullable: true }) contenu: unknown;
+  @Column({ type: 'text', nullable: true }) commentaire: string | null;
+  @Column({ type: 'varchar', nullable: true }) creePar: string | null;
+  @Column({ type: 'varchar', nullable: true }) soumisePar: string | null;
+  @Column({ type: 'varchar', nullable: true }) valideePar: string | null;
+  @Column({ type: 'timestamptz', nullable: true }) valideeLe: Date | null;
+  /**
+   * Avis de conformité donnés après la validation du DG, avant l'impression pour la signature :
+   * le chef de bureau, le chef de service et le directeur lisent la note et disent si elle est conforme.
+   */
+  @Column({ type: 'jsonb', default: () => "'[]'" })
+  conformite: AvisConformite[];
+  /** À qui le DG a ordonné d'imprimer la version pour la signature : DIRECTEUR ou SECRETARIAT. */
+  @Column({ type: 'varchar', nullable: true }) impressionPour: string | null;
+  @Column({ type: 'varchar', nullable: true }) impressionOrdonneePar:
+    string | null;
+  @Column({ type: 'timestamptz', nullable: true })
+  impressionOrdonneeLe: Date | null;
+  /** Scan PDF de la note signée par le ministre (archives) : c'est lui qui clôture l'opération. */
+  @Column({ type: 'varchar', nullable: true }) scanFichier: string | null;
+  @Column({ type: 'varchar', nullable: true }) scanNom: string | null;
+  @Column({ type: 'timestamptz', nullable: true }) scanLe: Date | null;
+  @Column({ type: 'varchar', nullable: true }) scanPar: string | null;
+  @CreateDateColumn() creeLe: Date;
+  @UpdateDateColumn() modifieLe: Date;
+}
+
+/** Avis de conformité d'un niveau (chef de bureau, chef de service, directeur) sur une note validée. */
+export interface AvisConformite {
+  niveau: 'BUREAU' | 'SERVICE' | 'DIRECTION';
+  par: string;
+  le: string;
+  conforme: boolean;
+  remarque: string | null;
+}
+
+/* ============================== Mutations ============================= */
+
+/** Une étape du circuit d'une demande. */
+export interface EtapeCircuit {
+  /** EXTERNE (voie hiérarchique) ou INTERNE (DGRHAS). */
+  phase: 'EXTERNE' | 'INTERNE';
+  structureId: number | null;
+  type: string;
+  sigle: string;
+  nom: string;
+  /** Date d'arrivée du dossier à cette étape. */
+  arriveeLe: string | null;
+  visaPar: string | null;
+  visaLe: string | null;
+  avis: 'FAVORABLE' | 'REJET' | null;
+  motivation: string | null;
+  /** Avis porté sur le formulaire papier (cachet), recopié par la DGRHAS. */
+  surPapier?: boolean;
+  /** Étape franchie sans avis (structure absente, demande importée…). */
+  sautee?: string | null;
+}
+
+@Entity('demande_mutation')
+export class DemandeMutation {
+  @PrimaryGeneratedColumn('uuid') id: string;
+  @Index({ unique: true }) @Column() cle: string;
+  @Column({ type: 'int' }) numeroEnregistrement: number;
+  @Column({ type: 'date', nullable: true }) dateEnregistrement: string | null;
+  @Column() nomComplet: string;
+  @Column({ type: 'varchar', length: 1, default: 'M' }) genre: 'M' | 'F';
+  @Column({ type: 'varchar', nullable: true }) grade: string | null;
+  @Column({ type: 'int', nullable: true }) echelon: number | null;
+  @Column({ type: 'varchar', nullable: true }) gradeBrut: string | null;
+  @Column({ type: 'varchar', nullable: true }) matricule: string | null;
+  @Column({ type: 'varchar', default: 'FONCTIONNAIRE' }) typeAgent:
+    'FONCTIONNAIRE' | 'FINALISTE';
+  @Column({ type: 'varchar', default: 'ENSEIGNANT' }) statutAgent:
+    'ENSEIGNANT' | 'PERSONNEL_ADMINISTRATIF';
+  @ManyToOne(() => Departement, { nullable: true, eager: true })
+  @JoinColumn({ name: 'departementOrigineId' })
+  departementOrigine: Departement | null;
+  @Column({ type: 'int', nullable: true }) departementOrigineId: number | null;
+  @Column({ type: 'varchar', nullable: true }) lieuService: string | null;
+  @Column({ type: 'varchar', nullable: true }) cycle: string | null;
+  @Column({ type: 'varchar', nullable: true }) specialite: string | null;
+  @Column({ type: 'date', nullable: true }) datePriseService: string | null;
+  @Column({ type: 'int', nullable: true }) dureeMois: number | null;
+  @ManyToOne(() => Departement, { nullable: true, eager: true })
+  @JoinColumn({ name: 'departementSolliciteId' })
+  departementSollicite: Departement | null;
+  @Column({ type: 'int', nullable: true }) departementSolliciteId:
+    number | null;
+  @Column({ type: 'varchar', nullable: true }) lieuSollicite: string | null;
+  @Column() motif: string;
+  @Column({ type: 'text', nullable: true }) justificatif: string | null;
+  @Column({ type: 'varchar', nullable: true }) justificatifFichier:
+    string | null;
+  @Column({ type: 'uuid', nullable: true }) permutationAvecId: string | null;
+  @Column({ type: 'text', nullable: true }) origine: string | null;
+  @Column({ type: 'text', nullable: true }) observation: string | null;
+  @Column({ type: 'varchar', nullable: true }) avisDdeppsa:
+    'FAVORABLE' | 'DEFAVORABLE' | null;
+  @Column({ type: 'text', nullable: true }) avisDdeppsaCommentaire:
+    string | null;
+  @Column({ type: 'varchar', nullable: true }) avisDdeppsaPar: string | null;
+  @Column({ type: 'varchar', nullable: true }) avisDgrhas:
+    'FAVORABLE' | 'DEFAVORABLE' | null;
+  @Column({ type: 'text', nullable: true }) avisDgrhasCommentaire:
+    string | null;
+  @Column({ type: 'varchar', nullable: true }) avisDgrhasPar: string | null;
+  @Column({ type: 'varchar', nullable: true }) instructionMinistre:
+    'ACCORDEE' | 'REFUSEE' | null;
+  @Column({ type: 'text', nullable: true }) instructionCommentaire:
+    string | null;
+  @Column({ type: 'varchar', nullable: true }) instructionPar: string | null;
+  @Column({ type: 'boolean', default: false }) retiree: boolean;
+  @Column({ type: 'text', nullable: true }) motifRetrait: string | null;
+  @Column({ type: 'uuid', nullable: true }) noteId: string | null;
+  /* ----- Circuit d'approbation ----- */
+  /** Type de prestation (catalogue) : mutation pour raisons de santé, permutation… */
+  @Column({ type: 'varchar', nullable: true }) typePrestation: string | null;
+  /** Objet de la demande (« Mutation à Brazzaville »). */
+  @Column({ type: 'varchar', nullable: true }) objet: string | null;
+  /** PORTAIL (faite par l'agent en ligne), SAISIE (dossier papier saisi), IMPORT (fichier Excel). */
+  @Column({ type: 'varchar', default: 'SAISIE' }) canal: string;
+  /** Structure où travaille l'agent (point de départ du circuit). */
+  @Column({ type: 'int', nullable: true }) structureOrigineId: number | null;
+  /** Établissement écrit par l'agent s'il n'est pas dans la liste. */
+  @Column({ type: 'varchar', nullable: true }) structureOrigineTexte:
+    string | null;
+  /** Téléphone laissé par l'agent pour être joint (portail). */
+  @Column({ type: 'varchar', nullable: true }) telephone: string | null;
+  /** Code de suivi donné à l'agent (portail), avec le n° d'enregistrement. */
+  @Column({ type: 'varchar', nullable: true, select: false }) codeSuivi:
+    string | null;
+  /** Étapes du circuit : visa, avis (FAVORABLE ou REJET), motivation, dates. */
+  @Column({ type: 'jsonb', nullable: true }) circuit: EtapeCircuit[] | null;
+  /** Étape en cours (index dans le circuit) ; null quand la décision est prise. */
+  @Column({ type: 'int', nullable: true }) etapeCourante: number | null;
+  /** Qui décide : DDEPPSA (mutation dans le département) ou DGRHAS. */
+  @Column({ type: 'varchar', nullable: true }) decideur: string | null;
+  /** ACCORDEE, REJETEE ou EN_INSTANCE. */
+  @Column({ type: 'varchar', nullable: true }) decision: string | null;
+  @Column({ type: 'text', nullable: true }) decisionMotivation: string | null;
+  @Column({ type: 'varchar', nullable: true }) decisionPar: string | null;
+  @Column({ type: 'timestamptz', nullable: true }) decisionLe: Date | null;
+  /** Dossier accordé confié au secrétariat du DG pour imprimer la fiche et les pièces jointes. */
+  @Column({ type: 'timestamptz', nullable: true })
+  envoyeSecretariatLe: Date | null;
+  @Column({ type: 'varchar', nullable: true }) envoyeSecretariatPar:
+    string | null;
+  @Column({ type: 'jsonb', default: () => "'[]'" }) anomalies: string[];
+  @Column({ type: 'varchar', nullable: true }) saisiePar: string | null;
+  @CreateDateColumn() creeLe: Date;
+  @UpdateDateColumn() modifieLe: Date;
+}
+
+/* ============================== Pilotage ============================== */
+
+/** Enveloppe accordée par la Fonction Publique pour un quota (ou le quota « Autres »). */
+@Entity('enveloppe')
+export class Enveloppe {
+  /** Année du quota (« 2026 ») ou « AUTRES ». */
+  @PrimaryColumn() perimetre: string;
+  /** Incidence annuelle autorisée (masse salariale), en FCFA. */
+  @Column({ type: 'bigint', default: 0 }) montantAnnuel: string;
+  @Column({ type: 'int', nullable: true }) placesCatI: number | null;
+  @Column({ type: 'int', nullable: true }) placesCatII: number | null;
+  @Column({ type: 'int', nullable: true }) placesCatIII: number | null;
+  @Column({ type: 'varchar', nullable: true }) modifiePar: string | null;
+  @UpdateDateColumn() modifieLe: Date;
+}
+
+/** Membre de la commission de recrutement et nombre de dossiers qu'il peut apporter (par quota). */
+@Entity('membre_commission')
+export class MembreCommission {
+  @PrimaryGeneratedColumn('uuid') id: string;
+  @Index() @Column({ type: 'int' }) quota: number;
+  @Column() nom: string;
+  @Column({ type: 'varchar', nullable: true }) fonction: string | null;
+  @Column({ type: 'int', default: 0 }) places: number;
+  @Column({ type: 'varchar', nullable: true }) modifiePar: string | null;
+  @CreateDateColumn() creeLe: Date;
+}
+
+/** Répartition automatique du quota « Autres » sans département, validée par le DG. */
+@Entity('repartition')
+export class Repartition {
+  @PrimaryGeneratedColumn('uuid') id: string;
+  /** Nombre de personnes demandé par département (id -> nombre). */
+  @Column({ type: 'jsonb' }) quotas: Record<string, number>;
+  @Column({ type: 'int' }) personnes: number;
+  @Column({ type: 'varchar', nullable: true }) validePar: string | null;
+  @Column({ type: 'boolean', default: false }) annulee: boolean;
+  @CreateDateColumn() creeLe: Date;
+}
+
+/**
+ * Bénéficiaire du quota (structure qui reçoit des places : ministre, syndicats, commission,
+ * directions…). À ne pas confondre avec l'origine d'un dossier (qui l'a apporté).
+ */
+@Entity('beneficiaire')
+export class Beneficiaire {
+  @PrimaryGeneratedColumn() id: number;
+  @Index({ unique: true }) @Column() nom: string;
+  @Column({ type: 'int', default: 0 }) ordre: number;
+  @Column({ type: 'boolean', default: true }) actif: boolean;
+  /** La commission de recrutement : ses places se répartissent entre ses membres. */
+  @Column({ type: 'boolean', default: false }) commission: boolean;
+}
+
+/** Places du quota réajusté par le DG : un bénéficiaire, un cycle, un nombre de places. */
+@Entity('place_beneficiaire')
+export class PlaceBeneficiaire {
+  @PrimaryGeneratedColumn() id: number;
+  @Index() @Column() perimetre: string;
+  @Column({ type: 'int' }) beneficiaireId: number;
+  @Column() cycle: string;
+  @Column({ type: 'int' }) places: number;
+}
+
+/* ===================== Circuits d'approbation des demandes ===================== */
+
+/**
+ * Structure de l'organigramme : établissement, inspection, DDEPPSA (départements scolaires),
+ * service, direction centrale, direction générale (administration centrale), et les
+ * bureaux, services et directions internes de la DGRHAS.
+ */
+@Entity('structure')
+export class Structure {
+  @PrimaryGeneratedColumn() id: number;
+  /** ETABLISSEMENT, INSPECTION, DDEPPSA, SERVICE, DIRECTION_CENTRALE, DIRECTION_GENERALE, BUREAU_DGRHAS, SERVICE_DGRHAS, DIRECTION_DGRHAS, DGRHAS */
+  @Index() @Column() type: string;
+  @Column() nom: string;
+  @Index() @Column() sigle: string;
+  /** Structure au-dessus (l'inspection d'une école, le DDEPPSA d'une inspection…). */
+  @Index() @Column({ type: 'int', nullable: true }) parentId: number | null;
+  @Column({ type: 'int', nullable: true }) departementId: number | null;
+  @Column({ type: 'boolean', default: true }) actif: boolean;
+  /** Rang parmi les structures du même niveau (flèches « monter / descendre »). */
+  @Column({ type: 'int', default: 0 }) ordre: number;
+  @CreateDateColumn() creeLe: Date;
+}
+
+/** Type de prestation (catalogue des circuits d'approbation) : mutation, congé, attestation… */
+@Entity('type_prestation')
+export class TypePrestation {
+  @PrimaryColumn() code: string;
+  /** N° dans le document « Circuits d'approbation des demandes de prestation ». */
+  @Column({ type: 'int' }) numero: number;
+  @Column() libelle: string;
+  /** Acte délivré : note de service, attestation, certificat… */
+  @Column({ type: 'varchar', nullable: true }) acte: string | null;
+  /** Pièces jointes exigées (cases à cocher dans le formulaire). */
+  @Column({ type: 'jsonb', default: () => "'[]'" }) pieces: string[];
+  /** Le circuit passe-t-il par la voie hiérarchique hors DGRHAS (inspection, DDEPPSA…) ? */
+  @Column({ type: 'boolean', default: true }) circuitExterne: boolean;
+  /** Étapes internes à la DGRHAS, dans l'ordre (sigles : « BMP », « SR », « DRSC », « DGRHAS »). */
+  @Column({ type: 'jsonb', default: () => "'[]'" }) etapesInternes: string[];
+  /** LIEU_SERVICE, DDEPPSA, DGRHAS, PREMIER_MINISTRE (la décision du Ministre est sa signature). */
+  @Column({ default: 'DGRHAS' }) decision: string;
+  /** Texte du niveau de décision, tel que dans le document (ex. « DGRHAS-Ministre »). */
+  @Column({ type: 'varchar', nullable: true }) decisionTexte: string | null;
+  /** Motif de mutation correspondant (types de mutation seulement). */
+  @Column({ type: 'varchar', nullable: true }) motifMutation: string | null;
+  /** Ouvert aux demandes (au départ : les mutations seulement). */
+  @Column({ type: 'boolean', default: false }) actif: boolean;
+  @Column({ type: 'int', default: 0 }) ordre: number;
+}
+
+/** Pièce jointe d'une demande de mutation (demande manuscrite scannée, pièces justificatives). */
+@Entity('piece_demande')
+export class PieceDemande {
+  @PrimaryGeneratedColumn('uuid') id: string;
+  @Index() @Column({ type: 'uuid' }) demandeId: string;
+  /** Pièce exigée à laquelle répond le fichier (« Dossier médical »…), ou « Autre pièce ». */
+  @Column() libelle: string;
+  @Column() nomOrigine: string;
+  @Column() fichier: string;
+  @Column() mime: string;
+  @Column({ type: 'int' }) taille: number;
+  @Column({ type: 'varchar', nullable: true }) ajoutePar: string | null;
+  @CreateDateColumn() creeLe: Date;
+}
+
+/** Alerte d'une demande : envoyée aux structures du circuit (et lue par chacun). */
+@Entity('alerte')
+export class Alerte {
+  @PrimaryGeneratedColumn() id: number;
+  @Index() @Column({ type: 'uuid' }) demandeId: string;
+  /** NOUVELLE, A_TRAITER, INSTRUCTION, DECISION */
+  @Column() type: string;
+  @Column({ type: 'text' }) texte: string;
+  /** Structures destinataires (leurs comptes voient l'alerte). */
+  @Column({ type: 'jsonb', default: () => "'[]'" }) structures: number[];
+  @Index() @CreateDateColumn() creeLe: Date;
+}
+
+@Entity('alerte_lue')
+export class AlerteLue {
+  @PrimaryColumn({ type: 'int' }) alerteId: number;
+  @PrimaryColumn({ type: 'uuid' }) utilisateurId: string;
+  @CreateDateColumn() lueLe: Date;
+}
+
+/** Instruction d'un supérieur à l'étape en cours : « à traiter en urgence, pour demain »… */
+@Entity('instruction_demande')
+export class InstructionDemande {
+  @PrimaryGeneratedColumn() id: number;
+  @Index() @Column({ type: 'uuid' }) demandeId: string;
+  /** Étape (index dans le circuit) à qui elle s'adresse. */
+  @Column({ type: 'int' }) etape: number;
+  @Column({ type: 'text' }) texte: string;
+  @Column({ type: 'date', nullable: true }) echeance: string | null;
+  @Column({ type: 'varchar', nullable: true }) par: string | null;
+  @Column({ type: 'varchar', nullable: true }) parStructure: string | null;
+  @CreateDateColumn() creeLe: Date;
+}
+
+/** Origine possible d'un dossier (liste tenue par le DG) : « Cabinet du Ministre », « Primature »… */
+@Entity('origine_dossier')
+export class OrigineDossier {
+  @PrimaryGeneratedColumn() id: number;
+  @Index({ unique: true }) @Column() libelle: string;
+  @Column({ type: 'int', default: 0 }) ordre: number;
+  @Column({ type: 'boolean', default: true }) actif: boolean;
+  /** Bénéficiaire du quota dont l'origine consomme les places (ex. « CSECC » → Syndicats). */
+  @Column({ type: 'int', nullable: true }) beneficiaireId: number | null;
+}
+
+/**
+ * Personne recrutée une année précédente (compilations 2019-2023, listes de volontaires…),
+ * importée seulement pour repérer les doublons d'une année à l'autre.
+ */
+@Entity('ancien_recrute')
+export class AncienRecrute {
+  @PrimaryGeneratedColumn() id: number;
+  @Column() nomComplet: string;
+  @Index() @Column() nomNormalise: string;
+  @Column({ type: 'date', nullable: true }) dateNaissance: string | null;
+  @Column({ type: 'int', nullable: true }) annee: number | null;
+  /** Nom du fichier (et de la feuille) d'où vient la ligne. */
+  @Index() @Column() source: string;
+  @Column({ type: 'varchar', nullable: true }) diplome: string | null;
+  @Column({ type: 'varchar', nullable: true }) importePar: string | null;
+  @CreateDateColumn() creeLe: Date;
+}
+
+/** Pièce jointe d'un dossier : scan du texte de la FP (légalisé ou non). */
+@Entity('piece_jointe')
+export class PieceJointe {
+  @PrimaryGeneratedColumn('uuid') id: string;
+  @Index() @Column({ type: 'uuid' }) agentId: string;
+  /** TEXTE : arrêté ou décret scanné ; AUTRE : autre pièce du dossier. */
+  @Column({ type: 'varchar', default: 'TEXTE' }) nature: string;
+  @Column({ type: 'boolean', default: false }) legalise: boolean;
+  /** Nom d'origine du fichier ; le fichier est rangé sous un nom neutre (uuid). */
+  @Column() nomOrigine: string;
+  @Column() fichier: string;
+  @Column({ type: 'varchar' }) mime: string;
+  @Column({ type: 'int' }) taille: number;
+  @Column({ type: 'varchar', nullable: true }) ajoutePar: string | null;
+  @CreateDateColumn() creeLe: Date;
+}
+
+/**
+ * Note d'affectation où une personne figure, connue hors du système : notes signées sur
+ * papier, reprises du fichier « Contrôle des affectations » (colonnes « Ref affectation »).
+ * Sert à ne pas l'affecter une deuxième fois et à repérer les doubles affectations.
+ */
+@Entity('reference_note')
+@Index(['agentId', 'brut'], { unique: true })
+export class ReferenceNote {
+  @PrimaryGeneratedColumn('uuid') id: string;
+  @Index() @Column({ type: 'uuid' }) agentId: string;
+  /** Tel qu'écrit dans le fichier : « 270 du 08/04/2026 BZ ». */
+  @Column() brut: string;
+  /** N° de la note (« 270 »), si lisible. */
+  @Index() @Column({ type: 'varchar', nullable: true }) numero: string | null;
+  @Column({ type: 'date', nullable: true }) date: string | null;
+  @Column({ type: 'varchar', nullable: true }) lieuAffectation: string | null;
+  @Column({ type: 'varchar', nullable: true }) service: string | null;
+  @Column({ type: 'varchar', nullable: true }) lieuService: string | null;
+  /** Fichier d'où vient la référence (réimporter le même fichier remplace ses références). */
+  @Index() @Column() source: string;
+  @Column({ type: 'varchar', nullable: true }) importePar: string | null;
+  @CreateDateColumn() creeLe: Date;
+}
+
+/* ========================= Enrôlement des volontaires ========================= */
+
+/**
+ * Campagne d'enrôlement (ex. « Enrôlement 2026 ») : les finalistes des écoles professionnelles
+ * deviennent enseignants volontaires (bourse, contrat de 5 ans). Le quota est fixé par la DGRHAS.
+ * Rien ne part à la Fonction Publique : tout se décide ici, jusqu'à la note de service.
+ */
+@Entity('campagne_enrolement')
+export class CampagneEnrolement {
+  @PrimaryGeneratedColumn() id: number;
+  @Index({ unique: true }) @Column({ type: 'int' }) annee: number;
+  /** Année scolaire proposée pour les notes (ex. « 2026-2027 »). */
+  @Column() anneeScolaire: string;
+  /** Nombre de volontaires à retenir (0 : pas encore fixé) ; somme des places par cycle quand elles sont fixées. */
+  @Column({ type: 'int', default: 0 }) quota: number;
+  /** Enveloppe de bourses de la campagne, en FCFA (0 : pas fixée) : on ne peut pas la dépasser. */
+  @Column({ type: 'bigint', default: 0 }) enveloppe: string;
+  /** Places prévues par cycle (Préscolaire, Primaire, Collège, Lycée, Administration). */
+  @Column({ type: 'jsonb', default: () => "'{}'" })
+  placesParCycle: Record<string, number>;
+  /** Bourse versée à chaque volontaire, selon son cycle, en FCFA. */
+  @Column({ type: 'jsonb', default: () => "'{}'" })
+  montantsParCycle: Record<string, number>;
+  @Column({ type: 'boolean', default: true }) ouverte: boolean;
+  @Column({ type: 'varchar', nullable: true }) observation: string | null;
+  @CreateDateColumn() creeLe: Date;
+}
+
+/** Membre de la commission d'une campagne d'enrôlement, avec ses places. */
+@Entity('membre_enrolement')
+export class MembreEnrolement {
+  @PrimaryGeneratedColumn('uuid') id: string;
+  @Index() @Column({ type: 'int' }) campagneId: number;
+  @Column() nom: string;
+  @Column({ type: 'varchar', nullable: true }) fonction: string | null;
+  @Column({ type: 'int', default: 0 }) places: number;
+  @CreateDateColumn() creeLe: Date;
+}
+
+/** Candidat à l'enrôlement (finaliste) : saisi, contrôlé, puis retenu ou non par la DGRHAS. */
+@Entity('enrole')
+export class Enrole {
+  @PrimaryGeneratedColumn('uuid') id: string;
+  @Index() @Column({ type: 'int' }) campagneId: number;
+  @Column() nomComplet: string;
+  @Index() @Column() nomNormalise: string;
+  @Column({ type: 'date', nullable: true }) dateNaissance: string | null;
+  @Column({ type: 'varchar', nullable: true }) lieuNaissance: string | null;
+  /** BET, CFEEN, DEMA, DCAF, LICENCE, MASTER, AUTRE */
+  @Column() diplome: string;
+  @Column({ type: 'varchar', nullable: true }) diplomePrecision: string | null;
+  /** Année de sortie de l'école. */
+  @Column({ type: 'varchar', nullable: true }) promotion: string | null;
+  @Column({ type: 'varchar', nullable: true }) cycle: string | null;
+  @Column({ type: 'varchar', nullable: true }) specialite: string | null;
+  /** Trois départements souhaités, dans l'ordre. */
+  @Column({ type: 'jsonb', default: () => "'[]'" })
+  departementsSouhaites: number[];
+  @Column({ type: 'int', nullable: true }) departementRetenuId: number | null;
+  @Column({ type: 'varchar', nullable: true }) etablissement: string | null;
+  @Column({ type: 'varchar', nullable: true }) telephone: string | null;
+  @Column({ type: 'varchar', nullable: true }) origineBrute: string | null;
+  @Column({ type: 'uuid', nullable: true }) membreId: string | null;
+  @Column({ type: 'text', nullable: true }) observation: string | null;
+  /** A_CONTROLER → CONTROLE (à décider par la DGRHAS) → RETENU / NON_RETENU */
+  @Index() @Column({ default: 'A_CONTROLER' }) etat: string;
+  @Column({ type: 'text', nullable: true }) remarqueControle: string | null;
+  @Column({ type: 'text', nullable: true }) motifDecision: string | null;
+  @Column({ type: 'varchar', nullable: true }) saisiePar: string | null;
+  @Column({ type: 'varchar', nullable: true }) controlePar: string | null;
+  @Column({ type: 'varchar', nullable: true }) decidePar: string | null;
+  @Column({ type: 'timestamptz', nullable: true }) decideLe: Date | null;
+  /** Note de service validée où figure le volontaire. */
+  @Index() @Column({ type: 'uuid', nullable: true }) noteId: string | null;
+  @CreateDateColumn() creeLe: Date;
+  @UpdateDateColumn() modifieLe: Date;
+}
+
+export const ENTITES = [
+  Utilisateur,
+  Journal,
+  Parametre,
+  Departement,
+  Grade,
+  RegleDiplome,
+  LotPublication,
+  Agent,
+  Affectation,
+  Recommandation,
+  NoteService,
+  DemandeMutation,
+  Enveloppe,
+  Repartition,
+  MembreCommission,
+  PaquetReception,
+  OrigineDossier,
+  AncienRecrute,
+  PieceJointe,
+  Structure,
+  TypePrestation,
+  PieceDemande,
+  Alerte,
+  AlerteLue,
+  InstructionDemande,
+  Beneficiaire,
+  PlaceBeneficiaire,
+  ReferenceNote,
+  CampagneEnrolement,
+  MembreEnrolement,
+  Enrole,
+];

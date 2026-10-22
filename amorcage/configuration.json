@@ -1,0 +1,2461 @@
+{
+  "version": 1,
+  "exporteLe": "2026-10-22T15:46:27.979Z",
+  "departements": [
+    {
+      "id": 1,
+      "code": "BOUENZA"
+    },
+    {
+      "id": 2,
+      "code": "BRAZZAVILLE"
+    },
+    {
+      "id": 3,
+      "code": "CONGO_OUBANGUI"
+    },
+    {
+      "id": 4,
+      "code": "CUVETTE"
+    },
+    {
+      "id": 5,
+      "code": "CUVETTE_OUEST"
+    },
+    {
+      "id": 6,
+      "code": "DJOUE_LEFINI"
+    },
+    {
+      "id": 7,
+      "code": "KOUILOU"
+    },
+    {
+      "id": 8,
+      "code": "LEKOUMOU"
+    },
+    {
+      "id": 9,
+      "code": "LIKOUALA"
+    },
+    {
+      "id": 10,
+      "code": "NIARI"
+    },
+    {
+      "id": 11,
+      "code": "NKENI_ALIMA"
+    },
+    {
+      "id": 12,
+      "code": "PLATEAUX"
+    },
+    {
+      "id": 13,
+      "code": "POINTE_NOIRE"
+    },
+    {
+      "id": 14,
+      "code": "POOL"
+    },
+    {
+      "id": 15,
+      "code": "SANGHA"
+    }
+  ],
+  "parametres": [
+    {
+      "cle": "ANNEE_SCOLAIRE",
+      "valeur": "2026-2027",
+      "description": "Année scolaire mentionnée dans les notes"
+    },
+    {
+      "cle": "ANNEE_SCOLAIRE_MUTATION",
+      "valeur": "2026-2027",
+      "description": "Année scolaire des notes de mutation (vide : la même que ci-dessus). Les notes pas encore validées la reprennent."
+    },
+    {
+      "cle": "CAMPAGNE_RECRUTEMENT",
+      "valeur": "2026-2027",
+      "description": "Campagne de recrutement inscrite sur la liste envoyée à la Fonction Publique"
+    },
+    {
+      "cle": "DG_NOM",
+      "valeur": "Christophe POATY",
+      "description": "Nom du Directeur général imprimé sous sa signature (vide : le nom du compte qui a décidé)"
+    },
+    {
+      "cle": "MIGRATION_REGLES_DG_20261017",
+      "valeur": "2026-10-17T19:52:40.419Z",
+      "description": "Corrections des règles demandées par le DG (appliquées une fois)"
+    },
+    {
+      "cle": "TAILLE_LOT_COMMISSION",
+      "valeur": "50",
+      "description": "Nombre maximum de dossiers dans un lot de la commission"
+    }
+  ],
+  "grades": [
+    {
+      "code": "CHAUFFEUR",
+      "abreviation": "Chauffeur",
+      "libelle": "Chauffeur",
+      "categorie": "III",
+      "echelle": 3,
+      "echelon": 1,
+      "indice": 340
+    },
+    {
+      "code": "COM_SAF",
+      "abreviation": "Com. des SAF",
+      "libelle": "Commis des services administratifs et financiers",
+      "categorie": "III",
+      "echelle": 1,
+      "echelon": 1,
+      "indice": 350
+    },
+    {
+      "code": "ECON",
+      "abreviation": "Econ.",
+      "libelle": "Économe",
+      "categorie": "II",
+      "echelle": 1,
+      "echelon": 1,
+      "indice": 488
+    },
+    {
+      "code": "INST",
+      "abreviation": "Inst.",
+      "libelle": "Instituteur",
+      "categorie": "II",
+      "echelle": 1,
+      "echelon": 1,
+      "indice": 488
+    },
+    {
+      "code": "INST_A",
+      "abreviation": "Inst.A.",
+      "libelle": "Instituteur adjoint",
+      "categorie": "II",
+      "echelle": 2,
+      "echelon": 1,
+      "indice": 464
+    },
+    {
+      "code": "PCEG",
+      "abreviation": "PCEG",
+      "libelle": "Professeur des CEG",
+      "categorie": "I",
+      "echelle": 2,
+      "echelon": 1,
+      "indice": 594
+    },
+    {
+      "code": "PCL",
+      "abreviation": "PCL",
+      "libelle": "Professeur des lycées",
+      "categorie": "I",
+      "echelle": 1,
+      "echelon": 1,
+      "indice": 730
+    },
+    {
+      "code": "PTACET",
+      "abreviation": "PTACET",
+      "libelle": "Professeur technique adjoint des CET",
+      "categorie": "II",
+      "echelle": 1,
+      "echelon": 1,
+      "indice": 488
+    }
+  ],
+  "regles": [
+    {
+      "code": "BAC",
+      "libelle": "BAC",
+      "cycle": "PRIMAIRE",
+      "typeNote": "PRIMAIRE",
+      "gradeCode": "INST",
+      "ecritures": [
+        "BAC"
+      ],
+      "grade": "Inst.",
+      "gradeLibelle": "Instituteur",
+      "categorie": "II",
+      "echelle": 1,
+      "echelon": 1,
+      "indice": 488
+    },
+    {
+      "code": "BEP",
+      "libelle": "BEP",
+      "cycle": "PRIMAIRE",
+      "typeNote": "PRIMAIRE",
+      "gradeCode": "INST",
+      "ecritures": [
+        "BEP"
+      ],
+      "grade": "Inst.",
+      "gradeLibelle": "Instituteur",
+      "categorie": "II",
+      "echelle": 1,
+      "echelon": 1,
+      "indice": 488
+    },
+    {
+      "code": "BEPC",
+      "libelle": "BEPC",
+      "cycle": "PRESCOLAIRE",
+      "typeNote": "PRESCOLAIRE",
+      "gradeCode": "INST_A",
+      "ecritures": [
+        "BEPC"
+      ],
+      "grade": "Inst.A.",
+      "gradeLibelle": "Instituteur adjoint",
+      "categorie": "II",
+      "echelle": 2,
+      "echelon": 1,
+      "indice": 464
+    },
+    {
+      "code": "BET",
+      "libelle": "BET",
+      "cycle": "PRESCOLAIRE",
+      "typeNote": "PRESCOLAIRE",
+      "gradeCode": "INST_A",
+      "ecritures": [
+        "BET",
+        "BET-Préscolaire"
+      ],
+      "grade": "Inst.A.",
+      "gradeLibelle": "Instituteur adjoint",
+      "categorie": "II",
+      "echelle": 2,
+      "echelon": 1,
+      "indice": 464
+    },
+    {
+      "code": "BTF",
+      "libelle": "BTF",
+      "cycle": "PRESCOLAIRE",
+      "typeNote": "PRESCOLAIRE",
+      "gradeCode": "INST_A",
+      "ecritures": [
+        "BTF"
+      ],
+      "grade": "Inst.A.",
+      "gradeLibelle": "Instituteur adjoint",
+      "categorie": "II",
+      "echelle": 2,
+      "echelon": 1,
+      "indice": 464
+    },
+    {
+      "code": "BTS",
+      "libelle": "BTS",
+      "cycle": "COLLEGE",
+      "typeNote": "DECRET_COLLEGE",
+      "gradeCode": "PCEG",
+      "ecritures": [
+        "BTS"
+      ],
+      "grade": "PCEG",
+      "gradeLibelle": "Professeur des CEG",
+      "categorie": "I",
+      "echelle": 2,
+      "echelon": 1,
+      "indice": 594
+    },
+    {
+      "code": "CAPCEG",
+      "libelle": "CAPCEG",
+      "cycle": "COLLEGE",
+      "typeNote": "DECRET_COLLEGE",
+      "gradeCode": "PCEG",
+      "ecritures": [
+        "CAPCEG"
+      ],
+      "grade": "PCEG",
+      "gradeLibelle": "Professeur des CEG",
+      "categorie": "I",
+      "echelle": 2,
+      "echelon": 1,
+      "indice": 594
+    },
+    {
+      "code": "CAPES",
+      "libelle": "CAPES",
+      "cycle": "LYCEE",
+      "typeNote": "DECRET_LYCEE",
+      "gradeCode": "PCL",
+      "ecritures": [
+        "CAPES"
+      ],
+      "grade": "PCL",
+      "gradeLibelle": "Professeur des lycées",
+      "categorie": "I",
+      "echelle": 1,
+      "echelon": 1,
+      "indice": 730
+    },
+    {
+      "code": "CAPT",
+      "libelle": "CAPT",
+      "cycle": "PRIMAIRE",
+      "typeNote": "PRIMAIRE",
+      "gradeCode": "INST",
+      "ecritures": [
+        "CAPT"
+      ],
+      "grade": "Inst.",
+      "gradeLibelle": "Instituteur",
+      "categorie": "II",
+      "echelle": 1,
+      "echelon": 1,
+      "indice": 488
+    },
+    {
+      "code": "CEPE",
+      "libelle": "CEPE",
+      "cycle": "ADMINISTRATION",
+      "typeNote": "PERS_ADM",
+      "gradeCode": "COM_SAF",
+      "ecritures": [
+        "CEPE",
+        "CEP"
+      ],
+      "grade": "Com. des SAF",
+      "gradeLibelle": "Commis des services administratifs et financiers",
+      "categorie": "III",
+      "echelle": 1,
+      "echelon": 1,
+      "indice": 350
+    },
+    {
+      "code": "CFEEN",
+      "libelle": "CFEEN PRIMAIRE",
+      "cycle": "PRIMAIRE",
+      "typeNote": "PRIMAIRE",
+      "gradeCode": "INST",
+      "ecritures": [
+        "CFEEN PRIMAIRE",
+        "CFEEN",
+        "CFEN"
+      ],
+      "grade": "Inst.",
+      "gradeLibelle": "Instituteur",
+      "categorie": "II",
+      "echelle": 1,
+      "echelon": 1,
+      "indice": 488
+    },
+    {
+      "code": "CFEEN_PRESCO",
+      "libelle": "CFEEN préscolaire",
+      "cycle": "PRESCOLAIRE",
+      "typeNote": "PRESCOLAIRE",
+      "gradeCode": "INST",
+      "ecritures": [
+        "CFEEN-Préscolaire",
+        "CFEEN Préscolaire",
+        "CFEEN Presco"
+      ],
+      "grade": "Inst.",
+      "gradeLibelle": "Instituteur",
+      "categorie": "II",
+      "echelle": 1,
+      "echelon": 1,
+      "indice": 488
+    },
+    {
+      "code": "DCAF",
+      "libelle": "DCAF",
+      "cycle": "ADMINISTRATION",
+      "typeNote": "PERS_ADM",
+      "gradeCode": "ECON",
+      "ecritures": [
+        "DCAF"
+      ],
+      "grade": "Econ.",
+      "gradeLibelle": "Économe",
+      "categorie": "II",
+      "echelle": 1,
+      "echelon": 1,
+      "indice": 488
+    },
+    {
+      "code": "DECS",
+      "libelle": "DECS",
+      "cycle": "PRIMAIRE",
+      "typeNote": "PRIMAIRE",
+      "gradeCode": "INST",
+      "ecritures": [
+        "DECS",
+        "DCAS"
+      ],
+      "grade": "Inst.",
+      "gradeLibelle": "Instituteur",
+      "categorie": "II",
+      "echelle": 1,
+      "echelon": 1,
+      "indice": 488
+    },
+    {
+      "code": "DEMA",
+      "libelle": "DEMA",
+      "cycle": "COLLEGE",
+      "typeNote": "DEMA",
+      "gradeCode": "PTACET",
+      "ecritures": [
+        "DEMA"
+      ],
+      "grade": "PTACET",
+      "gradeLibelle": "Professeur technique adjoint des CET",
+      "categorie": "II",
+      "echelle": 1,
+      "echelon": 1,
+      "indice": 488
+    },
+    {
+      "code": "DEUG",
+      "libelle": "DEUG",
+      "cycle": "COLLEGE",
+      "typeNote": "DECRET_COLLEGE",
+      "gradeCode": "PCEG",
+      "ecritures": [
+        "DEUG"
+      ],
+      "grade": "PCEG",
+      "gradeLibelle": "Professeur des CEG",
+      "categorie": "I",
+      "echelle": 2,
+      "echelon": 1,
+      "indice": 594
+    },
+    {
+      "code": "DIPLOME_ETAT",
+      "libelle": "Diplôme d'État",
+      "cycle": "PRIMAIRE",
+      "typeNote": "PRIMAIRE",
+      "gradeCode": "INST",
+      "ecritures": [
+        "Dip. d'État",
+        "Diplôme d'État"
+      ],
+      "grade": "Inst.",
+      "gradeLibelle": "Instituteur",
+      "categorie": "II",
+      "echelle": 1,
+      "echelon": 1,
+      "indice": 488
+    },
+    {
+      "code": "DUT",
+      "libelle": "DUT",
+      "cycle": "COLLEGE",
+      "typeNote": "DECRET_COLLEGE",
+      "gradeCode": "PCEG",
+      "ecritures": [
+        "DUT"
+      ],
+      "grade": "PCEG",
+      "gradeLibelle": "Professeur des CEG",
+      "categorie": "I",
+      "echelle": 2,
+      "echelon": 1,
+      "indice": 594
+    },
+    {
+      "code": "LICENCE",
+      "libelle": "Licence",
+      "cycle": "COLLEGE",
+      "typeNote": "DECRET_COLLEGE",
+      "gradeCode": "PCEG",
+      "ecritures": [
+        "Licence"
+      ],
+      "grade": "PCEG",
+      "gradeLibelle": "Professeur des CEG",
+      "categorie": "I",
+      "echelle": 2,
+      "echelon": 1,
+      "indice": 594
+    },
+    {
+      "code": "MAITRISE",
+      "libelle": "Maîtrise",
+      "cycle": "LYCEE",
+      "typeNote": "DECRET_LYCEE",
+      "gradeCode": "PCL",
+      "ecritures": [
+        "Maîtrise"
+      ],
+      "grade": "PCL",
+      "gradeLibelle": "Professeur des lycées",
+      "categorie": "I",
+      "echelle": 1,
+      "echelon": 1,
+      "indice": 730
+    },
+    {
+      "code": "MASTER",
+      "libelle": "Master",
+      "cycle": "LYCEE",
+      "typeNote": "DECRET_LYCEE",
+      "gradeCode": "PCL",
+      "ecritures": [
+        "Master"
+      ],
+      "grade": "PCL",
+      "gradeLibelle": "Professeur des lycées",
+      "categorie": "I",
+      "echelle": 1,
+      "echelon": 1,
+      "indice": 730
+    },
+    {
+      "code": "PERMIS",
+      "libelle": "Permis de conduire",
+      "cycle": "ADMINISTRATION",
+      "typeNote": "PERS_ADM",
+      "gradeCode": "CHAUFFEUR",
+      "ecritures": [
+        "Permis"
+      ],
+      "grade": "Chauffeur",
+      "gradeLibelle": "Chauffeur",
+      "categorie": "III",
+      "echelle": 3,
+      "echelon": 1,
+      "indice": 340
+    }
+  ],
+  "structures": [
+    {
+      "id": 1,
+      "type": "DGRHAS",
+      "nom": "Direction générale des ressources humaines et de l’administration scolaire",
+      "sigle": "DGRHAS",
+      "parentId": null,
+      "departementId": null,
+      "actif": true,
+      "ordre": 0
+    },
+    {
+      "id": 2,
+      "type": "DIRECTION_DGRHAS",
+      "nom": "Direction des recrutements et du suivi des carrières",
+      "sigle": "DRSC",
+      "parentId": 1,
+      "departementId": null,
+      "actif": true,
+      "ordre": 1
+    },
+    {
+      "id": 3,
+      "type": "DIRECTION_DGRHAS",
+      "nom": "Direction des affaires administratives et financières",
+      "sigle": "DAAF",
+      "parentId": 1,
+      "departementId": null,
+      "actif": true,
+      "ordre": 3
+    },
+    {
+      "id": 4,
+      "type": "DIRECTION_DGRHAS",
+      "nom": "Direction DFC (intitulé à compléter)",
+      "sigle": "DFC",
+      "parentId": 1,
+      "departementId": null,
+      "actif": true,
+      "ordre": 2
+    },
+    {
+      "id": 5,
+      "type": "SERVICE_DGRHAS",
+      "nom": "Service de recrutement",
+      "sigle": "SR",
+      "parentId": 2,
+      "departementId": null,
+      "actif": true,
+      "ordre": 0
+    },
+    {
+      "id": 6,
+      "type": "SERVICE_DGRHAS",
+      "nom": "Service SD (intitulé à compléter)",
+      "sigle": "SD",
+      "parentId": 2,
+      "departementId": null,
+      "actif": true,
+      "ordre": 0
+    },
+    {
+      "id": 7,
+      "type": "SERVICE_DGRHAS",
+      "nom": "Service SSC (intitulé à compléter)",
+      "sigle": "SSC",
+      "parentId": 2,
+      "departementId": null,
+      "actif": true,
+      "ordre": 0
+    },
+    {
+      "id": 8,
+      "type": "SERVICE_DGRHAS",
+      "nom": "Service SAARH (intitulé à compléter)",
+      "sigle": "SAARH",
+      "parentId": 3,
+      "departementId": null,
+      "actif": true,
+      "ordre": 0
+    },
+    {
+      "id": 9,
+      "type": "SERVICE_DGRHAS",
+      "nom": "Service SFM (intitulé à compléter)",
+      "sigle": "SFM",
+      "parentId": 3,
+      "departementId": null,
+      "actif": true,
+      "ordre": 0
+    },
+    {
+      "id": 10,
+      "type": "SERVICE_DGRHAS",
+      "nom": "Service SSS (intitulé à compléter)",
+      "sigle": "SSS",
+      "parentId": 4,
+      "departementId": null,
+      "actif": true,
+      "ordre": 0
+    },
+    {
+      "id": 11,
+      "type": "BUREAU_DGRHAS",
+      "nom": "Bureau des mouvements du personnel",
+      "sigle": "BMP",
+      "parentId": 5,
+      "departementId": null,
+      "actif": true,
+      "ordre": 0
+    },
+    {
+      "id": 12,
+      "type": "BUREAU_DGRHAS",
+      "nom": "Bureau BR (intitulé à compléter)",
+      "sigle": "BR",
+      "parentId": 5,
+      "departementId": null,
+      "actif": true,
+      "ordre": 0
+    },
+    {
+      "id": 13,
+      "type": "BUREAU_DGRHAS",
+      "nom": "Bureau BC (intitulé à compléter)",
+      "sigle": "BC",
+      "parentId": 6,
+      "departementId": null,
+      "actif": true,
+      "ordre": 0
+    },
+    {
+      "id": 14,
+      "type": "BUREAU_DGRHAS",
+      "nom": "Bureau BF (intitulé à compléter)",
+      "sigle": "BF",
+      "parentId": 5,
+      "departementId": null,
+      "actif": true,
+      "ordre": 0
+    },
+    {
+      "id": 15,
+      "type": "BUREAU_DGRHAS",
+      "nom": "Bureau BPIPCS (intitulé à compléter)",
+      "sigle": "BPIPCS",
+      "parentId": 7,
+      "departementId": null,
+      "actif": true,
+      "ordre": 0
+    },
+    {
+      "id": 16,
+      "type": "BUREAU_DGRHAS",
+      "nom": "Bureau BSCIP (intitulé à compléter)",
+      "sigle": "BSCIP",
+      "parentId": 7,
+      "departementId": null,
+      "actif": true,
+      "ordre": 0
+    },
+    {
+      "id": 17,
+      "type": "BUREAU_DGRHAS",
+      "nom": "Bureau BRH (intitulé à compléter)",
+      "sigle": "BRH",
+      "parentId": 8,
+      "departementId": null,
+      "actif": true,
+      "ordre": 0
+    },
+    {
+      "id": 18,
+      "type": "BUREAU_DGRHAS",
+      "nom": "Bureau BAMSFS (intitulé à compléter)",
+      "sigle": "BAMSFS",
+      "parentId": 10,
+      "departementId": null,
+      "actif": true,
+      "ordre": 0
+    },
+    {
+      "id": 19,
+      "type": "DDEPPSA",
+      "nom": "Direction départementale de l’enseignement préscolaire, primaire, secondaire et de l’alphabétisation (Bouenza)",
+      "sigle": "DDEPPSA Bouenza",
+      "parentId": null,
+      "departementId": 1,
+      "actif": true,
+      "ordre": 0
+    },
+    {
+      "id": 20,
+      "type": "DDEPPSA",
+      "nom": "Direction départementale de l’enseignement préscolaire, primaire, secondaire et de l’alphabétisation (Brazzaville)",
+      "sigle": "DDEPPSA Brazzaville",
+      "parentId": null,
+      "departementId": 2,
+      "actif": true,
+      "ordre": 0
+    },
+    {
+      "id": 21,
+      "type": "DDEPPSA",
+      "nom": "Direction départementale de l’enseignement préscolaire, primaire, secondaire et de l’alphabétisation (Congo-Oubangui)",
+      "sigle": "DDEPPSA Congo-Oubangui",
+      "parentId": null,
+      "departementId": 3,
+      "actif": true,
+      "ordre": 0
+    },
+    {
+      "id": 22,
+      "type": "DDEPPSA",
+      "nom": "Direction départementale de l’enseignement préscolaire, primaire, secondaire et de l’alphabétisation (Cuvette)",
+      "sigle": "DDEPPSA Cuvette",
+      "parentId": null,
+      "departementId": 4,
+      "actif": true,
+      "ordre": 0
+    },
+    {
+      "id": 23,
+      "type": "DDEPPSA",
+      "nom": "Direction départementale de l’enseignement préscolaire, primaire, secondaire et de l’alphabétisation (Cuvette-Ouest)",
+      "sigle": "DDEPPSA Cuvette-Ouest",
+      "parentId": null,
+      "departementId": 5,
+      "actif": true,
+      "ordre": 0
+    },
+    {
+      "id": 24,
+      "type": "DDEPPSA",
+      "nom": "Direction départementale de l’enseignement préscolaire, primaire, secondaire et de l’alphabétisation (Djoué-Léfini)",
+      "sigle": "DDEPPSA Djoué-Léfini",
+      "parentId": null,
+      "departementId": 6,
+      "actif": true,
+      "ordre": 0
+    },
+    {
+      "id": 25,
+      "type": "DDEPPSA",
+      "nom": "Direction départementale de l’enseignement préscolaire, primaire, secondaire et de l’alphabétisation (Kouilou)",
+      "sigle": "DDEPPSA Kouilou",
+      "parentId": null,
+      "departementId": 7,
+      "actif": true,
+      "ordre": 0
+    },
+    {
+      "id": 26,
+      "type": "DDEPPSA",
+      "nom": "Direction départementale de l’enseignement préscolaire, primaire, secondaire et de l’alphabétisation (Lékoumou)",
+      "sigle": "DDEPPSA Lékoumou",
+      "parentId": null,
+      "departementId": 8,
+      "actif": true,
+      "ordre": 0
+    },
+    {
+      "id": 27,
+      "type": "DDEPPSA",
+      "nom": "Direction départementale de l’enseignement préscolaire, primaire, secondaire et de l’alphabétisation (Likouala)",
+      "sigle": "DDEPPSA Likouala",
+      "parentId": null,
+      "departementId": 9,
+      "actif": true,
+      "ordre": 0
+    },
+    {
+      "id": 28,
+      "type": "DDEPPSA",
+      "nom": "Direction départementale de l’enseignement préscolaire, primaire, secondaire et de l’alphabétisation (Niari)",
+      "sigle": "DDEPPSA Niari",
+      "parentId": null,
+      "departementId": 10,
+      "actif": true,
+      "ordre": 0
+    },
+    {
+      "id": 29,
+      "type": "DDEPPSA",
+      "nom": "Direction départementale de l’enseignement préscolaire, primaire, secondaire et de l’alphabétisation (Nkéni-Alima)",
+      "sigle": "DDEPPSA Nkéni-Alima",
+      "parentId": null,
+      "departementId": 11,
+      "actif": true,
+      "ordre": 0
+    },
+    {
+      "id": 30,
+      "type": "DDEPPSA",
+      "nom": "Direction départementale de l’enseignement préscolaire, primaire, secondaire et de l’alphabétisation (Plateaux)",
+      "sigle": "DDEPPSA Plateaux",
+      "parentId": null,
+      "departementId": 12,
+      "actif": true,
+      "ordre": 0
+    },
+    {
+      "id": 31,
+      "type": "DDEPPSA",
+      "nom": "Direction départementale de l’enseignement préscolaire, primaire, secondaire et de l’alphabétisation (Pointe-Noire)",
+      "sigle": "DDEPPSA Pointe-Noire",
+      "parentId": null,
+      "departementId": 13,
+      "actif": true,
+      "ordre": 0
+    },
+    {
+      "id": 32,
+      "type": "DDEPPSA",
+      "nom": "Direction départementale de l’enseignement préscolaire, primaire, secondaire et de l’alphabétisation (Pool)",
+      "sigle": "DDEPPSA Pool",
+      "parentId": null,
+      "departementId": 14,
+      "actif": true,
+      "ordre": 0
+    },
+    {
+      "id": 33,
+      "type": "DDEPPSA",
+      "nom": "Direction départementale de l’enseignement préscolaire, primaire, secondaire et de l’alphabétisation (Sangha)",
+      "sigle": "DDEPPSA Sangha",
+      "parentId": null,
+      "departementId": 15,
+      "actif": true,
+      "ordre": 0
+    },
+    {
+      "id": 62,
+      "type": "INSPECTION",
+      "nom": "Inspection des CEG Bouenza 1",
+      "sigle": "ICEG Bouenza 1",
+      "parentId": 19,
+      "departementId": 1,
+      "actif": true,
+      "ordre": 1
+    },
+    {
+      "id": 63,
+      "type": "ETABLISSEMENT",
+      "nom": "Collège d'enseignement général Nkayi 2",
+      "sigle": "CEG Nkayi 2",
+      "parentId": 62,
+      "departementId": 1,
+      "actif": true,
+      "ordre": 1
+    }
+  ],
+  "prestations": [
+    {
+      "code": "MUTATION_DEPARTEMENT",
+      "numero": 0,
+      "libelle": "Mutation à l’intérieur du département (d’un établissement à un autre)",
+      "acte": "Note de service départementale",
+      "pieces": [
+        "Demande manuscrite et formulaire de demande",
+        "Attestation de présence au poste",
+        "Notes d’affectation",
+        "Certificat de prise de service",
+        "Pièces pouvant justifier la mutation"
+      ],
+      "circuitExterne": true,
+      "etapesInternes": [],
+      "decision": "DDEPPSA",
+      "decisionTexte": "DDEPPSA",
+      "motifMutation": null,
+      "actif": true,
+      "ordre": 0
+    },
+    {
+      "code": "AFFECTATION_NATIONALE",
+      "numero": 1,
+      "libelle": "Affectation nationale",
+      "acte": "Note de service",
+      "pieces": [
+        "Demande manuscrite et formulaire de demande",
+        "Texte d’intégration ou d’engagement à la Fonction publique"
+      ],
+      "circuitExterne": true,
+      "etapesInternes": [
+        "BMP",
+        "SR",
+        "DRSC",
+        "DGRHAS"
+      ],
+      "decision": "DGRHAS",
+      "decisionTexte": "DGRHAS-Ministre",
+      "motifMutation": null,
+      "actif": false,
+      "ordre": 1
+    },
+    {
+      "code": "AFFECTATION_DEPARTEMENTALE",
+      "numero": 2,
+      "libelle": "Affectation départementale",
+      "acte": "Note de service",
+      "pieces": [
+        "Demande manuscrite et formulaire de demande",
+        "Texte d’intégration ou d’engagement à la Fonction publique",
+        "Note d’affectation ou de mutation ministérielle"
+      ],
+      "circuitExterne": true,
+      "etapesInternes": [],
+      "decision": "DDEPPSA",
+      "decisionTexte": "DDEPPSA-Préfet",
+      "motifMutation": null,
+      "actif": false,
+      "ordre": 2
+    },
+    {
+      "code": "ENROLEMENT_VOLONTAIRES",
+      "numero": 3,
+      "libelle": "Affectation / enrôlement des enseignants volontaires",
+      "acte": "Note de service",
+      "pieces": [
+        "Demande manuscrite et formulaire de demande",
+        "Photocopie du diplôme légalisé",
+        "Note d’admission au concours d’entrée à l’école de formation",
+        "Note de fin de formation",
+        "Photocopie de l’acte de naissance",
+        "Photocopie de la pièce d’identité"
+      ],
+      "circuitExterne": false,
+      "etapesInternes": [
+        "BR",
+        "SR",
+        "DRSC",
+        "DGRHAS"
+      ],
+      "decision": "DGRHAS",
+      "decisionTexte": "DGRHAS-Ministre",
+      "motifMutation": null,
+      "actif": false,
+      "ordre": 3
+    },
+    {
+      "code": "NOMINATION_CHEFS",
+      "numero": 4,
+      "libelle": "Nomination des chefs de service, chefs de bureau, équipes de maîtrise",
+      "acte": "Note de service",
+      "pieces": [
+        "Demande manuscrite et formulaire de demande",
+        "Attestation de présence au poste",
+        "Premier certificat de prise de service",
+        "Texte d’intégration ou d’engagement à la Fonction publique",
+        "Certificat de prise ou de reprise de service",
+        "Photocopie du bulletin de solde récent",
+        "Curriculum vitae"
+      ],
+      "circuitExterne": true,
+      "etapesInternes": [
+        "BMP",
+        "SR",
+        "DRSC",
+        "DGRHAS"
+      ],
+      "decision": "DGRHAS",
+      "decisionTexte": "DGRHAS-Ministre",
+      "motifMutation": null,
+      "actif": false,
+      "ordre": 4
+    },
+    {
+      "code": "NOMINATION_DIRECTEURS",
+      "numero": 5,
+      "libelle": "Nomination des directeurs départementaux et centraux",
+      "acte": "Décret du Premier ministre",
+      "pieces": [
+        "Demande manuscrite et formulaire de demande",
+        "Attestation de présence au poste",
+        "Premier certificat de prise de service",
+        "Texte d’intégration ou d’engagement à la Fonction publique",
+        "Certificat de reprise de service",
+        "Photocopie du bulletin de solde récent",
+        "Curriculum vitae"
+      ],
+      "circuitExterne": false,
+      "etapesInternes": [
+        "DGRHAS"
+      ],
+      "decision": "DGRHAS",
+      "decisionTexte": "Premier ministre",
+      "motifMutation": null,
+      "actif": false,
+      "ordre": 5
+    },
+    {
+      "code": "RECTIFICATIF_NOTE",
+      "numero": 6,
+      "libelle": "Rectificatif de note de service signée par le ministre",
+      "acte": "Note rectificative",
+      "pieces": [
+        "Demande manuscrite et formulaire de demande",
+        "Note de service à corriger",
+        "Pièces justifiant la correction"
+      ],
+      "circuitExterne": true,
+      "etapesInternes": [
+        "BC",
+        "SD",
+        "DRSC",
+        "DGRHAS"
+      ],
+      "decision": "DGRHAS",
+      "decisionTexte": "DGRHAS",
+      "motifMutation": null,
+      "actif": false,
+      "ordre": 6
+    },
+    {
+      "code": "CERTIFICAT_PRISE_SERVICE",
+      "numero": 7,
+      "libelle": "Certificat de prise de service",
+      "acte": "Certificat",
+      "pieces": [
+        "Demande manuscrite et formulaire de demande",
+        "Texte d’intégration ou d’engagement à la Fonction publique",
+        "Notes d’affectation"
+      ],
+      "circuitExterne": true,
+      "etapesInternes": [],
+      "decision": "LIEU_SERVICE",
+      "decisionTexte": "Lieu de service",
+      "motifMutation": null,
+      "actif": false,
+      "ordre": 7
+    },
+    {
+      "code": "CERTIFICAT_REPRISE",
+      "numero": 8,
+      "libelle": "Certificat de reprise de service",
+      "acte": "Certificat",
+      "pieces": [
+        "Demande manuscrite et formulaire de demande",
+        "Texte d’intégration ou d’engagement à la Fonction publique",
+        "Notes d’affectation",
+        "Note de prise de service"
+      ],
+      "circuitExterne": true,
+      "etapesInternes": [],
+      "decision": "LIEU_SERVICE",
+      "decisionTexte": "Lieu de service",
+      "motifMutation": null,
+      "actif": false,
+      "ordre": 8
+    },
+    {
+      "code": "REPRISE_CONGE",
+      "numero": 9,
+      "libelle": "Certificat de reprise de service, de retour de congé",
+      "acte": "Certificat",
+      "pieces": [
+        "Demande manuscrite et formulaire de demande",
+        "Texte d’intégration ou d’engagement à la Fonction publique",
+        "Notes d’affectation",
+        "Certificat de prise de service",
+        "Attestation de congé",
+        "Certificat de cessation de service"
+      ],
+      "circuitExterne": true,
+      "etapesInternes": [],
+      "decision": "LIEU_SERVICE",
+      "decisionTexte": "Lieu de service",
+      "motifMutation": null,
+      "actif": false,
+      "ordre": 9
+    },
+    {
+      "code": "REPRISE_STAGE",
+      "numero": 10,
+      "libelle": "Certificat de reprise de service, de retour de stage",
+      "acte": "Certificat",
+      "pieces": [
+        "Demande manuscrite et formulaire de demande",
+        "Texte d’intégration ou d’engagement à la Fonction publique",
+        "Notes d’affectation",
+        "Certificat de prise de service",
+        "Attestation de fin de formation ou diplôme légalisé"
+      ],
+      "circuitExterne": true,
+      "etapesInternes": [],
+      "decision": "LIEU_SERVICE",
+      "decisionTexte": "Lieu de service",
+      "motifMutation": null,
+      "actif": false,
+      "ordre": 10
+    },
+    {
+      "code": "REPRISE_DESERTION",
+      "numero": 11,
+      "libelle": "Certificat de reprise de service à l’issue d’une désertion ou d’un abandon de poste",
+      "acte": "Certificat",
+      "pieces": [
+        "Demande manuscrite et formulaire de demande",
+        "Texte d’intégration ou d’engagement à la Fonction publique",
+        "Notes d’affectation",
+        "Certificat de prise de service avant la désertion ou l’abandon de poste",
+        "Attestation de présence au poste avant la désertion ou l’abandon de poste",
+        "Note de réutilisation en cas de suspension de salaire",
+        "Pièces justifiant la désertion ou l’abandon"
+      ],
+      "circuitExterne": true,
+      "etapesInternes": [],
+      "decision": "LIEU_SERVICE",
+      "decisionTexte": "Lieu de service",
+      "motifMutation": null,
+      "actif": false,
+      "ordre": 11
+    },
+    {
+      "code": "ATTESTATION_PRESENCE",
+      "numero": 12,
+      "libelle": "Attestation de présence au poste",
+      "acte": "Attestation",
+      "pieces": [
+        "Demande manuscrite et formulaire de demande",
+        "Texte d’intégration ou d’engagement à la Fonction publique",
+        "Note d’affectation ministérielle",
+        "Note d’affectation départementale",
+        "Certificat de prise de service ou de reprise de service",
+        "Un bulletin récent (facultatif)"
+      ],
+      "circuitExterne": true,
+      "etapesInternes": [],
+      "decision": "LIEU_SERVICE",
+      "decisionTexte": "Lieu de service",
+      "motifMutation": null,
+      "actif": false,
+      "ordre": 12
+    },
+    {
+      "code": "PRESENCE_STAGE",
+      "numero": 13,
+      "libelle": "Attestation de présence au poste pour les agents en stage ou en instance de réutilisation",
+      "acte": "Attestation",
+      "pieces": [
+        "Demande manuscrite et formulaire de demande",
+        "Texte d’intégration ou d’engagement à la Fonction publique",
+        "Note d’affectation ministérielle",
+        "Note d’affectation départementale",
+        "Certificat de prise de service",
+        "Un bulletin récent",
+        "Pièces justifiant la mise en stage ou la réutilisation"
+      ],
+      "circuitExterne": true,
+      "etapesInternes": [
+        "BRH",
+        "SAARH",
+        "DAAF",
+        "DGRHAS"
+      ],
+      "decision": "DGRHAS",
+      "decisionTexte": "DGRHAS",
+      "motifMutation": null,
+      "actif": false,
+      "ordre": 13
+    },
+    {
+      "code": "ATTESTATION_EMPLOYEUR",
+      "numero": 14,
+      "libelle": "Attestation de l’employeur",
+      "acte": "Attestation",
+      "pieces": [
+        "Demande manuscrite et formulaire de demande",
+        "Texte d’intégration ou d’engagement à la Fonction publique",
+        "Premier certificat de prise de service",
+        "Attestation de présence au poste",
+        "Un bulletin récent"
+      ],
+      "circuitExterne": true,
+      "etapesInternes": [
+        "BF",
+        "SR",
+        "DRSC",
+        "DGRHAS"
+      ],
+      "decision": "DGRHAS",
+      "decisionTexte": "DGRHAS",
+      "motifMutation": null,
+      "actif": false,
+      "ordre": 14
+    },
+    {
+      "code": "CONGE_LONGUE_MALADIE",
+      "numero": 15,
+      "libelle": "Attestation de congé de longue maladie",
+      "acte": "Attestation",
+      "pieces": [
+        "Demande manuscrite et formulaire de demande",
+        "Texte d’intégration ou d’engagement à la Fonction publique",
+        "Note d’affectation ministérielle",
+        "Note d’affectation départementale",
+        "Certificat de prise de service",
+        "Attestation de présence au poste",
+        "Dossier médical"
+      ],
+      "circuitExterne": true,
+      "etapesInternes": [
+        "BMP",
+        "SR",
+        "DRSC",
+        "DGRHAS"
+      ],
+      "decision": "DGRHAS",
+      "decisionTexte": "DGRHAS-Ministre",
+      "motifMutation": null,
+      "actif": false,
+      "ordre": 15
+    },
+    {
+      "code": "AUTORISATION_ABSENCE",
+      "numero": 16,
+      "libelle": "Autorisation d’absence",
+      "acte": "Autorisation",
+      "pieces": [
+        "Demande manuscrite et formulaire de demande"
+      ],
+      "circuitExterne": true,
+      "etapesInternes": [],
+      "decision": "LIEU_SERVICE",
+      "decisionTexte": "Lieu de service",
+      "motifMutation": null,
+      "actif": false,
+      "ordre": 16
+    },
+    {
+      "code": "ABSENCE_ETRANGER",
+      "numero": 17,
+      "libelle": "Autorisation d’absence pour voyage à l’étranger",
+      "acte": "Autorisation",
+      "pieces": [
+        "Demande manuscrite et formulaire de demande",
+        "Texte d’intégration ou d’engagement à la Fonction publique",
+        "Premier certificat de prise de service",
+        "Attestation de présence au poste",
+        "Un bulletin récent",
+        "Pièces justifiant le voyage à l’étranger"
+      ],
+      "circuitExterne": true,
+      "etapesInternes": [
+        "BMP",
+        "SR",
+        "DRSC",
+        "DGRHAS"
+      ],
+      "decision": "DGRHAS",
+      "decisionTexte": "DGRHAS-Ministre",
+      "motifMutation": null,
+      "actif": false,
+      "ordre": 17
+    },
+    {
+      "code": "AUTORISATION_TUTELLE",
+      "numero": 18,
+      "libelle": "Autorisation de la tutelle (pour un concours ou un stage de formation)",
+      "acte": "Autorisation de la tutelle",
+      "pieces": [
+        "Demande manuscrite et formulaire de demande",
+        "Texte d’intégration ou d’engagement à la Fonction publique",
+        "Texte de dernière promotion",
+        "Première prise de service",
+        "Note d’affectation ou de mutation dans le département",
+        "Trois copies de bulletins de solde récents",
+        "Certificat de prise de service",
+        "Attestation de présence au poste"
+      ],
+      "circuitExterne": true,
+      "etapesInternes": [
+        "BAMSFS",
+        "SSS",
+        "DFC",
+        "DGRHAS"
+      ],
+      "decision": "DGRHAS",
+      "decisionTexte": "DGRHAS",
+      "motifMutation": null,
+      "actif": false,
+      "ordre": 18
+    },
+    {
+      "code": "CONGE_ADMINISTRATIF",
+      "numero": 19,
+      "libelle": "Congé administratif",
+      "acte": "Attestation",
+      "pieces": [
+        "Demande manuscrite et formulaire de demande",
+        "Texte d’intégration ou d’engagement à la Fonction publique",
+        "Notes d’affectation ou de nomination",
+        "Certificat de prise de service",
+        "Attestation de présence au poste"
+      ],
+      "circuitExterne": true,
+      "etapesInternes": [],
+      "decision": "LIEU_SERVICE",
+      "decisionTexte": "Lieu de service",
+      "motifMutation": null,
+      "actif": false,
+      "ordre": 19
+    },
+    {
+      "code": "CONGE_MALADIE",
+      "numero": 20,
+      "libelle": "Congé de maladie",
+      "acte": "Attestation",
+      "pieces": [
+        "Demande manuscrite et formulaire de demande",
+        "Texte d’intégration ou d’engagement à la Fonction publique",
+        "Notes d’affectation ou de nomination",
+        "Certificat de prise de service",
+        "Attestation de présence au poste",
+        "Photocopie du bulletin de solde récent",
+        "Dossier médical"
+      ],
+      "circuitExterne": true,
+      "etapesInternes": [],
+      "decision": "LIEU_SERVICE",
+      "decisionTexte": "Lieu de service",
+      "motifMutation": null,
+      "actif": false,
+      "ordre": 20
+    },
+    {
+      "code": "CONGE_MATERNITE",
+      "numero": 21,
+      "libelle": "Congé de maternité",
+      "acte": "Attestation",
+      "pieces": [
+        "Demande manuscrite et formulaire de demande",
+        "Texte d’intégration ou d’engagement à la Fonction publique",
+        "Notes d’affectation ou de nomination",
+        "Certificat de prise de service",
+        "Attestation de présence au poste",
+        "Certificat de grossesse",
+        "Fiche de pesée"
+      ],
+      "circuitExterne": true,
+      "etapesInternes": [],
+      "decision": "LIEU_SERVICE",
+      "decisionTexte": "Lieu de service",
+      "motifMutation": null,
+      "actif": false,
+      "ordre": 21
+    },
+    {
+      "code": "CONGE_PATERNITE",
+      "numero": 22,
+      "libelle": "Congé de paternité",
+      "acte": "Attestation",
+      "pieces": [
+        "Demande manuscrite et formulaire de demande",
+        "Texte d’intégration ou d’engagement à la Fonction publique",
+        "Notes d’affectation ou de nomination",
+        "Certificat de prise de service",
+        "Attestation de présence au poste",
+        "Déclaration de naissance"
+      ],
+      "circuitExterne": true,
+      "etapesInternes": [],
+      "decision": "LIEU_SERVICE",
+      "decisionTexte": "Lieu de service",
+      "motifMutation": null,
+      "actif": false,
+      "ordre": 22
+    },
+    {
+      "code": "CONGE_EXPECTATIVE",
+      "numero": 24,
+      "libelle": "Congé d’expectative après un détachement ou un préavis de départ à la retraite",
+      "acte": "Attestation",
+      "pieces": [
+        "Demande manuscrite et formulaire de demande",
+        "Texte d’intégration ou d’engagement à la Fonction publique",
+        "Notes d’affectation ou de nomination",
+        "Certificat de prise de service",
+        "Attestation de présence au poste",
+        "Photocopie du bulletin de solde récent",
+        "Note justifiant le détachement ou lettre de préavis"
+      ],
+      "circuitExterne": true,
+      "etapesInternes": [
+        "BRH",
+        "SAARH",
+        "DAAF",
+        "DGRHAS"
+      ],
+      "decision": "DGRHAS",
+      "decisionTexte": "DGRHAS",
+      "motifMutation": null,
+      "actif": false,
+      "ordre": 23
+    },
+    {
+      "code": "CESSATION_SERVICE",
+      "numero": 25,
+      "libelle": "Cessation de service",
+      "acte": "Note de service",
+      "pieces": [
+        "Demande manuscrite et formulaire de demande",
+        "Texte d’intégration ou d’engagement à la Fonction publique",
+        "Notes d’affectation ou de nomination",
+        "Certificat de prise de service",
+        "Attestation de présence au poste",
+        "Pièces justifiant la cessation"
+      ],
+      "circuitExterne": true,
+      "etapesInternes": [],
+      "decision": "LIEU_SERVICE",
+      "decisionTexte": "Lieu de service",
+      "motifMutation": null,
+      "actif": false,
+      "ordre": 24
+    },
+    {
+      "code": "CESSATION_RETRAITE",
+      "numero": 26,
+      "libelle": "Cessation d’activités (pour la retraite)",
+      "acte": "Certificat",
+      "pieces": [
+        "Demande manuscrite et formulaire de demande",
+        "Texte d’intégration ou d’engagement à la Fonction publique",
+        "Notes d’affectation ou de nomination",
+        "Certificat de prise de service",
+        "Attestation de présence au poste",
+        "Lettre de préavis"
+      ],
+      "circuitExterne": true,
+      "etapesInternes": [
+        "BRH",
+        "SAARH",
+        "DAAF",
+        "DGRHAS"
+      ],
+      "decision": "DGRHAS",
+      "decisionTexte": "DGRHAS",
+      "motifMutation": null,
+      "actif": false,
+      "ordre": 25
+    },
+    {
+      "code": "MUTATION_ANCIENNETE",
+      "numero": 27,
+      "libelle": "Mutation pour des raisons d’ancienneté",
+      "acte": "Note de service",
+      "pieces": [
+        "Demande manuscrite et formulaire de demande",
+        "Attestation de présence au poste",
+        "Premier certificat de prise de service",
+        "Texte d’intégration à la Fonction publique",
+        "Certificat de prise de service",
+        "Notes d’affectation",
+        "Bulletin de solde récent",
+        "Texte de dernière promotion"
+      ],
+      "circuitExterne": true,
+      "etapesInternes": [
+        "BMP",
+        "SR",
+        "DRSC",
+        "DGRHAS"
+      ],
+      "decision": "DGRHAS",
+      "decisionTexte": "DGRHAS-Ministre",
+      "motifMutation": "ANCIENNETE",
+      "actif": true,
+      "ordre": 26
+    },
+    {
+      "code": "MUTATION_SANTE",
+      "numero": 28,
+      "libelle": "Mutation pour des raisons de santé",
+      "acte": "Note de service",
+      "pieces": [
+        "Demande manuscrite et formulaire de demande",
+        "Attestation de présence au poste",
+        "Certificat de prise ou reprise de service",
+        "Texte d’intégration à la Fonction publique",
+        "Notes d’affectation",
+        "Dossier médical",
+        "Bulletin de solde récent"
+      ],
+      "circuitExterne": true,
+      "etapesInternes": [
+        "BMP",
+        "SR",
+        "DRSC",
+        "DGRHAS"
+      ],
+      "decision": "DGRHAS",
+      "decisionTexte": "DGRHAS-Ministre",
+      "motifMutation": "RAISONS_SANTE",
+      "actif": true,
+      "ordre": 27
+    },
+    {
+      "code": "MUTATION_SOCIALE",
+      "numero": 29,
+      "libelle": "Mutation pour des raisons sociales",
+      "acte": "Note de service",
+      "pieces": [
+        "Demande manuscrite et formulaire de demande",
+        "Attestation de présence au poste",
+        "Certificat de prise ou reprise de service",
+        "Texte d’intégration à la Fonction publique",
+        "Notes d’affectation",
+        "Rapport d’enquête du chef hiérarchique immédiat",
+        "Bulletin de solde récent",
+        "Texte de dernière promotion"
+      ],
+      "circuitExterne": true,
+      "etapesInternes": [
+        "BMP",
+        "SR",
+        "DRSC",
+        "DGRHAS"
+      ],
+      "decision": "DGRHAS",
+      "decisionTexte": "DGRHAS-Ministre",
+      "motifMutation": "RAISONS_SOCIALES",
+      "actif": true,
+      "ordre": 28
+    },
+    {
+      "code": "MUTATION_CONJOINT",
+      "numero": 30,
+      "libelle": "Mutation pour rapprochement de conjoints",
+      "acte": "Note de service",
+      "pieces": [
+        "Demande manuscrite et formulaire de demande",
+        "Attestation de présence au poste",
+        "Texte d’intégration ou d’engagement à la Fonction publique",
+        "Certificat de prise de service",
+        "Notes d’affectation au poste actuel",
+        "Certificat de prise de service après affectation ou mutation",
+        "Bulletin de solde récent",
+        "Extrait ou copie d’acte de mariage",
+        "Notes d’affectation et de prise de service du conjoint, ou attestation de domiciliation du conjoint"
+      ],
+      "circuitExterne": true,
+      "etapesInternes": [
+        "BMP",
+        "SR",
+        "DRSC",
+        "DGRHAS"
+      ],
+      "decision": "DGRHAS",
+      "decisionTexte": "DGRHAS-Ministre",
+      "motifMutation": "RAPPROCHEMENT_CONJOINT",
+      "actif": true,
+      "ordre": 29
+    },
+    {
+      "code": "PERMUTATION",
+      "numero": 31,
+      "libelle": "Permutation",
+      "acte": "Note de service",
+      "pieces": [
+        "Demande manuscrite et formulaire de demande",
+        "Attestation de présence au poste",
+        "Texte d’intégration ou d’engagement",
+        "Notes d’affectation ou de mutation dans le département",
+        "Certificat de prise de service après affectation ou mutation",
+        "Bulletin de solde récent"
+      ],
+      "circuitExterne": true,
+      "etapesInternes": [
+        "BMP",
+        "SR",
+        "DRSC",
+        "DGRHAS"
+      ],
+      "decision": "DGRHAS",
+      "decisionTexte": "DGRHAS-Ministre",
+      "motifMutation": "PERMUTATION",
+      "actif": true,
+      "ordre": 30
+    },
+    {
+      "code": "MUTATION_VOLONTAIRES",
+      "numero": 32,
+      "libelle": "Mutation des enseignants volontaires",
+      "acte": "Note de service",
+      "pieces": [
+        "Demande manuscrite et formulaire de demande",
+        "Notes d’affectation",
+        "Certificat de prise de service",
+        "Attestation de présence au poste",
+        "Pièces pouvant justifier la mutation"
+      ],
+      "circuitExterne": true,
+      "etapesInternes": [
+        "BMP",
+        "SR",
+        "DGRHAS"
+      ],
+      "decision": "DGRHAS",
+      "decisionTexte": "DGRHAS-Ministre",
+      "motifMutation": null,
+      "actif": true,
+      "ordre": 31
+    },
+    {
+      "code": "DETACHEMENT",
+      "numero": 33,
+      "libelle": "Détachement de l’enseignant actif",
+      "acte": "Note de service",
+      "pieces": [
+        "Demande manuscrite et formulaire de demande",
+        "Attestation de présence au poste",
+        "Texte d’intégration ou d’engagement à la Fonction publique",
+        "Certificat de prise ou reprise de service de l’année en cours",
+        "Notes d’affectation",
+        "Bulletin de solde récent",
+        "Pièces justifiant le besoin de détachement"
+      ],
+      "circuitExterne": true,
+      "etapesInternes": [
+        "BMP",
+        "SR",
+        "DRSC",
+        "DGRHAS"
+      ],
+      "decision": "DGRHAS",
+      "decisionTexte": "DGRHAS-Ministre",
+      "motifMutation": null,
+      "actif": false,
+      "ordre": 32
+    },
+    {
+      "code": "REUTILISATION_FORMATION",
+      "numero": 34,
+      "libelle": "Réutilisation après formation",
+      "acte": "Note de service",
+      "pieces": [
+        "Demande manuscrite et formulaire de demande avec trois départements au choix",
+        "Attestation de présence au poste après la formation",
+        "Texte d’intégration ou d’engagement à la Fonction publique",
+        "Certificat de prise de service",
+        "Arrêté de mise en stage ou autorisation de concourir",
+        "Bulletin de solde récent",
+        "Certificat de cessation de service avant la formation",
+        "Note d’admission au concours",
+        "Attestation de fin de formation légalisée de l’école ou diplôme légalisé",
+        "Certificat de reprise de service après la formation"
+      ],
+      "circuitExterne": true,
+      "etapesInternes": [
+        "BMP",
+        "SR",
+        "DRSC",
+        "DGRHAS"
+      ],
+      "decision": "DGRHAS",
+      "decisionTexte": "DGRHAS-Ministre",
+      "motifMutation": null,
+      "actif": false,
+      "ordre": 33
+    },
+    {
+      "code": "REUTILISATION_RELEVE",
+      "numero": 35,
+      "libelle": "Réutilisation d’un agent relevé de ses fonctions ou remis à la disposition du MEPPSA",
+      "acte": "Note de service",
+      "pieces": [
+        "Demande manuscrite et formulaire de demande",
+        "Attestation de présence au poste",
+        "Texte d’intégration ou d’engagement à la Fonction publique",
+        "Note de nomination ou de détachement",
+        "Certificat de prise de service après nomination ou détachement",
+        "Note de service relevant l’agent de ses fonctions ou le remettant à la disposition du MEPPSA",
+        "Certificat de cessation de service au dernier poste",
+        "Bulletin de solde récent"
+      ],
+      "circuitExterne": true,
+      "etapesInternes": [
+        "BMP",
+        "SR",
+        "DRSC",
+        "DGRHAS"
+      ],
+      "decision": "DGRHAS",
+      "decisionTexte": "DGRHAS-Ministre",
+      "motifMutation": null,
+      "actif": false,
+      "ordre": 34
+    },
+    {
+      "code": "REMISE_DISPOSITION_FP",
+      "numero": 36,
+      "libelle": "Remise à la disposition de la Fonction publique",
+      "acte": "Note de service",
+      "pieces": [
+        "Demande manuscrite et formulaire de demande",
+        "Attestation de présence au poste",
+        "Premier certificat de prise de service",
+        "Texte d’intégration ou d’engagement à la Fonction publique",
+        "Arrêté de dernière promotion",
+        "Pièces pouvant justifier la remise à la Fonction publique",
+        "Notes d’affectation",
+        "Bulletin de solde récent"
+      ],
+      "circuitExterne": true,
+      "etapesInternes": [
+        "BMP",
+        "SR",
+        "DRSC",
+        "DGRHAS"
+      ],
+      "decision": "DGRHAS",
+      "decisionTexte": "DGRHAS-Ministre",
+      "motifMutation": null,
+      "actif": false,
+      "ordre": 35
+    },
+    {
+      "code": "CHANGEMENT_STATUT",
+      "numero": 37,
+      "libelle": "Changement de statut contractuel / fonctionnaire",
+      "acte": "Soit-transmis du projet de texte à la Fonction publique",
+      "pieces": [
+        "Demande manuscrite et formulaire de demande",
+        "Attestation de présence au poste",
+        "Premier certificat de prise de service",
+        "Texte d’engagement à la Fonction publique",
+        "Texte de titularisation",
+        "Photocopie du bulletin de solde récent"
+      ],
+      "circuitExterne": true,
+      "etapesInternes": [
+        "BPIPCS",
+        "SSC",
+        "DRSC",
+        "DGRHAS"
+      ],
+      "decision": "DGRHAS",
+      "decisionTexte": "DGRHAS",
+      "motifMutation": null,
+      "actif": false,
+      "ordre": 36
+    },
+    {
+      "code": "AVANCEMENT",
+      "numero": 38,
+      "libelle": "Avancement (contractuels), promotion (fonctionnaires), RSA, RCA, reclassement, titularisation",
+      "acte": "Soit-transmis du projet d’arrêté à la Fonction publique",
+      "pieces": [
+        "Demande manuscrite et formulaire de demande",
+        "Texte d’intégration ou d’engagement à la Fonction publique",
+        "Premier certificat de prise de service",
+        "Attestation de présence au poste",
+        "Un bulletin récent",
+        "Certificat de prise de service au poste actuel",
+        "Texte de dernière promotion",
+        "Diplôme (RCA et reclassement)",
+        "Arrêté de mise en stage (RCA)",
+        "Autorisation de concourir (RCA)",
+        "Texte d’engagement (RSA)",
+        "Texte de titularisation (RSA)",
+        "Certificat de reprise de service après la formation"
+      ],
+      "circuitExterne": true,
+      "etapesInternes": [
+        "BSCIP",
+        "SSC",
+        "DRSC",
+        "DGRHAS"
+      ],
+      "decision": "DGRHAS",
+      "decisionTexte": "DGRHAS-Ministre",
+      "motifMutation": null,
+      "actif": false,
+      "ordre": 37
+    },
+    {
+      "code": "AVANCEMENT_EXCEPTIONNEL",
+      "numero": 39,
+      "libelle": "Avancement à titre exceptionnel",
+      "acte": "Lettre de transmission à la Fonction publique",
+      "pieces": [
+        "Demande manuscrite et formulaire de demande",
+        "Texte d’intégration ou d’engagement à la Fonction publique",
+        "Notes d’affectation ou de nomination",
+        "Premier certificat de prise de service",
+        "Attestation de présence au poste",
+        "Extrait ou copie d’acte de naissance",
+        "Texte de dernière promotion"
+      ],
+      "circuitExterne": true,
+      "etapesInternes": [
+        "BSCIP",
+        "SSC",
+        "DRSC",
+        "DGRHAS"
+      ],
+      "decision": "DGRHAS",
+      "decisionTexte": "DGRHAS-Ministre",
+      "motifMutation": null,
+      "actif": false,
+      "ordre": 38
+    },
+    {
+      "code": "RECTIFICATIF_INTEGRATION",
+      "numero": 40,
+      "libelle": "Rectificatif de texte d’intégration",
+      "acte": "Soit-transmis à la Fonction publique",
+      "pieces": [
+        "Demande manuscrite et formulaire de demande",
+        "Texte d’intégration ou d’engagement à rectifier",
+        "Copie d’acte de naissance",
+        "Copie légalisée du diplôme",
+        "Photocopie de la pièce d’identité valide"
+      ],
+      "circuitExterne": true,
+      "etapesInternes": [
+        "BSCIP",
+        "SSC",
+        "DRSC",
+        "DGRHAS"
+      ],
+      "decision": "DGRHAS",
+      "decisionTexte": "DGRHAS-Ministre",
+      "motifMutation": null,
+      "actif": false,
+      "ordre": 39
+    },
+    {
+      "code": "PROMOTION_APTITUDE",
+      "numero": 41,
+      "libelle": "Promotion sur liste d’aptitude",
+      "acte": "Soit-transmis d’un projet d’arrêté à la Fonction publique",
+      "pieces": [
+        "Texte d’intégration ou d’engagement à la Fonction publique",
+        "Notes d’affectation",
+        "Premier certificat de prise de service",
+        "Attestation de présence au poste",
+        "Extrait ou copie d’acte de naissance",
+        "Texte de dernière promotion"
+      ],
+      "circuitExterne": true,
+      "etapesInternes": [
+        "BSCIP",
+        "SSC",
+        "DRSC",
+        "DGRHAS"
+      ],
+      "decision": "DGRHAS",
+      "decisionTexte": "DGRHAS",
+      "motifMutation": null,
+      "actif": false,
+      "ordre": 40
+    },
+    {
+      "code": "CERTIFICAT_SERVICES_FAITS",
+      "numero": 42,
+      "libelle": "Certificat des services faits",
+      "acte": "Certificat",
+      "pieces": [
+        "Demande manuscrite et formulaire de demande",
+        "Texte d’intégration ou d’engagement",
+        "Notes d’affectation",
+        "Certificat de prise de service",
+        "Attestation de présence au poste",
+        "Emploi du temps contresigné par le responsable immédiat",
+        "État des sommes dues"
+      ],
+      "circuitExterne": false,
+      "etapesInternes": [
+        "BF",
+        "SFM",
+        "DAAF",
+        "DGRHAS"
+      ],
+      "decision": "DGRHAS",
+      "decisionTexte": "DGRHAS-Ministre",
+      "motifMutation": null,
+      "actif": false,
+      "ordre": 41
+    },
+    {
+      "code": "PRISE_EN_CHARGE_SOLDE",
+      "numero": 42,
+      "libelle": "Prise en charge en solde",
+      "acte": "Soit-transmis au Budget",
+      "pieces": [
+        "Demande manuscrite et formulaire de demande",
+        "Texte d’intégration ou d’engagement à la Fonction publique",
+        "Notes d’affectation ou de nomination",
+        "Certificat de prise de service",
+        "Attestation de présence au poste",
+        "Photocopie de la pièce d’identité",
+        "Extrait ou copie d’acte de naissance",
+        "Relevé d’identité bancaire"
+      ],
+      "circuitExterne": true,
+      "etapesInternes": [
+        "BPIPCS",
+        "SSC",
+        "DRSC",
+        "DGRHAS"
+      ],
+      "decision": "DGRHAS",
+      "decisionTexte": "DGRHAS",
+      "motifMutation": null,
+      "actif": false,
+      "ordre": 42
+    },
+    {
+      "code": "DOMICILIATION_SALAIRE",
+      "numero": 43,
+      "libelle": "Domiciliation de salaire",
+      "acte": "Attestation",
+      "pieces": [
+        "Demande manuscrite et formulaire de demande",
+        "Texte d’intégration ou d’engagement à la Fonction publique",
+        "Notes d’affectation ou de nomination",
+        "Certificat de prise de service",
+        "Attestation de présence au poste",
+        "Photocopie du bulletin de solde récent",
+        "Relevé d’identité bancaire"
+      ],
+      "circuitExterne": true,
+      "etapesInternes": [
+        "BPIPCS",
+        "SSC",
+        "DRSC",
+        "DGRHAS"
+      ],
+      "decision": "DGRHAS",
+      "decisionTexte": "DGRHAS",
+      "motifMutation": null,
+      "actif": false,
+      "ordre": 43
+    },
+    {
+      "code": "CHANGEMENT_REGLEMENT",
+      "numero": 44,
+      "libelle": "Changement de mode de règlement",
+      "acte": "Soit-transmis au Budget",
+      "pieces": [
+        "Demande manuscrite et formulaire de demande",
+        "Texte d’intégration ou d’engagement",
+        "Notes d’affectation ou de nomination",
+        "Certificat de prise de service",
+        "Attestation de non redevance",
+        "Relevé d’identité bancaire de la nouvelle banque"
+      ],
+      "circuitExterne": true,
+      "etapesInternes": [
+        "BPIPCS",
+        "SSC",
+        "DRSC",
+        "DGRHAS"
+      ],
+      "decision": "DGRHAS",
+      "decisionTexte": "DGRHAS",
+      "motifMutation": null,
+      "actif": false,
+      "ordre": 44
+    },
+    {
+      "code": "RECTIFICATIF_IDENTITE",
+      "numero": 45,
+      "libelle": "Rectificatif de nom/prénom/grade, changement d’identité, de code de service ou de situation matrimoniale sur le bulletin de solde",
+      "acte": "Soit-transmis au Budget",
+      "pieces": [
+        "Texte d’intégration ou d’engagement à la Fonction publique",
+        "Notes d’affectation",
+        "Certificat de prise de service",
+        "Attestation de présence au poste",
+        "Extrait ou copie d’acte de naissance",
+        "Pièces justifiant le rectificatif"
+      ],
+      "circuitExterne": true,
+      "etapesInternes": [
+        "BSCIP",
+        "SSC",
+        "DRSC",
+        "DGRHAS"
+      ],
+      "decision": "DGRHAS",
+      "decisionTexte": "DGRHAS",
+      "motifMutation": null,
+      "actif": false,
+      "ordre": 45
+    },
+    {
+      "code": "PRIME_DOCUMENTATION",
+      "numero": 46,
+      "libelle": "Prime de documentation et matériel didactique",
+      "acte": "Soit-transmis au Budget",
+      "pieces": [
+        "Demande manuscrite et formulaire de demande",
+        "Texte d’intégration ou d’engagement à la Fonction publique",
+        "Notes d’affectation ou de nomination",
+        "Certificat de prise de service",
+        "Attestation de présence au poste",
+        "Bulletin de solde récent"
+      ],
+      "circuitExterne": true,
+      "etapesInternes": [
+        "BPIPCS",
+        "SSC",
+        "DRSC",
+        "DGRHAS"
+      ],
+      "decision": "DGRHAS",
+      "decisionTexte": "DGRHAS",
+      "motifMutation": null,
+      "actif": false,
+      "ordre": 46
+    },
+    {
+      "code": "PRIME_HINTERLAND",
+      "numero": 47,
+      "libelle": "Prime d’affectation dans l’hinterland",
+      "acte": "Soit-transmis au Budget",
+      "pieces": [
+        "Demande manuscrite et formulaire de demande",
+        "Texte d’intégration ou d’engagement",
+        "Notes d’affectation ou de nomination",
+        "Certificat de prise de service",
+        "Attestation de présence au poste",
+        "Bulletin de solde récent"
+      ],
+      "circuitExterne": true,
+      "etapesInternes": [
+        "BPIPCS",
+        "SSC",
+        "DGRHAS"
+      ],
+      "decision": "DGRHAS",
+      "decisionTexte": "DGRHAS",
+      "motifMutation": null,
+      "actif": false,
+      "ordre": 47
+    },
+    {
+      "code": "PRIME_MULTIGRADE",
+      "numero": 48,
+      "libelle": "Prime de classe multigrade",
+      "acte": "Soit-transmis au Budget",
+      "pieces": [
+        "Demande manuscrite et formulaire de demande",
+        "Texte d’intégration ou d’engagement",
+        "Notes d’affectation ou de nomination",
+        "Certificat de prise de service",
+        "Attestation de présence au poste",
+        "Bulletin de solde récent",
+        "Emploi du temps authentifié par le directeur de l’école"
+      ],
+      "circuitExterne": true,
+      "etapesInternes": [
+        "BPIPCS",
+        "SSC",
+        "DRSC",
+        "DGRHAS"
+      ],
+      "decision": "DGRHAS",
+      "decisionTexte": "DGRHAS",
+      "motifMutation": null,
+      "actif": false,
+      "ordre": 48
+    },
+    {
+      "code": "PRIME_FIDELITE",
+      "numero": 49,
+      "libelle": "Prime de fidélité (ou de maintien au poste)",
+      "acte": "Soit-transmis au Budget",
+      "pieces": [
+        "Demande manuscrite et formulaire de demande",
+        "Texte d’intégration ou d’engagement",
+        "Notes d’affectation ou de nomination",
+        "Premier certificat de prise de service",
+        "Attestation de présence au poste",
+        "Bulletin de solde récent"
+      ],
+      "circuitExterne": true,
+      "etapesInternes": [
+        "BPIPCS",
+        "SSC",
+        "DRSC",
+        "DGRHAS"
+      ],
+      "decision": "DGRHAS",
+      "decisionTexte": "DGRHAS",
+      "motifMutation": null,
+      "actif": false,
+      "ordre": 49
+    },
+    {
+      "code": "PRIME_ENRACINEMENT",
+      "numero": 50,
+      "libelle": "Prime d’enracinement",
+      "acte": "Soit-transmis au Budget",
+      "pieces": [
+        "Demande manuscrite et formulaire de demande",
+        "Texte d’intégration ou d’engagement",
+        "Notes d’affectation ou de nomination",
+        "Premier certificat de prise de service",
+        "Attestation de présence au poste",
+        "Bulletin de solde récent"
+      ],
+      "circuitExterne": true,
+      "etapesInternes": [
+        "BPIPCS",
+        "SSC",
+        "DRSC",
+        "DGRHAS"
+      ],
+      "decision": "DGRHAS",
+      "decisionTexte": "DGRHAS",
+      "motifMutation": null,
+      "actif": false,
+      "ordre": 50
+    },
+    {
+      "code": "PRIME_PLETHORE",
+      "numero": 51,
+      "libelle": "Prime de pléthore",
+      "acte": "Soit-transmis au Budget",
+      "pieces": [
+        "Demande manuscrite et formulaire de demande",
+        "Texte d’intégration ou d’engagement",
+        "Notes d’affectation ou de nomination",
+        "Certificat de prise ou de reprise de service",
+        "Attestation de présence au poste",
+        "Bulletin de solde récent",
+        "Liste des élèves authentifiée par le chef d’établissement scolaire",
+        "Emploi du temps authentifié par le chef d’établissement scolaire"
+      ],
+      "circuitExterne": true,
+      "etapesInternes": [
+        "BPIPCS",
+        "SSC",
+        "DRSC",
+        "DGRHAS"
+      ],
+      "decision": "DGRHAS",
+      "decisionTexte": "DGRHAS",
+      "motifMutation": null,
+      "actif": false,
+      "ordre": 51
+    },
+    {
+      "code": "PRIME_RISQUE_SANTE",
+      "numero": 52,
+      "libelle": "Prime de risque et santé",
+      "acte": "Soit-transmis au Budget",
+      "pieces": [
+        "Demande manuscrite et formulaire de demande",
+        "Texte d’intégration ou d’engagement",
+        "Notes d’affectation ou de nomination",
+        "Certificat de prise de service",
+        "Attestation de présence au poste",
+        "Bulletin de solde récent"
+      ],
+      "circuitExterne": true,
+      "etapesInternes": [
+        "BPIPCS",
+        "SSC",
+        "DRSC",
+        "DGRHAS"
+      ],
+      "decision": "DGRHAS",
+      "decisionTexte": "DGRHAS",
+      "motifMutation": null,
+      "actif": false,
+      "ordre": 52
+    },
+    {
+      "code": "INDEMNITE_FONCTION",
+      "numero": 53,
+      "libelle": "Indemnité de fonction",
+      "acte": "Soit-transmis au Budget",
+      "pieces": [
+        "Demande manuscrite et formulaire de demande",
+        "Texte d’intégration ou d’engagement",
+        "Notes d’affectation ou de nomination",
+        "Certificat de prise de service après la nomination",
+        "Attestation de présence au poste",
+        "Bulletin de solde récent"
+      ],
+      "circuitExterne": true,
+      "etapesInternes": [
+        "BPIPCS",
+        "SSC",
+        "DRSC",
+        "DGRHAS"
+      ],
+      "decision": "DGRHAS",
+      "decisionTexte": "DGRHAS",
+      "motifMutation": null,
+      "actif": false,
+      "ordre": 53
+    },
+    {
+      "code": "RAPPEL_INDEMNITE",
+      "numero": 54,
+      "libelle": "Rappel de l’indemnité de fonction",
+      "acte": "Soit-transmis du projet d’arrêté à la Fonction publique",
+      "pieces": [
+        "Demande manuscrite et formulaire de demande",
+        "Texte de nomination",
+        "Certificat de prise de service, après nomination",
+        "Photocopie du bulletin de solde récent",
+        "Attestation de présence au poste"
+      ],
+      "circuitExterne": true,
+      "etapesInternes": [
+        "BPIPCS",
+        "SSC",
+        "DRSC",
+        "DGRHAS"
+      ],
+      "decision": "DGRHAS",
+      "decisionTexte": "DGRHAS-Ministre",
+      "motifMutation": null,
+      "actif": false,
+      "ordre": 54
+    },
+    {
+      "code": "RAPPEL_SOLDE",
+      "numero": 55,
+      "libelle": "Rappel de solde d’activités",
+      "acte": "Soit-transmis au Budget",
+      "pieces": [
+        "Demande manuscrite et formulaire de demande",
+        "Texte d’intégration ou d’engagement",
+        "Notes d’affectation",
+        "Attestation de présence au poste",
+        "Premier certificat de prise de service",
+        "Photocopie du premier bulletin de solde"
+      ],
+      "circuitExterne": true,
+      "etapesInternes": [
+        "BPIPCS",
+        "SSC",
+        "DRSC",
+        "DGRHAS"
+      ],
+      "decision": "DGRHAS",
+      "decisionTexte": "DGRHAS",
+      "motifMutation": null,
+      "actif": false,
+      "ordre": 55
+    },
+    {
+      "code": "RAPPEL_PROMOTIONS",
+      "numero": 56,
+      "libelle": "Rappel des promotions",
+      "acte": "Soit-transmis au Budget",
+      "pieces": [
+        "Demande manuscrite et formulaire de demande",
+        "Texte d’intégration ou d’engagement",
+        "Notes d’affectation ou de nomination",
+        "Attestation de présence au poste",
+        "Certificat de prise de service au poste actuel",
+        "Texte de dernière promotion",
+        "Photocopie du bulletin de solde relatif à la situation précédente",
+        "Photocopie du bulletin de solde de la situation de sa dernière promotion"
+      ],
+      "circuitExterne": true,
+      "etapesInternes": [
+        "BPIPCS",
+        "SSC",
+        "DRSC",
+        "DGRHAS"
+      ],
+      "decision": "DGRHAS",
+      "decisionTexte": "DGRHAS",
+      "motifMutation": null,
+      "actif": false,
+      "ordre": 56
+    },
+    {
+      "code": "ALLOCATIONS_FAMILIALES",
+      "numero": 57,
+      "libelle": "Allocations familiales",
+      "acte": "Soit-transmis au Budget",
+      "pieces": [
+        "Demande manuscrite et formulaire de demande",
+        "Texte d’intégration à la Fonction publique",
+        "Notes d’affectation ministérielle et départementale",
+        "Certificat de prise de service",
+        "Attestation de présence au poste",
+        "Autorisation maritale (pour les dames)",
+        "Certificat de vie et d’entretien des enfants",
+        "Extraits d’actes de naissance légalisés des enfants",
+        "Photocopies légalisées des originaux d’actes de naissance des enfants"
+      ],
+      "circuitExterne": true,
+      "etapesInternes": [
+        "BPIPCS",
+        "SSC",
+        "DRSC",
+        "DGRHAS"
+      ],
+      "decision": "DGRHAS",
+      "decisionTexte": "DGRHAS",
+      "motifMutation": null,
+      "actif": false,
+      "ordre": 57
+    },
+    {
+      "code": "CAPITAL_DECES",
+      "numero": 58,
+      "libelle": "Capital décès",
+      "acte": "Soit-transmis au Budget",
+      "pieces": [
+        "Demande manuscrite et formulaire de demande",
+        "Acte de décès",
+        "Procès-verbal du conseil de famille",
+        "Jugement d’hérédité (délivré au tribunal)",
+        "Certificat de non appel ni d’opposition (direction des impôts)",
+        "Certificat de cessation de paiement du défunt",
+        "Carte nationale d’identité de l’héritier",
+        "Certificat de célibat ou acte de mariage (pour les mariés)",
+        "Extrait(s) d’acte(s) de naissance de l’(des) enfant(s) du défunt",
+        "Certificat(s) de vie et d’entretien de l’(des) enfant(s) du défunt",
+        "Texte d’intégration à la Fonction publique du défunt",
+        "Photocopie du bulletin de solde"
+      ],
+      "circuitExterne": true,
+      "etapesInternes": [
+        "BPIPCS",
+        "SSC",
+        "DRSC",
+        "DGRHAS"
+      ],
+      "decision": "DGRHAS",
+      "decisionTexte": "DGRHAS",
+      "motifMutation": null,
+      "actif": false,
+      "ordre": 58
+    }
+  ],
+  "beneficiaires": [
+    {
+      "id": 1,
+      "nom": "Commission",
+      "ordre": 1,
+      "actif": true,
+      "commission": true
+    },
+    {
+      "id": 2,
+      "nom": "Ministre",
+      "ordre": 2,
+      "actif": true,
+      "commission": false
+    }
+  ],
+  "origines": [
+    {
+      "id": 1,
+      "libelle": "Liste du Ministre",
+      "ordre": 1,
+      "actif": true,
+      "beneficiaireId": 2
+    },
+    {
+      "id": 2,
+      "libelle": "Cabinet du Ministre",
+      "ordre": 2,
+      "actif": true,
+      "beneficiaireId": null
+    },
+    {
+      "id": 3,
+      "libelle": "Direction de Cabinet",
+      "ordre": 3,
+      "actif": true,
+      "beneficiaireId": null
+    },
+    {
+      "id": 4,
+      "libelle": "Primature",
+      "ordre": 4,
+      "actif": true,
+      "beneficiaireId": null
+    },
+    {
+      "id": 5,
+      "libelle": "IGEPSA",
+      "ordre": 5,
+      "actif": true,
+      "beneficiaireId": null
+    },
+    {
+      "id": 6,
+      "libelle": "DGRHAS",
+      "ordre": 6,
+      "actif": true,
+      "beneficiaireId": null
+    },
+    {
+      "id": 7,
+      "libelle": "DRSC",
+      "ordre": 7,
+      "actif": true,
+      "beneficiaireId": null
+    },
+    {
+      "id": 8,
+      "libelle": "DDEPPSA du département",
+      "ordre": 8,
+      "actif": true,
+      "beneficiaireId": null
+    },
+    {
+      "id": 9,
+      "libelle": "Syndicats",
+      "ordre": 9,
+      "actif": true,
+      "beneficiaireId": null
+    },
+    {
+      "id": 10,
+      "libelle": "Dossier déposé directement",
+      "ordre": 10,
+      "actif": true,
+      "beneficiaireId": null
+    }
+  ]
+}
