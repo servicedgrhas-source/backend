@@ -145,3 +145,22 @@ export function sansPrefixeNumero(s: unknown): string | null {
   if (!t) return null;
   return t.replace(/^([IVXLC]+|\d+)\s*[.)-]\s*/i, '').trim() || null;
 }
+
+/**
+ * Catégorie de la Fonction Publique écrite à la main (« I », « Cat. II », « catégorie 3 », « HC »)
+ * → code du référentiel : I, II, III ou HORS_CATEGORIE. Null si on ne la reconnaît pas.
+ */
+export function codeCategorie(brut: unknown): string | null {
+  const k = cleCompacte(brut).replace(/^CAT(EGORIE)?/, '');
+  if (!k) return null;
+  if (k.startsWith('HORS') || k === 'HC') return 'HORS_CATEGORIE';
+  const codes: Record<string, string> = {
+    I: 'I',
+    '1': 'I',
+    II: 'II',
+    '2': 'II',
+    III: 'III',
+    '3': 'III',
+  };
+  return codes[k] ?? null;
+}

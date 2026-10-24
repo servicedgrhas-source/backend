@@ -26,7 +26,8 @@ import type { Readable } from 'node:stream';
  * - justificatifs : pièces des demandes de mutation (portail, saisie, ancien justificatif unique) ;
  * - notes-signees : scans PDF des notes signées par le ministre (archives).
  */
-export type DossierStockage = 'pieces' | 'justificatifs' | 'notes-signees';
+export type DossierStockage =
+  'pieces' | 'justificatifs' | 'notes-signees' | 'recensement';
 
 /** Nom neutre (uuid + extension) : jamais le nom d'origine, qui reste en base. */
 const NOM_SUR = /^[0-9a-f-]{36}\.[a-z0-9]{1,5}$/;

@@ -57,6 +57,9 @@ export class PortailController {
         pieces: t.pieces,
         motif: t.motifMutation,
         decision: t.decision,
+        acte: t.acte,
+        // Mutation (formulaire de mutation) ou autre prestation (congé, attestation, prime…)
+        mutation: !!t.motifMutation || /^(MUTATION|PERMUTATION)/.test(t.code),
       })),
       motifs: MOTIFS_MUTATION.map((m) => ({
         code: m,
@@ -175,7 +178,8 @@ export class PortailController {
         })),
       );
       envois.set(ip, [...recents, Date.now()]);
-      return r;
+      // Le portail ne renvoie que le n°, le code et la première étape (pas l'identifiant interne)
+      return { numero: r.numero, code: r.code, etape: r.etape };
     } catch (e) {
       await effacer();
       throw e;

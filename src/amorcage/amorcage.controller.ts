@@ -31,7 +31,13 @@ export class AmorcageController {
         'Réservé au poste de développement : en ligne, utilisez « Exporter ».',
       );
     const r = await this.amorcage.exporterVersFichier();
-    await this.journal.log(u, 'EXPORT_CONFIGURATION_FICHIER', 'parametre', null, r);
+    await this.journal.log(
+      u,
+      'EXPORT_CONFIGURATION_FICHIER',
+      'parametre',
+      null,
+      r,
+    );
     return r;
   }
 }

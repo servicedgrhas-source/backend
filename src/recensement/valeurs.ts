@@ -1,0 +1,435 @@
+import { codeDepartement } from '../common/referentiels';
+import { cleCompacte, enTexte, lireDate, normaliser } from '../common/texte';
+import type {
+  ChampFiche,
+  ColonneTableau,
+  Condition,
+  ConfigRecensement,
+  StatutAgent,
+} from './configuration';
+
+/** Cellule « vide » des extractions (NULL, N/A, -, néant…). */
+const VIDES = new Set([
+  '',
+  'NULL',
+  'NA',
+  'NEANT',
+  'AUCUN',
+  'AUCUNE',
+  'NONRENSEIGNE',
+  'NR',
+]);
+export const estVide = (v: unknown) =>
+  v === null ||
+  v === undefined ||
+  (Array.isArray(v) && v.length === 0) ||
+  (typeof v === 'string' &&
+    VIDES.has(cleCompacte(v)) &&
+    !/^-?\d/.test(v.trim()));
+
+const MOIS_EN: Record<string, number> = {
+  JAN: 1,
+  FEB: 2,
+  MAR: 3,
+  APR: 4,
+  MAY: 5,
+  JUN: 6,
+  JUL: 7,
+  AUG: 8,
+  SEP: 9,
+  OCT: 10,
+  NOV: 11,
+  DEC: 12,
+  FEV: 2,
+  AVR: 4,
+  MAI: 5,
+  JUI: 6,
+  AOU: 8,
+};
+
+/** Date d'un fichier : JJ/MM/AAAA, AAAA-MM-JJ, date Excel, ou « 22-MAY-76 » (extractions de la solde). */
+export function lireDateFichier(v: unknown): string | null {
+  const d = lireDate(v);
+  if (d) return d;
+  const m = normaliser(v).match(
+    /^(\d{1,2})[-/ ]([A-Z]{3})[A-Z]*[-/ ](\d{2}|\d{4})$/,
+  );
+  if (!m || !MOIS_EN[m[2]]) return null;
+  let an = Number(m[3]);
+  if (m[3].length === 2) {
+    const siecle = new Date().getFullYear() % 100;
+    an += an > siecle ? 1900 : 2000;
+  }
+  const j = Number(m[1]);
+  const mo = MOIS_EN[m[2]];
+  const dt = new Date(Date.UTC(an, mo - 1, j));
+  if (dt.getUTCMonth() !== mo - 1 || dt.getUTCDate() !== j) return null;
+  return `${an}-${String(mo).padStart(2, '0')}-${String(j).padStart(2, '0')}`;
+}
+
+export interface ValeurLue {
+  valeur: unknown;
+  /** Deuxième valeur trouvée dans la même case (deux téléphones). */
+  suite?: unknown;
+  /** Valeur refusée (format faux, hors liste) : expliquée. */
+  erreur?: string;
+}
+
+/** Plusieurs valeurs dans une cellule : « a ; b », « a, b », une par ligne. */
+const morceaux = (v: unknown, virgule = true): string[] =>
+  (Array.isArray(v)
+    ? v.map((x) => enTexte(x))
+    : enTexte(v).split(virgule ? /[;\n\r]+|,(?=\s*\D)/ : /[;\n\r]+/)
+  )
+    .map((s) => s.replace(/\s+/g, ' ').trim())
+    .filter((s) => s && !estVide(s));
+
+function option(ch: ChampFiche, brut: unknown) {
+  const k = cleCompacte(brut);
+  if (!k) return null;
+  return (
+    ch.options.find((o) =>
+      [o.code, o.libelle, ...o.synonymes].some((x) => cleCompacte(x) === k),
+    ) ?? null
+  );
+}
+
+/**
+ * Valeur d'une rubrique, mise au format du système : texte nettoyé, nombre, date ISO, code de la
+ * valeur de liste (ou le texte tel quel si la rubrique accepte une autre valeur), lignes…
+ */
+export function lireValeur(ch: ChampFiche, brut: unknown): ValeurLue {
+  if (estVide(brut)) return { valeur: null };
+  const texte = enTexte(brut).replace(/\s+/g, ' ').trim();
+  switch (ch.type) {
+    case 'TEXTE': {
+      // « 103231--INSTITUTEUR » (code de la solde devant le libellé)
+      const t =
+        typeof brut === 'number'
+          ? String(brut)
+          : texte.replace(/^\d{3,}\s*-{1,2}\s*/, '');
+      return { valeur: t.slice(0, 500) };
+    }
+    case 'NOMBRE': {
+      const n = Number(texte.replace(/\s/g, '').replace(',', '.'));
+      if (!Number.isFinite(n) || n < 0)
+        return { valeur: null, erreur: `« ${texte} » n’est pas un nombre` };
+      return { valeur: n };
+    }
+    case 'DATE': {
+      const d = lireDateFichier(brut);
+      if (!d)
+        return {
+          valeur: null,
+          erreur: `« ${texte} » n’est pas une date (JJ/MM/AAAA)`,
+        };
+      return { valeur: d };
+    }
+    case 'TELEPHONE': {
+      // « 066491252 / 040146150 » : deux numéros dans la case, le second est gardé à part
+      const numeros = texte
+        .split(/\s*[/;|]\s*|\s+(?:ou|et)\s+/i)
+        .map((t) =>
+          t
+            .replace(/[^\d+]/g, '')
+            .replace(/^\+?242/, '')
+            .replace(/\D/g, ''),
+        )
+        .filter(Boolean);
+      const joli = (n: string) =>
+        n.length === 9
+          ? `${n.slice(0, 2)} ${n.slice(2, 5)} ${n.slice(5, 7)} ${n.slice(7)}`
+          : n;
+      if (!numeros.length || numeros.some((n) => n.length < 8 || n.length > 15))
+        return {
+          valeur: null,
+          erreur: `« ${texte} » n’est pas un numéro de téléphone`,
+        };
+      return {
+        valeur: joli(numeros[0]),
+        suite: numeros[1] ? joli(numeros[1]) : undefined,
+      };
+    }
+    case 'EMAIL': {
+      const t = texte.toLowerCase();
+      if (!/^[^\s@]+@[^\s@]+\.[a-z]{2,}$/.test(t))
+        return {
+          valeur: null,
+          erreur: `« ${texte} » n’est pas une adresse e-mail`,
+        };
+      return { valeur: t };
+    }
+    case 'LISTE': {
+      const o = option(ch, texte);
+      if (o) return { valeur: o.code };
+      if (ch.autreValeur) return { valeur: texte.slice(0, 200) };
+      return {
+        valeur: null,
+        erreur: `« ${texte} » n’est pas dans la liste (${ch.options.map((x) => x.libelle).join(', ')})`,
+      };
+    }
+    case 'LISTE_MULTIPLE': {
+      const vals: string[] = [];
+      for (const m of morceaux(brut)) {
+        const o = option(ch, m);
+        if (o) vals.push(o.code);
+        else if (ch.autreValeur) vals.push(m.slice(0, 200));
+        else
+          return { valeur: null, erreur: `« ${m} » n’est pas dans la liste` };
+      }
+      return { valeur: [...new Set(vals)] };
+    }
+    case 'LIGNES':
+      return {
+        valeur: morceaux(brut, false)
+          .map((s) => s.slice(0, 300))
+          .slice(0, 50),
+      };
+    case 'TABLEAU':
+      return lireTableau(ch, brut);
+    case 'DEPARTEMENT': {
+      const code = codeDepartement(texte);
+      if (!code)
+        return {
+          valeur: null,
+          erreur: `« ${texte} » n’est pas un département`,
+        };
+      return { valeur: code };
+    }
+  }
+}
+
+/** Case d'une ligne de tableau. */
+function lireCase(c: ColonneTableau, brut: unknown): ValeurLue {
+  if (estVide(brut)) return { valeur: null };
+  const t = enTexte(brut).replace(/\s+/g, ' ').trim();
+  switch (c.type) {
+    case 'DATE': {
+      const d = lireDateFichier(brut);
+      return d
+        ? { valeur: d }
+        : { valeur: null, erreur: `« ${t} » n’est pas une date (JJ/MM/AAAA)` };
+    }
+    case 'NOMBRE': {
+      const n = Number(t.replace(/\s/g, '').replace(',', '.'));
+      return Number.isFinite(n)
+        ? { valeur: n }
+        : { valeur: null, erreur: `« ${t} » n’est pas un nombre` };
+    }
+    case 'LISTE': {
+      const k = cleCompacte(t);
+      const o = c.options.find((x) =>
+        [x.code, x.libelle, ...x.synonymes].some((y) => cleCompacte(y) === k),
+      );
+      return { valeur: o ? o.code : t.slice(0, 200) };
+    }
+    default:
+      return { valeur: t.slice(0, 300) };
+  }
+}
+
+/**
+ * Tableau (promotions, affectations successives, enfants…) : une liste de lignes à plusieurs cases.
+ * À l'écran, chaque ligne arrive déjà découpée. Dans Excel, tout tient dans la case de l'agent :
+ * lignes séparées par « ; » (ou un retour à la ligne), cases par « | ». Une ligne d'une seule case
+ * (ancien historique en texte, « Arrêté n° 1234 du 12/05/2018 ») va dans la première case de texte,
+ * et la date qu'elle contient remplit la case de date.
+ */
+function lireTableau(ch: ChampFiche, brut: unknown): ValeurLue {
+  const cols = ch.colonnes ?? [];
+  if (!cols.length) return { valeur: null };
+  const lignes: unknown[] = Array.isArray(brut)
+    ? brut
+    : enTexte(brut)
+        .split(/[;\n\r]+/)
+        .map((x) => x.trim())
+        .filter(Boolean);
+  const res: Record<string, unknown>[] = [];
+  for (const l of lignes.slice(0, 50)) {
+    let cases: Record<string, unknown>;
+    if (l && typeof l === 'object' && !Array.isArray(l))
+      cases = l as Record<string, unknown>;
+    else {
+      const parts = enTexte(l)
+        .split('|')
+        .map((x) => x.trim());
+      cases = {};
+      if (parts.length === 1) {
+        const texte = cols.find((c) => c.type === 'TEXTE');
+        if (texte) cases[texte.code] = parts[0];
+        else cases[cols[0].code] = parts[0];
+      } else cols.forEach((c, i) => (cases[c.code] = parts[i] ?? null));
+    }
+    // Date vide mais écrite dans le texte (« Arrêté n° 12 du 12/05/2018 ») : elle remplit la case de date
+    const texte = cols.find((c) => c.type === 'TEXTE');
+    const date = cols.find((c) => c.type === 'DATE');
+    if (texte && date && estVide(cases[date.code])) {
+      const m = enTexte(cases[texte.code]).match(
+        /(\d{1,2}[/.-]\d{1,2}[/.-]\d{2,4})/,
+      );
+      if (m) cases = { ...cases, [date.code]: m[1].replace(/[.-]/g, '/') };
+    }
+    const ligne: Record<string, unknown> = {};
+    for (const c of cols) {
+      const lu = lireCase(c, cases[c.code]);
+      if (lu.erreur)
+        return { valeur: null, erreur: `${c.libelle} : ${lu.erreur}` };
+      if (!estVide(lu.valeur)) ligne[c.code] = lu.valeur;
+    }
+    if (Object.keys(ligne).length) res.push(ligne);
+  }
+  return { valeur: res };
+}
+
+/** Texte d'une ligne de tableau : « 12/05/2018 | Arrêté n° 1234 | Avancement d’échelon ». */
+export function ligneLisible(ch: ChampFiche, l: unknown): string {
+  if (!l || typeof l !== 'object') return enTexte(l);
+  const x = l as Record<string, unknown>;
+  return (ch.colonnes ?? [])
+    .map((c) => {
+      const v = x[c.code];
+      if (estVide(v)) return '';
+      if (c.type === 'DATE' && /^\d{4}-\d{2}-\d{2}$/.test(String(v)))
+        return String(v).split('-').reverse().join('/');
+      if (c.type === 'LISTE')
+        return c.options.find((o) => o.code === v)?.libelle ?? String(v);
+      return String(v);
+    })
+    .join(' | ')
+    .replace(/(\s\|\s)+$/, '');
+}
+
+/** La valeur d'une liste est-elle hors liste (texte libre accepté, à vérifier) ? */
+export function horsListe(ch: ChampFiche, v: unknown): boolean {
+  if (ch.type === 'LISTE')
+    return typeof v === 'string' && !ch.options.some((o) => o.code === v);
+  if (ch.type === 'LISTE_MULTIPLE')
+    return (
+      Array.isArray(v) && v.some((x) => !ch.options.some((o) => o.code === x))
+    );
+  return false;
+}
+
+/** Condition remplie par les valeurs d'une fiche. */
+export function conditionRemplie(
+  cd: Condition | null,
+  donnees: Record<string, unknown>,
+): boolean {
+  if (!cd) return true;
+  const v = donnees[cd.champ];
+  if (estVide(v)) return false;
+  if (!cd.valeurs.length) return true;
+  const vals = Array.isArray(v) ? v.map(String) : [String(v)];
+  return vals.some((x) => cd.valeurs.includes(x));
+}
+
+/** Nombre d'unités d'une rubrique (nombre d'enfants, lignes d'un historique, diplômes cochés). */
+export function nombreDe(v: unknown): number {
+  if (Array.isArray(v)) return v.length;
+  const n = Number(v);
+  return Number.isFinite(n) && n > 0 ? Math.min(Math.floor(n), 30) : 0;
+}
+
+export interface Evaluation {
+  champs: string[];
+  pieces: { code: string; manque: number }[];
+  aVerifier: string[];
+  taux: number;
+  complet: boolean;
+}
+
+/**
+ * Ce qui manque à une fiche, pour son type d'agent : rubriques obligatoires vides, pièces exigées
+ * absentes (une par enfant, une par promotion…), valeurs à vérifier et règles de cohérence.
+ */
+export function evaluer(
+  config: ConfigRecensement,
+  statut: string,
+  donnees: Record<string, unknown>,
+  piecesFournies: Record<string, number>,
+): Evaluation {
+  let exiges = 0;
+  let fournis = 0;
+  const champs: string[] = [];
+  const aVerifier: string[] = [];
+  for (const ch of config.champs) {
+    if (!ch.actif) continue;
+    const v = donnees[ch.code];
+    if (!estVide(v) && horsListe(ch, v)) aVerifier.push(ch.code);
+    if (
+      !ch.obligatoirePour.includes(statut) ||
+      !conditionRemplie(ch.si, donnees)
+    )
+      continue;
+    exiges++;
+    if (estVide(v)) champs.push(ch.code);
+    else fournis++;
+  }
+  const pieces: { code: string; manque: number }[] = [];
+  for (const p of config.pieces) {
+    if (
+      !p.actif ||
+      !p.exigeePour.includes(statut) ||
+      !conditionRemplie(p.si, donnees)
+    )
+      continue;
+    const nombre = p.nombreSelon ? nombreDe(donnees[p.nombreSelon]) : 1;
+    if (!nombre) continue;
+    const ok = Math.min(nombre, piecesFournies[p.code] ?? 0);
+    exiges += nombre;
+    fournis += ok;
+    if (ok < nombre) pieces.push({ code: p.code, manque: nombre - ok });
+  }
+  for (const r of config.regles)
+    if (
+      r.actif &&
+      conditionRemplie(r.si, donnees) &&
+      !estVide(donnees[r.alors.champ]) &&
+      !conditionRemplie(r.alors, donnees)
+    )
+      aVerifier.push(`REGLE:${r.code}`);
+  return {
+    champs,
+    pieces,
+    aVerifier,
+    taux: exiges ? Math.round((fournis / exiges) * 100) : 100,
+    complet: !champs.length && !pieces.length,
+  };
+}
+
+/** Texte lisible d'une valeur (libellé de la liste, date JJ/MM/AAAA, lignes séparées par « ; »). */
+export function valeurLisible(
+  ch: ChampFiche,
+  v: unknown,
+  nomDepartement?: (code: string) => string | undefined,
+): string {
+  if (estVide(v)) return '';
+  const lib = (x: unknown) =>
+    ch.options.find((o) => o.code === x)?.libelle ?? String(x);
+  switch (ch.type) {
+    case 'LISTE':
+      return lib(v);
+    case 'TABLEAU':
+      return (Array.isArray(v) ? v : [v])
+        .map((l) => ligneLisible(ch, l))
+        .join(' ; ');
+    case 'LISTE_MULTIPLE':
+    case 'LIGNES':
+      return (Array.isArray(v) ? v : [v])
+        .map((x) => (ch.type === 'LIGNES' ? String(x) : lib(x)))
+        .join(' ; ');
+    case 'DATE': {
+      const s = String(v);
+      return /^\d{4}-\d{2}-\d{2}$/.test(s)
+        ? `${s.slice(8, 10)}/${s.slice(5, 7)}/${s.slice(0, 4)}`
+        : s;
+    }
+    case 'DEPARTEMENT':
+      return nomDepartement?.(String(v)) ?? String(v);
+    default:
+      return String(v);
+  }
+}
+
+export const libelleStatut = (statuts: StatutAgent[], code: string) =>
+  statuts.find((s) => s.code === code)?.libelle ?? code;

@@ -10,7 +10,8 @@ import { lireClasseur } from '../common/excel';
 import { codeDepartement } from '../common/referentiels';
 import { motsDuNom, ressemblance } from '../common/ressemblance';
 import { lireDate, nettoyer, normaliser } from '../common/texte';
-import { JournalService, ParametresService } from '../core/core.service';
+import { ConfigEnrolementService } from './configuration';
+import { JournalService } from '../core/core.service';
 import {
   Agent,
   AncienRecrute,
@@ -65,15 +66,6 @@ export const SPECIALITES_ENROLEMENT = [
 
 /** Cycles où le diplôme ne dit pas tout : une licence peut servir au collège comme au lycée. */
 const DIPLOMES_A_CYCLE_LIBRE = ['LICENCE', 'MASTER', 'AUTRE'];
-
-/** Paramètre de la bourse mensuelle de chaque cycle. */
-const PARAM_BOURSE: Record<string, string> = {
-  Préscolaire: 'BOURSE_PRESCOLAIRE',
-  Primaire: 'BOURSE_PRIMAIRE',
-  Collège: 'BOURSE_COLLEGE',
-  Lycée: 'BOURSE_LYCEE',
-  Administration: 'BOURSE_ADMINISTRATION',
-};
 
 /** L'enveloppe est annuelle, la bourse mensuelle : un volontaire coûte 12 bourses par an. */
 const MOIS = 12;
@@ -147,14 +139,14 @@ export class EnrolementService {
     @InjectRepository(Departement)
     private readonly deps: Repository<Departement>,
     private readonly journal: JournalService,
-    private readonly params: ParametresService,
+    private readonly config: ConfigEnrolementService,
   ) {}
 
-  /** Bourse mensuelle d'un cycle : celle de la campagne, sinon celle des paramètres. */
+  /** Bourse mensuelle d'un cycle : celle de la campagne, sinon celle de la configuration de l'enrôlement. */
   private bourse(c: Partial<CampagneEnrolement> | null, cycle: string) {
     return (
       c?.montantsParCycle?.[cycle] ||
-      Number(this.params.get(PARAM_BOURSE[cycle] ?? '')) ||
+      this.config.categorieDepuisTexte(cycle)?.bourse ||
       0
     );
   }

@@ -98,8 +98,17 @@ export function lireNumeroEnregistrement(brut: unknown): number | null {
   return n > 0 ? n : null;
 }
 
+/** Motif des demandes qui ne sont pas des mutations (le motif est obligatoire en base). */
+export const MOTIF_PRESTATION = 'PRESTATION';
+
 export function anomaliesMutation(d: Partial<DemandeMutation>): string[] {
   const a: string[] = [];
+  // Congé, attestation, prime… : pas de département demandé ni d'ancienneté à contrôler
+  if (d.motif === MOTIF_PRESTATION) {
+    if (d.typeAgent === 'FONCTIONNAIRE' && !d.matricule)
+      a.push('Matricule solde non communiqué');
+    return a;
+  }
   if (!d.departementOrigineId) a.push("Département d'origine non reconnu");
   if (!d.departementSolliciteId) a.push('Département sollicité non reconnu');
   if (
@@ -156,6 +165,9 @@ export interface DemandeDto {
   permutationAvecId?: string | null;
   origine?: string | null;
   observation?: string | null;
+  dateDebut?: string | null;
+  dateFin?: string | null;
+  agentId?: number | null;
 }
 
 @Injectable()
@@ -277,8 +289,23 @@ export class MutationService {
   private normaliserDto(dto: DemandeDto): Partial<DemandeMutation> {
     if (!dto.nomComplet?.trim())
       throw new BadRequestException('Nom et prénoms obligatoires');
-    if (!MOTIFS_MUTATION.includes(dto.motif as MotifMutation))
+    const prestation = dto.motif === MOTIF_PRESTATION;
+    if (!prestation && !MOTIFS_MUTATION.includes(dto.motif as MotifMutation))
       throw new BadRequestException('Choisissez le motif de la mutation.');
+    if (prestation && (dto.objet?.trim().length ?? 0) < 4)
+      throw new BadRequestException(
+        'Écrivez l’objet de la demande (ex. « Congé administratif de l’année 2026 »).',
+      );
+    const jour = (v?: string | null) =>
+      v && /^\d{4}-\d{2}-\d{2}$/.test(v) ? v : null;
+    if (
+      jour(dto.dateDebut) &&
+      jour(dto.dateFin) &&
+      dto.dateFin! < dto.dateDebut!
+    )
+      throw new BadRequestException(
+        'La date de fin est avant la date de début.',
+      );
     const t = (v?: string | null) => nettoyer(v);
     const champs: Partial<DemandeMutation> = {
       dateEnregistrement: dto.dateEnregistrement || null,
@@ -308,8 +335,19 @@ export class MutationService {
       structureOrigineId: dto.structureOrigineId ?? null,
       structureOrigineTexte: t(dto.structureOrigineTexte),
       telephone: t(dto.telephone),
+      dateDebut: jour(dto.dateDebut),
+      dateFin: jour(dto.dateFin),
+      agentId: dto.agentId ?? null,
     };
     return champs;
+  }
+
+  /** Mutation (département ou lieu demandé) ou autre prestation (congé, attestation, prime…). */
+  async estMutation(codeType: string) {
+    const t = (await this.circuit.listeTypes()).find(
+      (x) => x.code === codeType,
+    );
+    return !!t?.motifMutation || /^(MUTATION|PERMUTATION)/.test(codeType);
   }
 
   /** Type de prestation d'une demande de mutation (choisi, sinon déduit du motif). */
@@ -427,11 +465,16 @@ export class MutationService {
   async creerDepuisPortail(
     dto: DemandeDto,
     fichiers: { libelle: string; f: Express.Multer.File }[],
+    /** Déposée par le chef de l'agent (ou la DGRHAS) depuis son compte. */
+    par?: UtilisateurConnecte,
   ) {
     const champs = this.normaliserDto(dto);
     if (!champs.departementOrigineId)
       throw new BadRequestException('Choisissez votre département actuel.');
-    if (!champs.departementSolliciteId)
+    if (
+      !champs.departementSolliciteId &&
+      (await this.estMutation(this.typeDe(dto)))
+    )
       throw new BadRequestException('Choisissez le département demandé.');
     if (!fichiers.length)
       throw new BadRequestException(
@@ -442,7 +485,7 @@ export class MutationService {
     const c = await this.circuit.construire(typePrestation, {
       structureId: champs.structureOrigineId ?? null,
       departementOrigineId: champs.departementOrigineId,
-      departementSolliciteId: champs.departementSolliciteId,
+      departementSolliciteId: champs.departementSolliciteId ?? null,
     });
     const code = Array.from(
       { length: 6 },
@@ -452,14 +495,14 @@ export class MutationService {
       ...champs,
       numeroEnregistrement: numero,
       dateEnregistrement: new Date().toISOString().slice(0, 10),
-      cle: `P|${numero}`,
-      saisiePar: `${champs.nomComplet} (portail)`,
+      cle: `${par ? 'C' : 'P'}|${numero}`,
+      saisiePar: par ? par.nom : `${champs.nomComplet} (portail)`,
       anomalies: anomaliesMutation({
         ...champs,
         justificatifFichier: 'pieces',
       }),
       typePrestation,
-      canal: 'PORTAIL',
+      canal: par ? 'STRUCTURE' : 'PORTAIL',
       codeSuivi: code,
       circuit: c.circuit,
       etapeCourante: c.etapeCourante,
@@ -473,14 +516,20 @@ export class MutationService {
         fichier: f.filename,
         mime: f.mimetype,
         taille: f.size,
-        ajoutePar: 'Demandeur (portail)',
+        ajoutePar: par ? par.nom : 'Demandeur (portail)',
       });
     await this.circuit.alerterNouvelle(d);
-    await this.journal.log(null, 'DEMANDE_PORTAIL', 'demande_mutation', d.id, {
-      type: typePrestation,
-      pieces: fichiers.length,
-    });
-    return { numero, code, etape: c.circuit[0].sigle };
+    await this.journal.log(
+      par ?? null,
+      par ? 'DEMANDE_DEPOSEE' : 'DEMANDE_PORTAIL',
+      'demande_mutation',
+      d.id,
+      {
+        type: typePrestation,
+        pieces: fichiers.length,
+      },
+    );
+    return { id: d.id, numero, code, etape: c.circuit[0].sigle };
   }
 
   /** Suivi public : n° + code. Montre les étapes franchies et la décision, sans les avis internes. */
@@ -501,6 +550,12 @@ export class MutationService {
       typePrestation: d.typePrestation,
       decision: d.decision,
       decisionMotivation: d.decision ? d.decisionMotivation : null,
+      dateDebut: d.dateDebut,
+      dateFin: d.dateFin,
+      // Prestation accordée (autre qu'une mutation) : l'acte s'imprime depuis le portail
+      acteDisponible:
+        d.decision === 'ACCORDEE' &&
+        !(await this.estMutation(d.typePrestation ?? '')),
       etapes: (d.circuit ?? []).map((e, i) => ({
         sigle: e.sigle,
         nom: e.nom,
@@ -745,7 +800,10 @@ export class MutationService {
 
   async statistiques(base: 'accordees' | 'toutes') {
     const deps = await this.deps.find({ order: { ordre: 'ASC' } });
-    let liste = await this.repo.find({ where: { retiree: false } });
+    // Les mutations seulement (pas les congés, attestations, primes…)
+    let liste = (await this.repo.find({ where: { retiree: false } })).filter(
+      (d) => d.motif !== MOTIF_PRESTATION,
+    );
     if (base === 'accordees')
       liste = liste.filter((d) => d.instructionMinistre === 'ACCORDEE');
 

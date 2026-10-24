@@ -1,5 +1,6 @@
 import ExcelJS from 'exceljs';
 import { Readable } from 'node:stream';
+import { inflateRawSync } from 'node:zlib';
 import { cleCompacte } from './texte';
 
 export type Ligne = Record<string, unknown> & { _ligne: number };
@@ -36,7 +37,22 @@ export async function lireClasseur(
   options: { inclureMasquees?: boolean } = {},
 ): Promise<FeuilleLue[]> {
   try {
-    return await lireEnFlux(contenu, requises, options);
+    const lues = await lireEnFlux(contenu, requises, options);
+    // Certains logiciels (ExcelJS, openpyxl…) rangent « workbook.xml » après les feuilles ou
+    // écrivent des chemins absolus : la lecture en flux ne connaît alors ni le nom ni l'état
+    // des feuilles (« Sheet1 »…). Ils sont relus dans le classeur lui-même.
+    if (!lues.some((f) => /^Sheet\d+$/.test(f.nom))) return lues;
+    const feuilles = feuillesDuClasseur(contenu);
+    return lues
+      .map((f) => {
+        const n = /^Sheet(\d+)$/.exec(f.nom)?.[1];
+        const vraie = n ? feuilles.get(n) : undefined;
+        return vraie
+          ? { ...f, nom: vraie.nom, masquee: vraie.masquee }
+          : { ...f, masquee: false };
+      })
+      .filter((f) => options.inclureMasquees || !f.masquee)
+      .map((f) => ({ nom: f.nom, lignes: f.lignes, entetes: f.entetes }));
   } catch {
     // La lecture en flux échoue quand le fichier range « workbook.xml » après
     // les feuilles (fichiers produits par certains logiciels) : lecture complète.
@@ -161,6 +177,76 @@ async function lireFeuille(
   return { nom: feuille.name, lignes, entetes: [...colonnes.values()] };
 }
 
+/** Contenu d'un fichier du classeur (archive zip), sans dépendance : répertoire central puis inflate. */
+function entreeZip(zip: Buffer, chemin: string): string | null {
+  let fin = -1;
+  for (let i = zip.length - 22; i >= Math.max(0, zip.length - 65557); i--)
+    if (zip.readUInt32LE(i) === 0x06054b50) {
+      fin = i;
+      break;
+    }
+  if (fin < 0) return null;
+  const nombre = zip.readUInt16LE(fin + 10);
+  let p = zip.readUInt32LE(fin + 16);
+  for (let k = 0; k < nombre && p + 46 <= zip.length; k++) {
+    if (zip.readUInt32LE(p) !== 0x02014b50) return null;
+    const methode = zip.readUInt16LE(p + 10);
+    const taille = zip.readUInt32LE(p + 20);
+    const lNom = zip.readUInt16LE(p + 28);
+    const lExtra = zip.readUInt16LE(p + 30);
+    const lCom = zip.readUInt16LE(p + 32);
+    const local = zip.readUInt32LE(p + 42);
+    const nom = zip.toString('utf8', p + 46, p + 46 + lNom);
+    if (nom === chemin) {
+      const debut =
+        local +
+        30 +
+        zip.readUInt16LE(local + 26) +
+        zip.readUInt16LE(local + 28);
+      const donnees = zip.subarray(debut, debut + taille);
+      return (methode === 8 ? inflateRawSync(donnees) : donnees).toString(
+        'utf8',
+      );
+    }
+    p += 46 + lNom + lExtra + lCom;
+  }
+  return null;
+}
+
+/** Nom et état (masquée) de chaque feuille, par numéro de fichier (« sheet3.xml » → 3). */
+function feuillesDuClasseur(
+  zip: Buffer,
+): Map<string, { nom: string; masquee: boolean }> {
+  const res = new Map<string, { nom: string; masquee: boolean }>();
+  const wb = entreeZip(zip, 'xl/workbook.xml');
+  const rels = entreeZip(zip, 'xl/_rels/workbook.xml.rels');
+  if (!wb || !rels) return res;
+  const cible = new Map<string, string>();
+  for (const m of rels.matchAll(/<Relationship\b[^>]*>/g)) {
+    const id = /\bId="([^"]+)"/.exec(m[0])?.[1];
+    const n = /\bTarget="[^"]*sheet(\d+)\.xml"/.exec(m[0])?.[1];
+    if (id && n) cible.set(id, n);
+  }
+  const xml = (s: string) =>
+    s.replace(
+      /&(amp|lt|gt|quot|apos);/g,
+      (_t, e: string) =>
+        ({ amp: '&', lt: '<', gt: '>', quot: '"', apos: "'" })[e] ?? '',
+    );
+  for (const m of wb.matchAll(/<sheet\b[^>]*>/g)) {
+    const nom = /\bname="([^"]*)"/.exec(m[0])?.[1];
+    const rid =
+      /\br:id="([^"]+)"/.exec(m[0])?.[1] ?? /\bid="([^"]+)"/.exec(m[0])?.[1];
+    const n = rid ? cible.get(rid) : undefined;
+    if (nom !== undefined && n)
+      res.set(n, {
+        nom: xml(nom),
+        masquee: /\bstate="(hidden|veryHidden)"/.test(m[0]),
+      });
+  }
+  return res;
+}
+
 /** Première valeur trouvée parmi plusieurs préfixes d'en-tête possibles. */
 export function champ(l: Ligne, ...prefixes: string[]): unknown {
   for (const p of prefixes) {
@@ -169,4 +255,27 @@ export function champ(l: Ligne, ...prefixes: string[]): unknown {
     if (k) return l[k];
   }
   return null;
+}
+
+/**
+ * Toutes les lignes d'une feuille, telles quelles (valeurs simples, par numéro de colonne).
+ * Pour les documents mis en page (notes de service) : titres de sections, tableaux répétés…
+ */
+export async function lireFeuilleBrute(
+  contenu: Buffer,
+  nomFeuille: string,
+): Promise<{ numero: number; valeurs: unknown[] }[] | null> {
+  const classeur = new ExcelJS.Workbook();
+  await classeur.xlsx.load(contenu as unknown as ArrayBuffer);
+  const ws = classeur.getWorksheet(nomFeuille);
+  if (!ws) return null;
+  const lignes: { numero: number; valeurs: unknown[] }[] = [];
+  ws.eachRow((row) => {
+    const brutes = (row.values as ExcelJS.CellValue[]) ?? [];
+    lignes.push({
+      numero: row.number,
+      valeurs: brutes.map((v) => valeurCellule(v)),
+    });
+  });
+  return lignes;
 }

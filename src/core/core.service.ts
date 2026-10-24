@@ -22,11 +22,7 @@ const PARAMETRES_ENTIERS: Record<string, [number, number, string]> = {
   AGE_MAXIMUM: [25, 70, 'un âge entre 25 et 70 ans'],
   TAILLE_LOT_COMMISSION: [1, 1000, 'un nombre de dossiers entre 1 et 1000'],
   POINT_INDICIAIRE: [1, 100000, 'un montant en FCFA (nombre entier)'],
-  BOURSE_PRESCOLAIRE: [0, 10000000, 'un montant mensuel en FCFA'],
-  BOURSE_PRIMAIRE: [0, 10000000, 'un montant mensuel en FCFA'],
-  BOURSE_COLLEGE: [0, 10000000, 'un montant mensuel en FCFA'],
-  BOURSE_LYCEE: [0, 10000000, 'un montant mensuel en FCFA'],
-  BOURSE_ADMINISTRATION: [0, 10000000, 'un montant mensuel en FCFA'],
+  HEURES_ENSEIGNANT: [1, 40, 'un nombre d’heures entre 1 et 40'],
 };
 
 export const PARAMETRES_DEFAUT: Record<string, [string, string]> = {
@@ -63,25 +59,9 @@ export const PARAMETRES_DEFAUT: Record<string, [string, string]> = {
     '300',
     'Point indiciaire : salaire brut = indice × point indiciaire',
   ],
-  BOURSE_PRESCOLAIRE: [
-    '50000',
-    'Enrôlement : bourse mensuelle d’un volontaire du préscolaire (FCFA)',
-  ],
-  BOURSE_PRIMAIRE: [
-    '50000',
-    'Enrôlement : bourse mensuelle d’un volontaire du primaire (FCFA)',
-  ],
-  BOURSE_COLLEGE: [
-    '60000',
-    'Enrôlement : bourse mensuelle d’un volontaire du collège (FCFA)',
-  ],
-  BOURSE_LYCEE: [
-    '75000',
-    'Enrôlement : bourse mensuelle d’un volontaire du lycée (FCFA)',
-  ],
-  BOURSE_ADMINISTRATION: [
-    '60000',
-    'Enrôlement : bourse mensuelle d’un volontaire de l’administration (FCFA)',
+  HEURES_ENSEIGNANT: [
+    '20',
+    'Heures de cours par semaine d’un enseignant du collège et du lycée : les heures des classes divisées par ce nombre donnent les enseignants nécessaires',
   ],
   MENTION_BOURSE_ENROLEMENT: [
     "Les intéressés percevront une bourse mensuelle conformément au protocole d'accord du 16 octobre 2023, passé entre le Gouvernement de la République et la Coordination des Diplômés des Ecoles Professionnelles de l'Enseignement, assistée par les syndicats des enseignants et l'Association des Parents d'Elèves et Etudiants du Congo (APEEC).",

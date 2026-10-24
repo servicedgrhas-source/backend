@@ -44,6 +44,15 @@ export interface FiltreAffectations {
   repartitionId?: string;
 }
 
+/**
+ * Première étape d'une recommandation : le directeur donne son avis sur celle d'un chef de service
+ * ou d'un agent ; proposée par un directeur ou par le DG, elle va directement à la décision du DG.
+ */
+export const etapeInitiale = (role: string) =>
+  ['DIRECTEUR', 'DG', 'ADMIN'].includes(role)
+    ? 'DECISION_DG'
+    : 'AVIS_DIRECTEUR';
+
 @Injectable()
 export class AffectationService {
   constructor(
@@ -482,7 +491,7 @@ export class AffectationService {
     const attente = new Set(
       (
         await this.recos.find({
-          where: { statut: 'EN_ATTENTE' },
+          where: { statut: 'EN_ATTENTE', operation: 'AFFECTATION' },
           select: ['affectationId'],
           loadEagerRelations: false,
         })
@@ -729,7 +738,10 @@ export class AffectationService {
       throw new BadRequestException('La recommandation ne change rien');
 
     const r = await this.recos.save({
+      operation: 'AFFECTATION',
       affectationId,
+      personne: aff.agent?.nomComplet ?? null,
+      etape: etapeInitiale(u.role),
       typeNote,
       departementId: dto.departementId ?? null,
       structure: dto.structure?.trim() || null,
@@ -757,10 +769,13 @@ export class AffectationService {
 
   async listeRecommandations(statut?: string) {
     const liste = await this.recos.find({
-      where: statut ? { statut: statut as Recommandation['statut'] } : {},
+      where: {
+        operation: 'AFFECTATION',
+        ...(statut ? { statut: statut as Recommandation['statut'] } : {}),
+      },
       order: { creeLe: 'DESC' },
     });
-    const enrichies = await this.enrichir(liste.map((r) => r.affectation));
+    const enrichies = await this.enrichir(liste.map((r) => r.affectation!));
     const deps = new Map((await this.deps.find()).map((d) => [d.id, d.nom]));
     return liste.map((r, i) => ({
       ...r,
@@ -783,7 +798,7 @@ export class AffectationService {
     if (r.statut !== 'EN_ATTENTE')
       throw new BadRequestException('Recommandation déjà traitée');
     if (decision === 'VALIDEE') {
-      const aff = await this.obtenir(r.affectationId);
+      const aff = await this.obtenir(r.affectationId!);
       this.verifierModifiable(aff);
       const maj: Partial<Affectation> = {
         origine: [aff.origine, r.origine].filter(Boolean).join(' ; '),

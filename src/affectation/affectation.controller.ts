@@ -75,11 +75,6 @@ class RecommandationDto {
   @IsOptional() @IsString() @MaxLength(1000) motif?: string | null;
 }
 
-class DecisionDto {
-  @IsIn(['VALIDEE', 'REJETEE']) decision: 'VALIDEE' | 'REJETEE';
-  @IsOptional() @IsString() commentaire?: string;
-}
-
 class MotifDto {
   @IsString() motif: string;
 }
@@ -302,25 +297,5 @@ export class AffectationController {
     @Body() dto: RecommandationDto,
   ) {
     return this.service.proposerRecommandation(u, id, dto);
-  }
-
-  @Get('recommandations')
-  recommandations(@Query('statut') statut?: string) {
-    return this.service.listeRecommandations(statut);
-  }
-
-  @Roles('DG')
-  @Post('recommandations/:id/decision')
-  decider(
-    @Utilisateur() u: UtilisateurConnecte,
-    @Param('id') id: string,
-    @Body() dto: DecisionDto,
-  ) {
-    return this.service.deciderRecommandation(
-      u,
-      id,
-      dto.decision,
-      dto.commentaire,
-    );
   }
 }

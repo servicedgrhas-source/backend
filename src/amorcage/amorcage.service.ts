@@ -77,9 +77,9 @@ export class AmorcageService {
         (d) => ({ id: d.id, code: d.code }),
       ),
       // Le témoin d'amorçage n'est pas exporté : il est propre à chaque base
-      parametres: (
-        await m.find(Parametre, { order: { cle: 'ASC' } })
-      ).filter((p) => p.cle !== TEMOIN),
+      parametres: (await m.find(Parametre, { order: { cle: 'ASC' } })).filter(
+        (p) => p.cle !== TEMOIN,
+      ),
       grades: await m.find(Grade, { order: { code: 'ASC' } }),
       regles: await m.find(RegleDiplome, { order: { code: 'ASC' } }),
       structures: sansDate(await m.find(Structure, { order: { id: 'ASC' } })),
@@ -145,7 +145,8 @@ export class AmorcageService {
 
   /** Remplace la configuration de la base par celle de l'export, en une seule transaction. */
   async appliquer(c: ConfigurationExportee) {
-    if (c.version !== 1) throw new Error('Fichier d’amorçage : version inconnue');
+    if (c.version !== 1)
+      throw new Error('Fichier d’amorçage : version inconnue');
     await this.base.transaction(async (m) => {
       // Les départements sont créés au démarrage : on fait correspondre leurs n° par le code
       const parCode = new Map(
@@ -154,7 +155,8 @@ export class AmorcageService {
       const dep = new Map(
         c.departements.map((d) => [d.id, parCode.get(d.code) ?? null]),
       );
-      const depDe = (id: number | null) => (id == null ? null : (dep.get(id) ?? null));
+      const depDe = (id: number | null) =>
+        id == null ? null : (dep.get(id) ?? null);
 
       for (const p of c.parametres) await m.save(Parametre, p);
 
@@ -162,14 +164,23 @@ export class AmorcageService {
       await this.remplacerParCode(m, RegleDiplome, c.regles, 'code', false);
       await this.remplacerParCode(m, Grade, c.grades, 'code', true);
       await this.remplacerParCode(m, RegleDiplome, c.regles, 'code', true);
-      await this.remplacerParCode(m, TypePrestation, c.prestations, 'code', true);
+      await this.remplacerParCode(
+        m,
+        TypePrestation,
+        c.prestations,
+        'code',
+        true,
+      );
 
       // Organigramme, bénéficiaires, origines : mêmes n° qu'à l'export (liens parent, bénéficiaire)
       await m.query('DELETE FROM structure');
       await this.insererAvecIds(
         m,
         Structure,
-        c.structures.map((s) => ({ ...s, departementId: depDe(s.departementId) })),
+        c.structures.map((s) => ({
+          ...s,
+          departementId: depDe(s.departementId),
+        })),
       );
       await m.query('DELETE FROM origine_dossier');
       await m.query('DELETE FROM beneficiaire');
@@ -183,7 +194,8 @@ export class AmorcageService {
       await m.save(Parametre, {
         cle: TEMOIN,
         valeur: c.exporteLe,
-        description: 'Configuration chargée au premier démarrage (date de l’export)',
+        description:
+          'Configuration chargée au premier démarrage (date de l’export)',
       });
     });
   }

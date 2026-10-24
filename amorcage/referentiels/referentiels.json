@@ -1,0 +1,6134 @@
+{
+ "departements": [
+  {
+   "name": "BOUENZA",
+   "id": "43d733b4-b35c-4c2b-a628-de6efff0ec30"
+  },
+  {
+   "name": "BRAZZAVILLE",
+   "id": "3268315f-0f77-4071-a256-5e8c74c6e0b8"
+  },
+  {
+   "name": "CONGO-OUBANGUI",
+   "id": "d58f7296-8b44-4925-ae22-ba65bd50c238"
+  },
+  {
+   "name": "CUVETTE",
+   "id": "eb36f58f-90b6-465f-8aea-9fd08e56c5c3"
+  },
+  {
+   "name": "CUVETTE OUEST",
+   "id": "f977dbf7-e3bf-468b-8570-63c07017d121"
+  },
+  {
+   "name": "DJOUE-LEFINI",
+   "id": "450879bc-66df-4f0f-b7ec-d4cb0fd97522"
+  },
+  {
+   "name": "KOUILOU",
+   "id": "a60ccba5-e8e0-4f13-87a5-4b71a2b7619d"
+  },
+  {
+   "name": "LEKOUMOU",
+   "id": "cc683a34-d2af-4a11-8165-e67cf08189a7"
+  },
+  {
+   "name": "LIKOUALA",
+   "id": "3671fa9c-b4c2-4448-a38f-a4b785c0bdd4"
+  },
+  {
+   "name": "NIARI",
+   "id": "fcd16b39-b65a-4781-ba34-7e1104357a55"
+  },
+  {
+   "name": "NKENI-ALIMA",
+   "id": "2ddb528f-a033-4eb1-bb66-92ae4355e8c1"
+  },
+  {
+   "name": "PLATEAUX",
+   "id": "3307001e-0743-4658-8805-647850d4d3ca"
+  },
+  {
+   "name": "POINTE-NOIRE",
+   "id": "15d9c2d7-cf63-4725-bc70-0da98850cbba"
+  },
+  {
+   "name": "POOL",
+   "id": "a589b3a7-82ad-4bd8-81c9-744c47e96df7"
+  },
+  {
+   "name": "SANGHA",
+   "id": "bc1740da-0884-4aeb-9d50-c704f5b90b5a"
+  }
+ ],
+ "villes": [
+  {
+   "name": "Brazzaville",
+   "department_name": "BRAZZAVILLE",
+   "id": "d1358525-2040-4232-801b-363d69fa0d80"
+  },
+  {
+   "name": "Djambala",
+   "department_name": "PLATEAUX",
+   "id": "06ace290-a13b-40aa-a6e6-a8fa8eb664e1"
+  },
+  {
+   "name": "Dolisie",
+   "department_name": "NIARI",
+   "id": "0b56b37d-9b9f-455e-836c-02a4df8331f1"
+  },
+  {
+   "name": "Ewo",
+   "department_name": "CUVETTE OUEST",
+   "id": "c520dbef-a586-49a6-b451-774bfb3abe8d"
+  },
+  {
+   "name": "Impfondo",
+   "department_name": "LIKOUALA",
+   "id": "5c54a832-90e8-460c-80bd-bdebd2eccca1"
+  },
+  {
+   "name": "Kinkala",
+   "department_name": "POOL",
+   "id": "77679df0-ec69-4b94-a307-59da6ae2b772"
+  },
+  {
+   "name": "Kintélé",
+   "department_name": "BRAZZAVILLE",
+   "id": "75673ead-a7c7-4feb-bfcd-bdd4f4d44823"
+  },
+  {
+   "name": "Madingou",
+   "department_name": "BOUENZA",
+   "id": "780252a0-627d-4ce1-9bc6-b5628db2e595"
+  },
+  {
+   "name": "Mossendjo",
+   "department_name": "BOUENZA",
+   "id": "60bfe7e9-7c91-4e9a-9e1b-cc77702a70cd"
+  },
+  {
+   "name": "Nkayi",
+   "department_name": "BOUENZA",
+   "id": "5a507ca0-c6da-4ba8-bc45-0c1dcc15e7f2"
+  },
+  {
+   "name": "Ouesso",
+   "department_name": "CUVETTE OUEST",
+   "id": "db0a5d53-e444-44c7-83ba-62be73c1eb70"
+  },
+  {
+   "name": "Owando",
+   "department_name": "CUVETTE",
+   "id": "fb049ecc-d66f-44ab-babc-3261fce41357"
+  },
+  {
+   "name": "Oyo",
+   "department_name": "CUVETTE",
+   "id": "9f93d85b-9bee-4827-b6e7-9319bd9c62b8"
+  },
+  {
+   "name": "Pointe-Noire",
+   "department_name": "POINTE-NOIRE",
+   "id": "11947549-741f-4a62-89d2-89e3215af0f9"
+  },
+  {
+   "name": "Pokola",
+   "department_name": "SANGHA",
+   "id": "5db92f33-1333-4cc5-a371-c6ab13d6c9d5"
+  },
+  {
+   "name": "Sibiti",
+   "department_name": "LEKOUMOU",
+   "id": "92de450f-147c-4eca-a1b3-b2391fd78e5b"
+  }
+ ],
+ "districts": [
+  {
+   "name": "Abala",
+   "department_name": "NKENI-ALIMA",
+   "id": "a1de4918-3cae-452a-b220-e678093fedca"
+  },
+  {
+   "name": "Allembé",
+   "department_name": "NKENI-ALIMA",
+   "id": "757a2355-bac4-4bfd-a6b4-90d36171b775"
+  },
+  {
+   "name": "Bacongo",
+   "department_name": "BRAZZAVILLE",
+   "id": "4725179d-2229-463b-a8af-5d43a2b73631"
+  },
+  {
+   "name": "Bambama",
+   "department_name": "LEKOUMOU",
+   "id": "a24a3078-a051-4df3-bd7c-e5fd75f62516"
+  },
+  {
+   "name": "Banda",
+   "department_name": "NIARI",
+   "id": "71718e0a-ab1b-47d0-a30a-6a31841717c0"
+  },
+  {
+   "name": "Betou",
+   "department_name": "LIKOUALA",
+   "id": "976b6756-5759-44b7-829b-6a2ce010cd7e"
+  },
+  {
+   "name": "Boko",
+   "department_name": "POOL",
+   "id": "21bbf5bb-9a85-466a-8d6f-241b46713e39"
+  },
+  {
+   "name": "Boko-Songho",
+   "department_name": "BOUENZA",
+   "id": "9604eee1-8eab-4c04-b118-4c00e6fc61fb"
+  },
+  {
+   "name": "Bokoma",
+   "department_name": "CONGO-OUBANGUI",
+   "id": "90dc376e-95eb-4403-9224-6020d6359006"
+  },
+  {
+   "name": "Boniala",
+   "department_name": "CONGO-OUBANGUI",
+   "id": "9c3c463b-639c-4e96-a055-15175abd610c"
+  },
+  {
+   "name": "Bouanela",
+   "department_name": "LIKOUALA",
+   "id": "3a6787bf-1c18-4fb9-b674-3e4a2e0c641a"
+  },
+  {
+   "name": "Bouansa",
+   "department_name": "BOUENZA",
+   "id": "e6943049-6522-47f6-acff-af56e4afa323"
+  },
+  {
+   "name": "Bouemba",
+   "department_name": "PLATEAUX",
+   "id": "21c86e71-90f0-48b8-81b0-9bc3b9b88ea5"
+  },
+  {
+   "name": "Boundji",
+   "department_name": "CUVETTE",
+   "id": "caa7b76c-a67a-4c20-ad21-0b0ec8449eac"
+  },
+  {
+   "name": "Communauté urbaine  de souanké",
+   "department_name": "SANGHA",
+   "id": "b93c8425-d215-4ce8-be3d-d77fc886d054"
+  },
+  {
+   "name": "Communauté urbaine de  ngombe",
+   "department_name": "SANGHA",
+   "id": "161b3119-c139-4c59-a9d6-868b6615ee2d"
+  },
+  {
+   "name": "Communauté urbaine de mokéko",
+   "department_name": "SANGHA",
+   "id": "59d73435-9e2d-4635-8778-deef01159a9e"
+  },
+  {
+   "name": "Communauté urbaine de sembe",
+   "department_name": "SANGHA",
+   "id": "c8497e37-984e-4253-955d-9e16316411e3"
+  },
+  {
+   "name": "Commune",
+   "department_name": "CONGO-OUBANGUI",
+   "id": "15438297-6b96-40ef-b372-da6e3805b554"
+  },
+  {
+   "name": "Commune de pokola",
+   "department_name": "SANGHA",
+   "id": "a10d769c-3790-4472-9b7d-91f37821bb46"
+  },
+  {
+   "name": "Communue de Ouesso",
+   "department_name": "SANGHA",
+   "id": "f19471a9-1d29-4744-80f8-756108946645"
+  },
+  {
+   "name": "District de kabo",
+   "department_name": "SANGHA",
+   "id": "c2b3063c-e62b-48ff-9a61-7b82d477fa21"
+  },
+  {
+   "name": "District de ngbala",
+   "department_name": "SANGHA",
+   "id": "1d4701c3-ddf4-4af0-83ba-a32903c19f61"
+  },
+  {
+   "name": "District de pikounda",
+   "department_name": "SANGHA",
+   "id": "e282ab07-b9c2-47ee-92f8-bee0e328bdde"
+  },
+  {
+   "name": "Divenie",
+   "department_name": "NIARI",
+   "id": "3faee0bd-28b9-4608-a15e-809f0e7da0a4"
+  },
+  {
+   "name": "Djambala",
+   "department_name": "PLATEAUX",
+   "id": "13de753d-8ac4-4c9b-bd59-66a97072c73b"
+  },
+  {
+   "name": "Djiri",
+   "department_name": "BRAZZAVILLE",
+   "id": "0b228888-62a1-4d48-8754-bed37e45ac66"
+  },
+  {
+   "name": "Dolisie",
+   "department_name": "NIARI",
+   "id": "a0f5f315-5370-4a97-adc2-27b70ff74c9f"
+  },
+  {
+   "name": "Dolisie 1",
+   "department_name": "NIARI",
+   "id": "b6ba788d-4295-44f0-861c-22da41214275"
+  },
+  {
+   "name": "Dolisie 2",
+   "department_name": "NIARI",
+   "id": "4c91176b-824a-4aa5-9b70-eea2b7fbdd3c"
+  },
+  {
+   "name": "Dongou",
+   "department_name": "LIKOUALA",
+   "id": "fb75fa43-beae-4f3f-9c8e-36e28efb73c1"
+  },
+  {
+   "name": "Enyellé",
+   "department_name": "LIKOUALA",
+   "id": "12e11788-deb1-4108-93e8-37b1470736c9"
+  },
+  {
+   "name": "Epena",
+   "department_name": "LIKOUALA",
+   "id": "3144cca9-fbee-4aa7-828e-ead03754903e"
+  },
+  {
+   "name": "Etoumbi",
+   "department_name": "CUVETTE OUEST",
+   "id": "40a5194a-bfac-49ff-a65d-7240656aa2c1"
+  },
+  {
+   "name": "Ewo",
+   "department_name": "CUVETTE OUEST",
+   "id": "0a26ec25-6b21-462f-b159-ebfde6e8d3b4"
+  },
+  {
+   "name": "Gamboma",
+   "department_name": "NKENI-ALIMA",
+   "id": "c181e239-55fb-40fb-96d7-9e8256a43ef2"
+  },
+  {
+   "name": "Goma tsé-tsé",
+   "department_name": "POOL",
+   "id": "d1b99d45-90fb-4596-9f5e-5f772480381e"
+  },
+  {
+   "name": "Hinda",
+   "department_name": "KOUILOU",
+   "id": "096eca4a-2a69-4ea9-be35-ebeb0174d3d0"
+  },
+  {
+   "name": "Ignié",
+   "department_name": "DJOUE-LEFINI",
+   "id": "d236f998-5c87-4149-81ab-42bdf2b245b6"
+  },
+  {
+   "name": "Ile mbamou",
+   "department_name": "BRAZZAVILLE",
+   "id": "d4ff7402-6f10-402b-9db7-adb1a5575313"
+  },
+  {
+   "name": "Impfondo",
+   "department_name": "LIKOUALA",
+   "id": "672d70f7-663e-4386-9ebc-c0597fe5a171"
+  },
+  {
+   "name": "Indo",
+   "department_name": "LEKOUMOU",
+   "id": "f1f1bf2e-28a7-4051-aead-3e170df036ab"
+  },
+  {
+   "name": "Kabo",
+   "department_name": "SANGHA",
+   "id": "8911e88b-0ac4-4798-923a-6010d66ff346"
+  },
+  {
+   "name": "Kakamouéka",
+   "department_name": "KOUILOU",
+   "id": "e4596263-9f9d-4193-a9da-8d1fd9174e96"
+  },
+  {
+   "name": "Kakamoéka",
+   "department_name": "KOUILOU",
+   "id": "14323b2a-4b00-4c20-b6fa-aa2a94121f59"
+  },
+  {
+   "name": "Kayes",
+   "department_name": "BOUENZA",
+   "id": "3a4cd9a7-69c3-46a0-92e4-c64869a08a9e"
+  },
+  {
+   "name": "Kellé",
+   "department_name": "CUVETTE OUEST",
+   "id": "30fff1b1-5ef3-4847-a7a8-57e79f342a06"
+  },
+  {
+   "name": "Kibangou",
+   "department_name": "NIARI",
+   "id": "67edc7bb-ccc4-44d8-a4b0-c7dbfe1d0287"
+  },
+  {
+   "name": "Kimba",
+   "department_name": "DJOUE-LEFINI",
+   "id": "20c305e8-d02c-4479-8f32-55057f09d618"
+  },
+  {
+   "name": "Kimongo",
+   "department_name": "NIARI",
+   "id": "412b0f85-b0a5-4890-bfd7-48ce9705da69"
+  },
+  {
+   "name": "Kindamba",
+   "department_name": "POOL",
+   "id": "fae9024c-b2b2-4084-b689-a72958a4971a"
+  },
+  {
+   "name": "Kingoué",
+   "department_name": "BOUENZA",
+   "id": "734fbcc8-ea86-4769-a75c-f8357f022270"
+  },
+  {
+   "name": "Kinkala",
+   "department_name": "POOL",
+   "id": "1bc5fd55-92dd-4913-8f46-f49403e1bad4"
+  },
+  {
+   "name": "Kintélé",
+   "department_name": "BRAZZAVILLE",
+   "id": "a9fd3e01-85f1-4f2c-868d-74095c40aca7"
+  },
+  {
+   "name": "Komono",
+   "department_name": "LEKOUMOU",
+   "id": "25beba13-2436-4a82-8d1c-36e4554e5411"
+  },
+  {
+   "name": "Liranga",
+   "department_name": "CONGO-OUBANGUI",
+   "id": "b2b643cd-ed54-415c-a7d2-4f6b4fc5951a"
+  },
+  {
+   "name": "Loandjili",
+   "department_name": "POINTE-NOIRE",
+   "id": "88d5c9a9-b1dd-4f1f-b391-5d070a9ed15c"
+  },
+  {
+   "name": "Loango",
+   "department_name": "KOUILOU",
+   "id": "2bf6d768-1c30-4157-bc24-288dad07d903"
+  },
+  {
+   "name": "Londela-Kayes",
+   "department_name": "NIARI",
+   "id": "2ce5e686-17fa-49fd-932b-f2dc77671910"
+  },
+  {
+   "name": "Loudima",
+   "department_name": "BOUENZA",
+   "id": "08e95f2d-db08-4806-a43a-f26f5e386289"
+  },
+  {
+   "name": "Louingui",
+   "department_name": "POOL",
+   "id": "12a55f74-d7b1-4166-938b-1c6f085719ac"
+  },
+  {
+   "name": "Loukoléla",
+   "department_name": null,
+   "id": "7a3ee790-5571-400c-a0f0-bd8229a6da77"
+  },
+  {
+   "name": "Loumo",
+   "department_name": "POOL",
+   "id": "6d5a8a39-cb18-4bc7-ba38-640107ae715b"
+  },
+  {
+   "name": "Loutété",
+   "department_name": "BOUENZA",
+   "id": "aee265f5-4c38-42a8-b301-70fe5ebe1f42"
+  },
+  {
+   "name": "Louvakou",
+   "department_name": "NIARI",
+   "id": "fefeb32d-0b19-44e6-adae-9e138727a915"
+  },
+  {
+   "name": "Lumumba",
+   "department_name": "POINTE-NOIRE",
+   "id": "c527f7c8-fe0c-4c8b-b672-505c0ebc06e3"
+  },
+  {
+   "name": "Lékana",
+   "department_name": "PLATEAUX",
+   "id": "d1a71657-aded-4a13-92a9-b9395ce30f44"
+  },
+  {
+   "name": "Mabombo",
+   "department_name": "BOUENZA",
+   "id": "8b432ff5-60d7-4f93-a8b7-c7da4b0fe271"
+  },
+  {
+   "name": "Madibou",
+   "department_name": "BRAZZAVILLE",
+   "id": "4caa0a2d-ed40-42e8-85d9-42ee51041cd0"
+  },
+  {
+   "name": "Madingo-kayes",
+   "department_name": "KOUILOU",
+   "id": "43156318-1c53-4dba-83ca-f94b57c4fff8"
+  },
+  {
+   "name": "Madingou",
+   "department_name": "BOUENZA",
+   "id": "dee551e4-724a-4fdb-90aa-3d04c613e98f"
+  },
+  {
+   "name": "Madingou-kayes",
+   "department_name": "KOUILOU",
+   "id": "ba9213fb-72ee-43d3-894b-7cd9fa397cee"
+  },
+  {
+   "name": "Makabana",
+   "department_name": "NIARI",
+   "id": "3b34bd82-f2b1-41be-8d63-efeaeb418abf"
+  },
+  {
+   "name": "Makotimpoko",
+   "department_name": "NKENI-ALIMA",
+   "id": "b79a2eb8-4e34-4cbd-9cc6-a2b505201760"
+  },
+  {
+   "name": "Makoua",
+   "department_name": "CUVETTE",
+   "id": "a358b4e5-1904-4dd3-9c1c-826a9e915027"
+  },
+  {
+   "name": "Makélékélé",
+   "department_name": "BRAZZAVILLE",
+   "id": "555c6b59-e6f0-45c1-8bd5-59bec7a6df10"
+  },
+  {
+   "name": "Mayama",
+   "department_name": "DJOUE-LEFINI",
+   "id": "507d29c9-91ae-4dc7-a676-e51d1894f771"
+  },
+  {
+   "name": "Mayoko",
+   "department_name": "NIARI",
+   "id": "92b1108b-b628-42b8-85cf-fec59484889e"
+  },
+  {
+   "name": "Mayéyé",
+   "department_name": "LEKOUMOU",
+   "id": "512c3fe8-1c40-435b-b610-bb34cd32d26e"
+  },
+  {
+   "name": "Mbama",
+   "department_name": "CUVETTE OUEST",
+   "id": "e893cf5c-f312-4794-bc97-32e1aa69d64c"
+  },
+  {
+   "name": "Mbandza-ndounga",
+   "department_name": "POOL",
+   "id": "fc706ab3-0e7a-45f6-bd8c-38095e3b50cf"
+  },
+  {
+   "name": "Mbinda",
+   "department_name": "NIARI",
+   "id": "673f1b5f-bcaa-4c76-8ef5-45df2322347e"
+  },
+  {
+   "name": "Mbomo",
+   "department_name": "CUVETTE OUEST",
+   "id": "73936723-aae0-4402-a088-01ce45978716"
+  },
+  {
+   "name": "Mbon",
+   "department_name": "PLATEAUX",
+   "id": "f3c8fccb-f75d-499d-9d94-37ae6fb1e6a6"
+  },
+  {
+   "name": "Mfilou",
+   "department_name": "BRAZZAVILLE",
+   "id": "c84e43ed-276e-4ce4-abc2-ca4cc1c8b887"
+  },
+  {
+   "name": "Mfouati",
+   "department_name": "BOUENZA",
+   "id": "d08021ae-349f-4966-91dd-8e93c55e576c"
+  },
+  {
+   "name": "Mindouli",
+   "department_name": "POOL",
+   "id": "33081293-c95b-42ea-8389-ef1fc528cdf4"
+  },
+  {
+   "name": "Mokéko",
+   "department_name": "SANGHA",
+   "id": "f3176cbb-29df-4b82-a674-92f747401ed5"
+  },
+  {
+   "name": "Mongo-mpoukou",
+   "department_name": "POINTE-NOIRE",
+   "id": "183bd046-1b0c-4c74-afe3-b395bbffca79"
+  },
+  {
+   "name": "Mongo-poukou",
+   "department_name": "POINTE-NOIRE",
+   "id": "ec17ee27-cc00-4f93-845a-a77247925540"
+  },
+  {
+   "name": "Mossaka",
+   "department_name": null,
+   "id": "90064990-0a1a-431b-8eaf-c66e42e7aac1"
+  },
+  {
+   "name": "Mossendjo",
+   "department_name": "NIARI",
+   "id": "4b719e43-362e-42d7-8d91-4284886c36e7"
+  },
+  {
+   "name": "Moukondo",
+   "department_name": "NIARI",
+   "id": "457612dc-eff4-4bc9-bfa8-cfe479b2ed94"
+  },
+  {
+   "name": "Moungali",
+   "department_name": "BRAZZAVILLE",
+   "id": "d842202d-d68b-4942-b36b-05d3fb8ebac2"
+  },
+  {
+   "name": "Moungoundou - sud",
+   "department_name": "NIARI",
+   "id": "34e51bd4-f938-4b06-b890-bad32f0c1b60"
+  },
+  {
+   "name": "Moungoundou nord",
+   "department_name": "NIARI",
+   "id": "246aaa15-c1fb-4bc1-84e9-65812b16efeb"
+  },
+  {
+   "name": "Moutamba",
+   "department_name": "NIARI",
+   "id": "0eb65c81-d5dd-4b45-a92f-60fa5ffe6b16"
+  },
+  {
+   "name": "Mouyondzi",
+   "department_name": "BOUENZA",
+   "id": "393a2640-8692-4a7f-8c89-007a5d5f910a"
+  },
+  {
+   "name": "Mpouya",
+   "department_name": "PLATEAUX",
+   "id": "6ae01687-ed4b-41eb-a887-f76d27168e37"
+  },
+  {
+   "name": "Mvoumvou",
+   "department_name": "POINTE-NOIRE",
+   "id": "0c106a3e-1349-4831-88e0-c7ffff7a2907"
+  },
+  {
+   "name": "Mvouti",
+   "department_name": "KOUILOU",
+   "id": "8270aa4e-e189-47ce-b0b0-953f2000c64d"
+  },
+  {
+   "name": "Ngabé",
+   "department_name": "DJOUE-LEFINI",
+   "id": "b4aa0e32-b09e-40ca-a158-90eb375e6b82"
+  },
+  {
+   "name": "Ngoko",
+   "department_name": "CUVETTE",
+   "id": "eeb7db15-7c37-43c6-bcb6-c42c41b58aac"
+  },
+  {
+   "name": "Ngoyo",
+   "department_name": "POINTE-NOIRE",
+   "id": "ab81cf47-e0b6-490b-b226-14255754427b"
+  },
+  {
+   "name": "Ngô",
+   "department_name": "PLATEAUX",
+   "id": "e83c267a-3abf-486d-9977-4072254d3b09"
+  },
+  {
+   "name": "Nkayes",
+   "department_name": "BOUENZA",
+   "id": "d7775747-a507-4773-a79b-444ef2da85df"
+  },
+  {
+   "name": "Nkayi",
+   "department_name": "BOUENZA",
+   "id": "4f973a53-67f7-4a13-af20-faf7a463c161"
+  },
+  {
+   "name": "Ntokou",
+   "department_name": "CUVETTE",
+   "id": "e6a5ba6a-f0a5-4a23-84c4-facaed3ba0de"
+  },
+  {
+   "name": "Nyanga",
+   "department_name": "NIARI",
+   "id": "f2e24062-43f3-4195-af87-3b7c340bb514"
+  },
+  {
+   "name": "Nzambi",
+   "department_name": "KOUILOU",
+   "id": "fdfa1a5d-ff3a-420b-98e0-99f1c60cd639"
+  },
+  {
+   "name": "Odziba",
+   "department_name": "DJOUE-LEFINI",
+   "id": "5a4cefea-dcea-45f0-8558-de6af1b14c95"
+  },
+  {
+   "name": "Okoyo",
+   "department_name": "CUVETTE OUEST",
+   "id": "1989ca94-5698-4472-a539-05c671ad30b7"
+  },
+  {
+   "name": "Ollombo",
+   "department_name": "NKENI-ALIMA",
+   "id": "a9840a76-162a-4946-b59c-ecc22e67bc03"
+  },
+  {
+   "name": "Ongogni",
+   "department_name": "NKENI-ALIMA",
+   "id": "237e6a5d-f911-4ab3-99a9-657cde268790"
+  },
+  {
+   "name": "Ongoni",
+   "department_name": "NKENI-ALIMA",
+   "id": "6ceebd0c-c814-4106-9ba8-5af3f07ad05e"
+  },
+  {
+   "name": "Ouenzé",
+   "department_name": "BRAZZAVILLE",
+   "id": "15bcac54-7800-4742-b76b-9b24c258ad61"
+  },
+  {
+   "name": "Ouesso",
+   "department_name": "SANGHA",
+   "id": "afa146cc-5635-4e46-9bc4-48c572075590"
+  },
+  {
+   "name": "Owando",
+   "department_name": "CUVETTE",
+   "id": "c41bd330-5e6b-47da-a33a-faa2b531d296"
+  },
+  {
+   "name": "Oyo",
+   "department_name": "CUVETTE",
+   "id": "9bed9491-6284-4707-b36e-2d43fe04342d"
+  },
+  {
+   "name": "Pikounda",
+   "department_name": "SANGHA",
+   "id": "6aa50dc3-51b5-44e3-b7b3-ad1b662bf4e5"
+  },
+  {
+   "name": "Pokola",
+   "department_name": "SANGHA",
+   "id": "b9ec1891-89ef-4d52-813c-bb0d8a9364a3"
+  },
+  {
+   "name": "Poto-poto",
+   "department_name": "BRAZZAVILLE",
+   "id": "9673e307-2294-4d04-827b-d8a3a70d57ec"
+  },
+  {
+   "name": "Sembé",
+   "department_name": "SANGHA",
+   "id": "c9c4e0c8-cbd6-46fd-80df-54414555f5b7"
+  },
+  {
+   "name": "Sibiti",
+   "department_name": "LEKOUMOU",
+   "id": "77e4f697-0394-4725-98e6-38e4a1f2b45c"
+  },
+  {
+   "name": "Souanké",
+   "department_name": "SANGHA",
+   "id": "e69b64f2-1bd3-4c71-b0f3-a3645327614e"
+  },
+  {
+   "name": "Talangaï",
+   "department_name": "BRAZZAVILLE",
+   "id": "1e7f4b7a-0f4c-4e45-88da-97ac64ef2e20"
+  },
+  {
+   "name": "Tchiamba-nzassi",
+   "department_name": "POINTE-NOIRE",
+   "id": "c1ccd82b-3c3a-4cfe-9a0d-aa272a83a428"
+  },
+  {
+   "name": "Tchikapika",
+   "department_name": "CUVETTE",
+   "id": "c5869fdb-8cea-4dcc-977b-5112477f9318"
+  },
+  {
+   "name": "Tie-tie",
+   "department_name": "POINTE-NOIRE",
+   "id": "0cd21b0a-7494-4075-8b4d-37fdf88ee5ac"
+  },
+  {
+   "name": "Tiétié",
+   "department_name": "POINTE-NOIRE",
+   "id": "8b91b770-0b6b-4552-9e1a-d2048c7df8d0"
+  },
+  {
+   "name": "Tsiaka",
+   "department_name": "BOUENZA",
+   "id": "73407463-5973-472f-b83f-70ce989ac07c"
+  },
+  {
+   "name": "Tsiaki",
+   "department_name": "BOUENZA",
+   "id": "e5da9e31-559d-49da-9266-9c77e761c0ac"
+  },
+  {
+   "name": "Vindza",
+   "department_name": "DJOUE-LEFINI",
+   "id": "a2dedc9b-35e2-413f-afc2-a137a2b0b95c"
+  },
+  {
+   "name": "Yamba",
+   "department_name": "BOUENZA",
+   "id": "50185ee0-3d94-458a-87d4-7a1a4b94c876"
+  },
+  {
+   "name": "Yaya",
+   "department_name": "NIARI",
+   "id": "79c621ad-fb13-4761-9401-0881b0e1a585"
+  },
+  {
+   "name": "Zabata",
+   "department_name": "BOUENZA",
+   "id": "dedad36b-1dc7-42f3-ab34-56ae56a5e558"
+  },
+  {
+   "name": "Zanaga",
+   "department_name": "LEKOUMOU",
+   "id": "641d7ea6-5360-411f-ab61-30f1681db878"
+  }
+ ],
+ "inspections": [
+  {
+   "name": "Abala",
+   "code": "INSP-ABALA-2E7C11B2",
+   "department_name": "NKENI-ALIMA",
+   "district_name": "Abala",
+   "id": "0f1829dc-aa23-4f6e-a028-92930501f7de"
+  },
+  {
+   "name": "Bacongo",
+   "code": "INSP-BACONGO-76CDF787",
+   "department_name": "BRAZZAVILLE",
+   "district_name": "Bacongo",
+   "id": "3eafe202-3c89-48a8-bfe9-914946d837ee"
+  },
+  {
+   "name": "Bambama",
+   "code": "INSP-BAMBAMA-5581DCAB",
+   "department_name": "LEKOUMOU",
+   "district_name": "Bambama",
+   "id": "b3dbbda3-7a1e-4059-aa29-6bb69829bb31"
+  },
+  {
+   "name": "Banda",
+   "code": "INSP-BANDA-39637662",
+   "department_name": "NIARI",
+   "district_name": "Banda",
+   "id": "738e0bde-3248-41f7-8a17-7ce63ca78152"
+  },
+  {
+   "name": "Boko",
+   "code": "INSP-BOKO-1DFEFDDB",
+   "department_name": "POOL",
+   "district_name": "Boko",
+   "id": "ee633107-d931-42f2-a887-6623f6668e15"
+  },
+  {
+   "name": "Boko-Songho",
+   "code": "INSP-BOKO-SONGHO-C07A83B2",
+   "department_name": "BOUENZA",
+   "district_name": "Boko-Songho",
+   "id": "1b566c48-41c8-4862-924f-b9e231d711ba"
+  },
+  {
+   "name": "Boko-Songho 1",
+   "code": "INSP-BOKO-SONGHO-1-99ACC867",
+   "department_name": "BOUENZA",
+   "district_name": "Boko-Songho",
+   "id": "5e106d67-6e2d-4c62-91fa-d0b5d0d9113b"
+  },
+  {
+   "name": "Boko-Songho 10",
+   "code": "INSP-BOKO-SONGHO-10-C08C722C",
+   "department_name": "BOUENZA",
+   "district_name": "Boko-Songho",
+   "id": "3c2f48f3-e816-4def-b654-1fdb2aca9dba"
+  },
+  {
+   "name": "Boko-Songho 11",
+   "code": "INSP-BOKO-SONGHO-11-59A1FBE3",
+   "department_name": "BOUENZA",
+   "district_name": "Boko-Songho",
+   "id": "f3b32fad-7ce7-4975-a1ad-ec296bbffb6e"
+  },
+  {
+   "name": "Boko-Songho 2",
+   "code": "INSP-BOKO-SONGHO-2-DD452A4B",
+   "department_name": "BOUENZA",
+   "district_name": "Boko-Songho",
+   "id": "a2db802f-0e48-49fe-b978-96c6845f74ad"
+  },
+  {
+   "name": "Boko-Songho 3",
+   "code": "INSP-BOKO-SONGHO-3-22086109",
+   "department_name": "BOUENZA",
+   "district_name": "Boko-Songho",
+   "id": "ef291ff9-15c3-46eb-9f56-4cbb5ff25b64"
+  },
+  {
+   "name": "Boko-Songho 4",
+   "code": "INSP-BOKO-SONGHO-4-0BACA021",
+   "department_name": "BOUENZA",
+   "district_name": "Boko-Songho",
+   "id": "7aa3bad5-1022-423c-b49a-18204fb9288d"
+  },
+  {
+   "name": "Boko-Songho 5",
+   "code": "INSP-BOKO-SONGHO-5-36EDC5B2",
+   "department_name": "BOUENZA",
+   "district_name": "Boko-Songho",
+   "id": "fac5b6fe-844b-41e3-805a-a6fdf779a77e"
+  },
+  {
+   "name": "Boko-Songho 6",
+   "code": "INSP-BOKO-SONGHO-6-4C81D6A4",
+   "department_name": "BOUENZA",
+   "district_name": "Boko-Songho",
+   "id": "798429da-c962-4bfd-8017-0ae45ee56f2f"
+  },
+  {
+   "name": "Boko-Songho 7",
+   "code": "INSP-BOKO-SONGHO-7-7CC07061",
+   "department_name": "BOUENZA",
+   "district_name": "Boko-Songho",
+   "id": "afa5795b-b3d5-428a-8ec2-bdf2d045febc"
+  },
+  {
+   "name": "Boko-Songho 8",
+   "code": "INSP-BOKO-SONGHO-8-DB4975D9",
+   "department_name": "BOUENZA",
+   "district_name": "Boko-Songho",
+   "id": "3ce51dd1-8ba1-4391-b520-1f6ae1873a5c"
+  },
+  {
+   "name": "Boko-Songho 9",
+   "code": "INSP-BOKO-SONGHO-9-14AC80D5",
+   "department_name": "BOUENZA",
+   "district_name": "Boko-Songho",
+   "id": "842a8e2d-550e-40fc-87cc-5b8dd01dd744"
+  },
+  {
+   "name": "Bouansa",
+   "code": "INSP-BOUANSA-4A61D102",
+   "department_name": "BOUENZA",
+   "district_name": null,
+   "id": "952d0f3c-97f1-4e37-a335-eebc168b2510"
+  },
+  {
+   "name": "Bouanéla",
+   "code": "INSP-BOUANELA-0672E26D",
+   "department_name": "LIKOUALA",
+   "district_name": "Bouanela",
+   "id": "534c0e47-e732-476e-8c82-cd1d674d977e"
+  },
+  {
+   "name": "Bouenza 1  (Madingou)",
+   "code": "INSP-BOUENZA-1-MADINGOU-72373E36",
+   "department_name": "BOUENZA",
+   "district_name": "Madingou",
+   "id": "5dbb3509-668e-4546-b199-d59d825a6a8c"
+  },
+  {
+   "name": "Bouenza 2  (Mouyondzi)",
+   "code": "INSP-BOUENZA-2-MOUYONDZI-D02C1D72",
+   "department_name": "BOUENZA",
+   "district_name": "Mouyondzi",
+   "id": "7605addc-4405-4c4c-9e92-6547a798ca77"
+  },
+  {
+   "name": "Bouenza 3  (Loudima-Poste)",
+   "code": "INSP-BOUENZA-3-LOUDIMA-POSTE-36BE61EC",
+   "department_name": "BOUENZA",
+   "district_name": "Loudima",
+   "id": "107cee92-c72f-45a3-89be-d3da10fcb6c9"
+  },
+  {
+   "name": "Boundji",
+   "code": "INSP-BOUNDJI-1C24C9FA",
+   "department_name": "CUVETTE",
+   "district_name": "Boundji",
+   "id": "8b69d84b-446e-4207-9599-6c37c6ac212c"
+  },
+  {
+   "name": "Bétou",
+   "code": "INSP-BETOU-21CAB782",
+   "department_name": "LIKOUALA",
+   "district_name": "Betou",
+   "id": "84faf422-d2c0-4e02-8707-390465d28671"
+  },
+  {
+   "name": "Congo-Oubangui",
+   "code": "INSP-CONGO-OUBANGUI-0E4D2CB8",
+   "department_name": "CONGO-OUBANGUI",
+   "district_name": null,
+   "id": "8fd19910-cf98-47a5-a319-8a8458b1d83f"
+  },
+  {
+   "name": "Divénié",
+   "code": "INSP-DIVENIE-E34EFD66",
+   "department_name": "NIARI",
+   "district_name": "Divenie",
+   "id": "37882621-b67a-4ca1-812e-daf81f4e8b5f"
+  },
+  {
+   "name": "Djambala",
+   "code": "INSP-DJAMBALA-415D5D94",
+   "department_name": "PLATEAUX",
+   "district_name": "Djambala",
+   "id": "d0f54ed0-0dc6-4cc6-b5dd-594772610c3b"
+  },
+  {
+   "name": "Djiri",
+   "code": "INSP-DJIRI-BAFB3214",
+   "department_name": "BRAZZAVILLE",
+   "district_name": "Djiri",
+   "id": "ba09df89-e61e-40a3-87cf-2df23fec252c"
+  },
+  {
+   "name": "Dolisie 1",
+   "code": "INSP-DOLISIE-1-2A86AA2F",
+   "department_name": "NIARI",
+   "district_name": "Dolisie",
+   "id": "85807ced-9fd8-475a-a7e7-85d66daca60e"
+  },
+  {
+   "name": "Dolisie 2",
+   "code": "INSP-DOLISIE-2-9A54430A",
+   "department_name": "NIARI",
+   "district_name": "Dolisie",
+   "id": "8dcb3222-882b-4a78-b8a6-35e127111c67"
+  },
+  {
+   "name": "Dongou",
+   "code": "INSP-DONGOU-DFCB0148",
+   "department_name": "LIKOUALA",
+   "district_name": "Dongou",
+   "id": "4acf6945-d551-47ef-90f3-a34d80db943e"
+  },
+  {
+   "name": "Enyellé",
+   "code": "INSP-ENYELLE-224E655D",
+   "department_name": "LIKOUALA",
+   "district_name": "Enyellé",
+   "id": "456226e3-eb8b-45ab-bad7-70347350f241"
+  },
+  {
+   "name": "Epéna",
+   "code": "INSP-EPENA-F3EB36D9",
+   "department_name": "LIKOUALA",
+   "district_name": "Epena",
+   "id": "00b736a4-8c72-448f-b7fd-218a9da42aed"
+  },
+  {
+   "name": "Etoumbi",
+   "code": "INSP-ETOUMBI-DC676A35",
+   "department_name": "CUVETTE OUEST",
+   "district_name": "Etoumbi",
+   "id": "91dd2de7-c274-48ab-bf9c-7c93092df8ce"
+  },
+  {
+   "name": "Ewo",
+   "code": "INSP-EWO-229A5F6A",
+   "department_name": "CUVETTE OUEST",
+   "district_name": "Ewo",
+   "id": "db7a155d-3205-4117-b540-c2fad2e2ed62"
+  },
+  {
+   "name": "Ewo 1",
+   "code": "INSP-EWO-1-AC58E154",
+   "department_name": "CUVETTE OUEST",
+   "district_name": "Ewo",
+   "id": "5eb56183-ed32-43e4-b0e4-d7a714215342"
+  },
+  {
+   "name": "Ewo 2",
+   "code": "INSP-EWO-2-348C3442",
+   "department_name": "CUVETTE OUEST",
+   "district_name": "Ewo",
+   "id": "623008dc-56af-4cf3-98e8-41b5cd285836"
+  },
+  {
+   "name": "Gamboma",
+   "code": "INSP-GAMBOMA-52BC70BC",
+   "department_name": "NKENI-ALIMA",
+   "district_name": "Gamboma",
+   "id": "8abb361f-be7b-4ab4-92b7-b55bf0eadc3b"
+  },
+  {
+   "name": "Goma tsé-tsé",
+   "code": "INSP-GOMA-TSE-TSE-56544149",
+   "department_name": "POOL",
+   "district_name": "Goma tsé-tsé",
+   "id": "f33fc704-a059-4099-9645-1c4800da5065"
+  },
+  {
+   "name": "Hinda",
+   "code": "INSP-HINDA-D72FDF8D",
+   "department_name": "KOUILOU",
+   "district_name": "Hinda",
+   "id": "24f062d6-a9c4-45d5-a7fc-ffe4e7e60bb7"
+  },
+  {
+   "name": "ICEG BZV 1",
+   "code": "INSP-ICEG-BZV-1-333471CF",
+   "department_name": "BRAZZAVILLE",
+   "district_name": null,
+   "id": "d317ebb6-6a51-433a-9fdc-3089df62ac10"
+  },
+  {
+   "name": "ICEG BZV 2",
+   "code": "INSP-ICEG-BZV-2-1714778E",
+   "department_name": "BRAZZAVILLE",
+   "district_name": null,
+   "id": "e398fa0b-932a-4217-8980-27ca6dbb95fc"
+  },
+  {
+   "name": "ICEG BZV 3",
+   "code": "INSP-ICEG-BZV-3-A0C644D9",
+   "department_name": "BRAZZAVILLE",
+   "district_name": null,
+   "id": "80ddc9ca-b527-4c13-92cf-9c4d40071405"
+  },
+  {
+   "name": "ICEG BZV 4",
+   "code": "INSP-ICEG-BZV-4-31BD026B",
+   "department_name": "BRAZZAVILLE",
+   "district_name": null,
+   "id": "3215abc4-0eda-4485-ad69-577c1620c021"
+  },
+  {
+   "name": "ICEG CUVETTE 1 (Owando)",
+   "code": "INSP-ICEG-CUVETTE-1-OWANDO-BD66EDF8",
+   "department_name": "CUVETTE",
+   "district_name": "Owando",
+   "id": "bd2c863b-19a2-4689-9f03-1fca1017ee9a"
+  },
+  {
+   "name": "ICEG LEK 1 (Sibiti)",
+   "code": "INSP-ICEG-LEK-1-SIBITI-BC86B181",
+   "department_name": "LEKOUMOU",
+   "district_name": "Sibiti",
+   "id": "148a4e4b-9f27-439e-aad8-72fcf6137159"
+  },
+  {
+   "name": "ICEG LEK 2 (Sibiti District)",
+   "code": "INSP-ICEG-LEK-2-SIBITI-DISTRICT-B2E683B2",
+   "department_name": "LEKOUMOU",
+   "district_name": "Sibiti",
+   "id": "20b5f3de-fc11-4b3d-af6f-83c5c5dd84c3"
+  },
+  {
+   "name": "ICEG LEK 3 (Mayéyé)",
+   "code": "INSP-ICEG-LEK-3-MAYEYE-5CD8AACB",
+   "department_name": "LEKOUMOU",
+   "district_name": "Mayéyé",
+   "id": "82e9f399-9f8f-440c-87c6-9aaf94bf3255"
+  },
+  {
+   "name": "ICEG LEK 4 (Komono)",
+   "code": "INSP-ICEG-LEK-4-KOMONO-4281F629",
+   "department_name": "LEKOUMOU",
+   "district_name": "Komono",
+   "id": "56bc2e00-a916-4b92-98c6-da2ca1b6a708"
+  },
+  {
+   "name": "ICEG LEK 5 (Zanaga)",
+   "code": "INSP-ICEG-LEK-5-ZANAGA-7DDDE820",
+   "department_name": "LEKOUMOU",
+   "district_name": "Zanaga",
+   "id": "4aaec2d6-ad87-4897-9458-4cdb81c42f92"
+  },
+  {
+   "name": "ICEG LEK 6 (Bambama)",
+   "code": "INSP-ICEG-LEK-6-BAMBAMA-26BBA6B0",
+   "department_name": "LEKOUMOU",
+   "district_name": "Bambama",
+   "id": "a0740b01-901a-4790-9103-315421bcbe1a"
+  },
+  {
+   "name": "ICEG NIARI 1 (Dolisie)",
+   "code": "INSP-ICEG-NIARI-1-DOLISIE-119D0031",
+   "department_name": "NIARI",
+   "district_name": null,
+   "id": "7cfae70d-44cd-49d2-a988-c808202929e2"
+  },
+  {
+   "name": "ICEG NIARI 2 (Mossendjo)",
+   "code": "INSP-ICEG-NIARI-2-MOSSENDJO-633FDD81",
+   "department_name": "NIARI",
+   "district_name": null,
+   "id": "0adcafba-80ec-41a9-8053-50c7cf203a42"
+  },
+  {
+   "name": "ICEG NIARI 3 (Kibangou)",
+   "code": "INSP-ICEG-NIARI-3-KIBANGOU-D648AF44",
+   "department_name": "NIARI",
+   "district_name": null,
+   "id": "101e496a-419c-42d3-92b5-88d06c4e47b3"
+  },
+  {
+   "name": "ICEG NKENI-ALIMA",
+   "code": "INSP-ICEG-NKENI-ALIMA-1F2758E1",
+   "department_name": "NKENI-ALIMA",
+   "district_name": null,
+   "id": "d781d1b9-00bf-4207-bdd8-4233b0792200"
+  },
+  {
+   "name": "ICEG PLATEAUX 1 (Djambala)",
+   "code": "INSP-ICEG-PLATEAUX-1-DJAMBALA-FC6EE8D9",
+   "department_name": "PLATEAUX",
+   "district_name": null,
+   "id": "5574ae01-11d8-4d97-bc75-8cb36660e5d5"
+  },
+  {
+   "name": "ICEG PLATEAUX 2 (Gamboma)",
+   "code": "INSP-ICEG-PLATEAUX-2-GAMBOMA-FFCB1EB8",
+   "department_name": "PLATEAUX",
+   "district_name": "Bouemba",
+   "id": "7e49c45a-d075-4ad3-ab0f-fffffb294f84"
+  },
+  {
+   "name": "ICEG PN 1",
+   "code": "INSP-ICEG-PN-1-AEC177CC",
+   "department_name": "POINTE-NOIRE",
+   "district_name": null,
+   "id": "ed41dbc0-e7d9-4d9d-abc0-6dd3b3d7ef0a"
+  },
+  {
+   "name": "ICEG PN 2",
+   "code": "INSP-ICEG-PN-2-EC49BDE6",
+   "department_name": "POINTE-NOIRE",
+   "district_name": null,
+   "id": "031f50c0-2047-470b-bf5b-eed61db1233f"
+  },
+  {
+   "name": "ICEG PN 3",
+   "code": "INSP-ICEG-PN-3-388A4153",
+   "department_name": "POINTE-NOIRE",
+   "district_name": null,
+   "id": "3a02aebc-20be-46c8-b72e-d94b47287cff"
+  },
+  {
+   "name": "ICEG POOL 1 (Kinkala)",
+   "code": "INSP-ICEG-POOL-1-KINKALA-316CAB7E",
+   "department_name": "POOL",
+   "district_name": null,
+   "id": "533fe5e8-78bf-4c27-8e16-0da1558e2aa5"
+  },
+  {
+   "name": "ICEG POOL 2 (Boko)",
+   "code": "INSP-ICEG-POOL-2-BOKO-40A8BD2F",
+   "department_name": "POOL",
+   "district_name": null,
+   "id": "57f318d3-b915-40a1-8372-5767807124ff"
+  },
+  {
+   "name": "ICEG POOL 3 (Mindouli)",
+   "code": "INSP-ICEG-POOL-3-MINDOULI-0640056D",
+   "department_name": "POOL",
+   "district_name": null,
+   "id": "32d81e25-95c3-4240-9f48-c1bbd15783fa"
+  },
+  {
+   "name": "ICEG POOL 4 (Mindouli)",
+   "code": "INSP-ICEG-POOL-4-MINDOULI-701FA49A",
+   "department_name": "POOL",
+   "district_name": "Mindouli",
+   "id": "2bb70f57-fb44-4411-88d5-f8d761df68aa"
+  },
+  {
+   "name": "ICEG SANGHA (Ouesso)",
+   "code": "INSP-ICEG-SANGHA-OUESSO-CF131EDB",
+   "department_name": "SANGHA",
+   "district_name": null,
+   "id": "b3f80aea-4a03-43a2-bab8-61ba6af62a17"
+  },
+  {
+   "name": "IDP NKENI-ALIMA",
+   "code": "INSP-IDP-NKENI-ALIMA-F0CD07CA",
+   "department_name": "NKENI-ALIMA",
+   "district_name": null,
+   "id": "82539b2b-209d-45bb-9c70-ba4c97c3e508"
+  },
+  {
+   "name": "IEP Bacongo",
+   "code": "INSP-IEP-BACONGO-232150EF",
+   "department_name": "BRAZZAVILLE",
+   "district_name": "Bacongo",
+   "id": "60d81514-adf3-47eb-a9a7-cbc50921ae4e"
+  },
+  {
+   "name": "IEP Boundji",
+   "code": "INSP-IEP-BOUNDJI-48E1434C",
+   "department_name": "CUVETTE",
+   "district_name": "Boundji",
+   "id": "cea26528-0ef8-41e1-871f-01a7e1c6b11f"
+  },
+  {
+   "name": "IEP Boundji Village",
+   "code": "INSP-IEP-BOUNDJI-VILLAGE-A62C87AD",
+   "department_name": "CUVETTE",
+   "district_name": "Boundji",
+   "id": "ece7bc80-2df1-46ae-8060-ec6a3018ea28"
+  },
+  {
+   "name": "IEP DJIRI",
+   "code": "INSP-IEP-DJIRI-4E1CC148",
+   "department_name": "BRAZZAVILLE",
+   "district_name": "Djiri",
+   "id": "f5260813-a9a7-472e-9789-e35d6f7695bb"
+  },
+  {
+   "name": "IEP LISSANGA",
+   "code": "INSP-IEP-LISSANGA-CB210FB0",
+   "department_name": "BRAZZAVILLE",
+   "district_name": "Ile mbamou",
+   "id": "4171b8ac-0ea3-4575-9f32-97b9bcccadef"
+  },
+  {
+   "name": "IEP MADIBOU",
+   "code": "INSP-IEP-MADIBOU-F83B6136",
+   "department_name": "BRAZZAVILLE",
+   "district_name": "Madibou",
+   "id": "63453f24-0e43-4e54-af41-51802f1807ca"
+  },
+  {
+   "name": "IEP MFILOU-NGAMABA",
+   "code": "INSP-IEP-MFILOU-NGAMABA-DF3B1C35",
+   "department_name": "BRAZZAVILLE",
+   "district_name": "Mfilou",
+   "id": "1bb04bce-f6d5-42f6-9bd4-43fd45853a96"
+  },
+  {
+   "name": "IEP Makélékélé 1",
+   "code": "INSP-IEP-MAKELEKELE-1-FE8A500C",
+   "department_name": "BRAZZAVILLE",
+   "district_name": "Makélékélé",
+   "id": "b9bda059-b042-4f14-b3fb-714a0f863412"
+  },
+  {
+   "name": "IEP Makélékélé 2",
+   "code": "INSP-IEP-MAKELEKELE-2-D74BEECE",
+   "department_name": "BRAZZAVILLE",
+   "district_name": "Makélékélé",
+   "id": "2d6d0ad7-4e0c-4605-aa26-050682098a07"
+  },
+  {
+   "name": "IEP Moungali 1",
+   "code": "INSP-IEP-MOUNGALI-1-350CDC85",
+   "department_name": "BRAZZAVILLE",
+   "district_name": "Moungali",
+   "id": "55df31fe-f7b7-4321-b12d-d408f5952f3a"
+  },
+  {
+   "name": "IEP Moungali 2",
+   "code": "INSP-IEP-MOUNGALI-2-81075BC2",
+   "department_name": "BRAZZAVILLE",
+   "district_name": "Moungali",
+   "id": "0496e1b9-9c71-4201-83b4-6c577877d179"
+  },
+  {
+   "name": "IEP Ouenzé 1",
+   "code": "INSP-IEP-OUENZE-1-2DADAC0C",
+   "department_name": "BRAZZAVILLE",
+   "district_name": "Ouenzé",
+   "id": "c074f4dd-2532-4cad-a52b-cf63426bbd20"
+  },
+  {
+   "name": "IEP Ouenzé 2",
+   "code": "INSP-IEP-OUENZE-2-8FA85814",
+   "department_name": "BRAZZAVILLE",
+   "district_name": "Ouenzé",
+   "id": "4aaa37c1-f539-4083-95d1-02d44f90e408"
+  },
+  {
+   "name": "IEP Owando",
+   "code": "INSP-IEP-OWANDO-4D09D1F1",
+   "department_name": "CUVETTE",
+   "district_name": "Owando",
+   "id": "38c45b52-9adc-4a66-b303-1f6a3d14e526"
+  },
+  {
+   "name": "IEP Poto-Poto",
+   "code": "INSP-IEP-POTO-POTO-782D7016",
+   "department_name": "BRAZZAVILLE",
+   "district_name": "Poto-poto",
+   "id": "dce6eb8d-ac8b-42da-80ed-500acb78b03b"
+  },
+  {
+   "name": "IEP Talangaïa 2",
+   "code": "INSP-IEP-TALANGAIA-2-8F859EF1",
+   "department_name": "BRAZZAVILLE",
+   "district_name": "Talangaï",
+   "id": "43eea8a0-eca9-4e71-a63f-5bfa7bcd63ad"
+  },
+  {
+   "name": "IEPA  Mbon",
+   "code": "INSP-IEPA-MBON-5866C099",
+   "department_name": "PLATEAUX",
+   "district_name": "Mbon",
+   "id": "81f8d1a9-1a5a-4cdf-ab42-79f6bada1fb7"
+  },
+  {
+   "name": "IEPA Abala",
+   "code": "INSP-IEPA-ABALA-5093B4E7",
+   "department_name": "NKENI-ALIMA",
+   "district_name": "Abala",
+   "id": "5985e5e8-ebf3-4ae0-a3ca-8569693b917b"
+  },
+  {
+   "name": "IEPA Allembé",
+   "code": "INSP-IEPA-ALLEMBE-4134EA70",
+   "department_name": "NKENI-ALIMA",
+   "district_name": "Allembé",
+   "id": "2b6684c4-50a6-4b12-9c6a-80405310dae3"
+  },
+  {
+   "name": "IEPA Bokoma",
+   "code": "INSP-IEPA-BOKOMA-F435CB8F",
+   "department_name": "CONGO-OUBANGUI",
+   "district_name": "Bokoma",
+   "id": "4f98da1e-7407-49f6-b567-2e3d8d76050b"
+  },
+  {
+   "name": "IEPA Djambala",
+   "code": "INSP-IEPA-DJAMBALA-6508A472",
+   "department_name": "PLATEAUX",
+   "district_name": "Djambala",
+   "id": "0216ab1d-d244-41f3-9850-76964d39e201"
+  },
+  {
+   "name": "IEPA Gamboma 1",
+   "code": "INSP-IEPA-GAMBOMA-1-BF48897D",
+   "department_name": "NKENI-ALIMA",
+   "district_name": "Gamboma",
+   "id": "b2079c0f-098e-4d37-98e6-6c8a59d85b5f"
+  },
+  {
+   "name": "IEPA Gamboma 2",
+   "code": "INSP-IEPA-GAMBOMA-2-FF900307",
+   "department_name": "NKENI-ALIMA",
+   "district_name": "Gamboma",
+   "id": "ba4e9c14-8e86-4d2f-8c60-b3a87d594633"
+  },
+  {
+   "name": "IEPA Liranga",
+   "code": "INSP-IEPA-LIRANGA-442EEE60",
+   "department_name": "CONGO-OUBANGUI",
+   "district_name": "Liranga",
+   "id": "10bf15c9-6c27-4eb0-b014-e5720ff3b8a9"
+  },
+  {
+   "name": "IEPA Loukoléla",
+   "code": "INSP-IEPA-LOUKOLELA-CE524B84",
+   "department_name": "CONGO-OUBANGUI",
+   "district_name": "Loukoléla",
+   "id": "2750b4b8-fb72-4722-aa3c-bd7d203bc2b2"
+  },
+  {
+   "name": "IEPA Lékana",
+   "code": "INSP-IEPA-LEKANA-06145D36",
+   "department_name": "PLATEAUX",
+   "district_name": "Lékana",
+   "id": "29cc93e8-6e20-4bf8-91b1-747b8683b2ba"
+  },
+  {
+   "name": "IEPA Makotimpoko",
+   "code": "INSP-IEPA-MAKOTIMPOKO-EACF3BC8",
+   "department_name": "NKENI-ALIMA",
+   "district_name": "Makotimpoko",
+   "id": "b0872b46-a6b2-4721-a1c1-f73c96b28404"
+  },
+  {
+   "name": "IEPA Mossaka",
+   "code": "INSP-IEPA-MOSSAKA-13C0C6C2",
+   "department_name": "CONGO-OUBANGUI",
+   "district_name": "Mossaka",
+   "id": "56add717-27a8-4f5b-a42c-f387d1a46609"
+  },
+  {
+   "name": "IEPA Mpouya",
+   "code": "INSP-IEPA-MPOUYA-9C5DD7F4",
+   "department_name": "PLATEAUX",
+   "district_name": "Mpouya",
+   "id": "e7f95764-82b3-498b-8150-b40d677cac3d"
+  },
+  {
+   "name": "IEPA Ngô",
+   "code": "INSP-IEPA-NGO-EF87B41C",
+   "department_name": "PLATEAUX",
+   "district_name": "Ngô",
+   "id": "b2cf3315-53d5-4ace-b9d9-7cd295591cfb"
+  },
+  {
+   "name": "IEPA Ollombo 1",
+   "code": "INSP-IEPA-OLLOMBO-1-20FCA5DE",
+   "department_name": "NKENI-ALIMA",
+   "district_name": "Ollombo",
+   "id": "d521f721-b740-4251-8216-08b15534f574"
+  },
+  {
+   "name": "IEPA Ollombo 2",
+   "code": "INSP-IEPA-OLLOMBO-2-F906F3C9",
+   "department_name": "NKENI-ALIMA",
+   "district_name": "Ollombo",
+   "id": "6f786fc1-f657-406f-aa61-7dbf479811e7"
+  },
+  {
+   "name": "IEPA Ongoni",
+   "code": "INSP-IEPA-ONGONI-F5E06ADB",
+   "department_name": "NKENI-ALIMA",
+   "district_name": "Ongogni",
+   "id": "a9447ee8-abf0-4063-9e19-98566af9ce1f"
+  },
+  {
+   "name": "IEPA Talanagaï 1",
+   "code": "INSP-IEPA-TALANAGAI-1-E635F190",
+   "department_name": "BRAZZAVILLE",
+   "district_name": "Talangaï",
+   "id": "34fb9b24-5562-495d-b88a-601014ddb238"
+  },
+  {
+   "name": "IGNIE",
+   "code": "INSP-IGNIE-B29B0AA3",
+   "department_name": "DJOUE-LEFINI",
+   "district_name": "Ignié",
+   "id": "0fa33251-ec78-4533-b32b-69933de0f007"
+  },
+  {
+   "name": "ILZ 1",
+   "code": "INSP-ILZ-1-D7E66F69",
+   "department_name": "BRAZZAVILLE",
+   "district_name": null,
+   "id": "9f3cf74d-985c-45a7-8f33-aecb4e8bb4f3"
+  },
+  {
+   "name": "ILZ 2",
+   "code": "INSP-ILZ-2-9F0F9591",
+   "department_name": null,
+   "district_name": null,
+   "id": "1d0fd4d7-d6c8-4bf1-8f1b-3b6276c3b819"
+  },
+  {
+   "name": "ILZ 3",
+   "code": "INSP-ILZ-3-26F295B1",
+   "department_name": null,
+   "district_name": null,
+   "id": "a5444a5b-6987-48db-87da-143df190b369"
+  },
+  {
+   "name": "ILZ 4",
+   "code": "INSP-ILZ-4-C72EF4E0",
+   "department_name": null,
+   "district_name": null,
+   "id": "aac004f3-ef69-4d80-9b70-d28fe4d2ed2a"
+  },
+  {
+   "name": "ILZ 5",
+   "code": "INSP-ILZ-5-94EFC1CC",
+   "department_name": null,
+   "district_name": null,
+   "id": "28a5181b-667b-4f45-8d4f-7717a312ad0c"
+  },
+  {
+   "name": "ILZ 6",
+   "code": "INSP-ILZ-6-4815F278",
+   "department_name": null,
+   "district_name": null,
+   "id": "21e888ee-fa41-4ead-bd5f-e8a7dbafd862"
+  },
+  {
+   "name": "ILZ 7",
+   "code": "INSP-ILZ-7-DC5710FA",
+   "department_name": null,
+   "district_name": null,
+   "id": "75d998bf-0255-4ef6-ab50-2117776f29cb"
+  },
+  {
+   "name": "ILZ 8",
+   "code": "INSP-ILZ-8-ECFDF8C8",
+   "department_name": null,
+   "district_name": null,
+   "id": "7b8cc173-f53c-40eb-95f3-648d30fa61de"
+  },
+  {
+   "name": "IMPFONDO",
+   "code": "INSP-IMPFONDO-BEB1E1EE",
+   "department_name": "LIKOUALA",
+   "district_name": "Impfondo",
+   "id": "eafc404d-245a-4ea5-a0b1-606488a15698"
+  },
+  {
+   "name": "INSPECTION DE LOANDJILI",
+   "code": "INSP-INSPECTION-DE-LOANDJILI-F5EAC0C6",
+   "department_name": "POINTE-NOIRE",
+   "district_name": "Loandjili",
+   "id": "6d7ee84b-5f3d-433c-b92b-f97a889a5fad"
+  },
+  {
+   "name": "INSPECTION DE LUMUMBA",
+   "code": "INSP-INSPECTION-DE-LUMUMBA-4DB4279F",
+   "department_name": "POINTE-NOIRE",
+   "district_name": "Lumumba",
+   "id": "399ec356-e784-4599-a1dd-46326c44eb9a"
+  },
+  {
+   "name": "INSPECTION DE MONGO-MPOUKOU",
+   "code": "INSP-INSPECTION-DE-MONGO-MPOUKOU-215B8446",
+   "department_name": "POINTE-NOIRE",
+   "district_name": "Mongo-mpoukou",
+   "id": "82324ec2-0654-4cf3-9432-b404376a5183"
+  },
+  {
+   "name": "INSPECTION DE NGOYO",
+   "code": "INSP-INSPECTION-DE-NGOYO-8A676D01",
+   "department_name": "POINTE-NOIRE",
+   "district_name": "Ngoyo",
+   "id": "d1ff235f-3dac-49cf-b81c-dcb648f8e4d0"
+  },
+  {
+   "name": "INSPECTION DE TCHIAMBA-NZASSI",
+   "code": "INSP-INSPECTION-DE-TCHIAMBA-NZASSI-907959B5",
+   "department_name": "POINTE-NOIRE",
+   "district_name": "Tchiamba-nzassi",
+   "id": "ea01645f-b27f-4ffe-9cb8-c03280dd4b65"
+  },
+  {
+   "name": "INSPECTION DE TIE-TIE",
+   "code": "INSP-INSPECTION-DE-TIE-TIE-D0815045",
+   "department_name": "POINTE-NOIRE",
+   "district_name": "Tie-tie",
+   "id": "abba198e-62e2-4395-a3f6-53dbb2ee62c1"
+  },
+  {
+   "name": "IP Brazza 1",
+   "code": "INSP-IP-BRAZZA-1-860CE667",
+   "department_name": "BRAZZAVILLE",
+   "district_name": null,
+   "id": "78046ab6-cabf-4b10-bd2f-a0d46f3025d6"
+  },
+  {
+   "name": "IP Brazza 2",
+   "code": "INSP-IP-BRAZZA-2-13FB9EE7",
+   "department_name": "BRAZZAVILLE",
+   "district_name": null,
+   "id": "584e87d3-79ea-4a1f-b5b4-4affe92d986c"
+  },
+  {
+   "name": "IP Brazza 3",
+   "code": "INSP-IP-BRAZZA-3-B1FE37BC",
+   "department_name": "BRAZZAVILLE",
+   "district_name": null,
+   "id": "1ea90648-2660-4fe0-8746-7c4177f4cae7"
+  },
+  {
+   "name": "Indo",
+   "code": "INSP-INDO-DE55F21A",
+   "department_name": "LEKOUMOU",
+   "district_name": "Indo",
+   "id": "9f03430f-0ac6-4bc5-976d-2e9b24bdf6d7"
+  },
+  {
+   "name": "KAKAMOEKA",
+   "code": "INSP-KAKAMOEKA-ED20C6CF",
+   "department_name": "KOUILOU",
+   "district_name": "Kakamoéka",
+   "id": "89629e8a-5398-4d03-bd97-2819e49a0ec6"
+  },
+  {
+   "name": "KIBANGOU",
+   "code": "INSP-KIBANGOU-C8ED753F",
+   "department_name": "NIARI",
+   "district_name": "Kibangou",
+   "id": "32ec88dd-b483-424d-b2b5-3067044ebb02"
+  },
+  {
+   "name": "KIMBA",
+   "code": "INSP-KIMBA-32C63830",
+   "department_name": "DJOUE-LEFINI",
+   "district_name": "Kimba",
+   "id": "42a20dfd-113a-4c00-9f2f-e51398eeebb0"
+  },
+  {
+   "name": "KIMONGO",
+   "code": "INSP-KIMONGO-D0DF0574",
+   "department_name": "NIARI",
+   "district_name": "Kimongo",
+   "id": "a3c9a588-3323-4e85-ad8b-7f3afc219cc5"
+  },
+  {
+   "name": "Kakamouéka",
+   "code": "INSP-KAKAMOUEKA-17C13160",
+   "department_name": "KOUILOU",
+   "district_name": "Kakamouéka",
+   "id": "688563ca-7ad8-4d00-9201-6149fae43bc8"
+  },
+  {
+   "name": "Kayes",
+   "code": "INSP-KAYES-862A120E",
+   "department_name": "BOUENZA",
+   "district_name": "Kayes",
+   "id": "a64d554c-8dc8-4cec-a687-5650d0d6015e"
+  },
+  {
+   "name": "Kellé",
+   "code": "INSP-KELLE-C7243BA0",
+   "department_name": "CUVETTE OUEST",
+   "district_name": "Kellé",
+   "id": "7a8c3219-1c13-4a2a-865c-57d32aadf9c0"
+  },
+  {
+   "name": "Kindamba",
+   "code": "INSP-KINDAMBA-681F7156",
+   "department_name": "POOL",
+   "district_name": "Kindamba",
+   "id": "dbdcd118-a6cc-457f-8b56-7df48f1e1640"
+  },
+  {
+   "name": "Kingoué",
+   "code": "INSP-KINGOUE-D43C7FF0",
+   "department_name": "BOUENZA",
+   "district_name": "Kingoué",
+   "id": "a2622e3d-a1b3-449a-af18-9eaef7762d01"
+  },
+  {
+   "name": "Kinkala",
+   "code": "INSP-KINKALA-C9674F9E",
+   "department_name": "POOL",
+   "district_name": null,
+   "id": "76411172-a5b9-48b8-93b4-724fa7bcbff9"
+  },
+  {
+   "name": "Kinkala 1",
+   "code": "INSP-KINKALA-1-699D6318",
+   "department_name": "POOL",
+   "district_name": "Kinkala",
+   "id": "cf01e938-bd89-4559-b3e6-b44611fbe611"
+  },
+  {
+   "name": "Kinkala 2",
+   "code": "INSP-KINKALA-2-55D87192",
+   "department_name": "POOL",
+   "district_name": "Kinkala",
+   "id": "19bc83e0-c3dd-4c62-82d4-b964a9ef1284"
+  },
+  {
+   "name": "Kintélé",
+   "code": "INSP-KINTELE-BDDAA487",
+   "department_name": "BRAZZAVILLE",
+   "district_name": "Kintélé",
+   "id": "8ba1d536-9521-4893-bae4-329a3571c6ab"
+  },
+  {
+   "name": "Komono",
+   "code": "INSP-KOMONO-93750CFE",
+   "department_name": "LEKOUMOU",
+   "district_name": "Komono",
+   "id": "58e3a76e-8f95-461d-a326-7cadeff534ad"
+  },
+  {
+   "name": "LONDELA - KAYES",
+   "code": "INSP-LONDELA-KAYES-D23EA9BC",
+   "department_name": "NIARI",
+   "district_name": "Londela-Kayes",
+   "id": "ae715b93-418c-4fb5-bdfe-6b65151069bf"
+  },
+  {
+   "name": "LOUVAKOU",
+   "code": "INSP-LOUVAKOU-0EAC8E3B",
+   "department_name": "NIARI",
+   "district_name": "Louvakou",
+   "id": "75f05e64-07ce-4312-9d4a-8145e434d90d"
+  },
+  {
+   "name": "Lekana",
+   "code": "INSP-LEKANA-8204DE33",
+   "department_name": "PLATEAUX",
+   "district_name": "Lékana",
+   "id": "836bf7d0-55e9-4253-8814-edc9327a1b01"
+  },
+  {
+   "name": "Loandjili",
+   "code": "INSP-LOANDJILI-A231B376",
+   "department_name": "POINTE-NOIRE",
+   "district_name": "Loandjili",
+   "id": "3e6242e8-7ed2-41a9-a9c6-5e21616c910b"
+  },
+  {
+   "name": "Loango",
+   "code": "INSP-LOANGO-12C50862",
+   "department_name": "KOUILOU",
+   "district_name": "Loango",
+   "id": "aa975730-d4a5-49d0-be7e-45dd46b30a32"
+  },
+  {
+   "name": "Loudima",
+   "code": "INSP-LOUDIMA-C6E75F9B",
+   "department_name": "BOUENZA",
+   "district_name": "Loudima",
+   "id": "99fde3c1-23e8-4cfc-a359-54923d215e90"
+  },
+  {
+   "name": "Loudima 1",
+   "code": "INSP-LOUDIMA-1-982E20A9",
+   "department_name": "BOUENZA",
+   "district_name": "Loudima",
+   "id": "953f5dfb-13a7-4284-87ca-121e4d24741a"
+  },
+  {
+   "name": "Loudima 2",
+   "code": "INSP-LOUDIMA-2-97973169",
+   "department_name": "BOUENZA",
+   "district_name": "Loudima",
+   "id": "29572704-9986-45f3-a11d-dd0a3f207527"
+  },
+  {
+   "name": "Louingui",
+   "code": "INSP-LOUINGUI-4A0AA7C5",
+   "department_name": "POOL",
+   "district_name": "Louingui",
+   "id": "28c7ed86-3fad-4718-b9d6-e47303c76aa8"
+  },
+  {
+   "name": "Loulombo",
+   "code": "INSP-LOULOMBO-07F077E7",
+   "department_name": "POOL",
+   "district_name": "Mindouli",
+   "id": "350ab508-3384-4ae6-80be-49f85a0f9439"
+  },
+  {
+   "name": "Loumo",
+   "code": "INSP-LOUMO-8673D313",
+   "department_name": "POOL",
+   "district_name": "Loumo",
+   "id": "4993467e-fc02-4656-b636-ed267dc78f56"
+  },
+  {
+   "name": "Lumumba",
+   "code": "INSP-LUMUMBA-F21FEDA3",
+   "department_name": "POINTE-NOIRE",
+   "district_name": "Lumumba",
+   "id": "1c7ee8a6-42f2-4efb-9f42-b7f9980cbc9a"
+  },
+  {
+   "name": "MAKABANA",
+   "code": "INSP-MAKABANA-1F4C1F73",
+   "department_name": "NIARI",
+   "district_name": "Makabana",
+   "id": "76e06b79-559c-438c-a75c-8fa3979e7682"
+  },
+  {
+   "name": "MAKELEKELE 1",
+   "code": "INSP-MAKELEKELE-1-1AD877C9",
+   "department_name": "BRAZZAVILLE",
+   "district_name": "Makélékélé",
+   "id": "9f32a4d7-2833-4674-b95d-29203a02527f"
+  },
+  {
+   "name": "MAKELEKELE 2",
+   "code": "INSP-MAKELEKELE-2-73B0B07F",
+   "department_name": "BRAZZAVILLE",
+   "district_name": "Makélékélé",
+   "id": "f063e1c7-7db0-49fd-ab90-41c0e2c6f6ca"
+  },
+  {
+   "name": "MAKELEKELE 3",
+   "code": "INSP-MAKELEKELE-3-7A1098B7",
+   "department_name": "BRAZZAVILLE",
+   "district_name": "Makélékélé",
+   "id": "b8286e52-ab57-4f1c-a71d-cbe22950a034"
+  },
+  {
+   "name": "MAYAMA",
+   "code": "INSP-MAYAMA-E52F5B25",
+   "department_name": "DJOUE-LEFINI",
+   "district_name": "Mayama",
+   "id": "d63f1001-0126-4382-abf9-dce3f0495691"
+  },
+  {
+   "name": "MAYOKO",
+   "code": "INSP-MAYOKO-42F1A802",
+   "department_name": "NIARI",
+   "district_name": "Mayoko",
+   "id": "f00e4139-a869-4db9-b225-6f4c2f4e7d24"
+  },
+  {
+   "name": "MBINDA",
+   "code": "INSP-MBINDA-9E93B550",
+   "department_name": "NIARI",
+   "district_name": "Mbinda",
+   "id": "81ff5bcf-ada3-4b23-a1e6-88ff8840849e"
+  },
+  {
+   "name": "MFILOU NGAMABA",
+   "code": "INSP-MFILOU-NGAMABA-A86905F6",
+   "department_name": "BRAZZAVILLE",
+   "district_name": "Mfilou",
+   "id": "5de3ad0b-48d5-4779-8730-6505207023c5"
+  },
+  {
+   "name": "MOSSENDJO",
+   "code": "INSP-MOSSENDJO-1A9F79BB",
+   "department_name": "NIARI",
+   "district_name": "Mossendjo",
+   "id": "b33be22b-f9d7-4fb7-82a1-7f4ab969849a"
+  },
+  {
+   "name": "MOUNGALI 2",
+   "code": "INSP-MOUNGALI-2-E39EBC51",
+   "department_name": "BRAZZAVILLE",
+   "district_name": "Moungali",
+   "id": "66e01154-0909-454c-930e-7c0c335e53b2"
+  },
+  {
+   "name": "MOUNGOUNDOU - SUD",
+   "code": "INSP-MOUNGOUNDOU-SUD-C21B851E",
+   "department_name": "NIARI",
+   "district_name": "Moungoundou - sud",
+   "id": "8ef47d36-20d5-432c-99dd-4839c258e5ec"
+  },
+  {
+   "name": "MOUTAMBA",
+   "code": "INSP-MOUTAMBA-29F93325",
+   "department_name": "NIARI",
+   "district_name": "Moutamba",
+   "id": "a128bb71-3765-440a-a4bc-d374064414c3"
+  },
+  {
+   "name": "MVOUMVOU",
+   "code": "INSP-MVOUMVOU-8D7E39AF",
+   "department_name": "POINTE-NOIRE",
+   "district_name": "Mvoumvou",
+   "id": "468eeba9-5778-4182-85d5-f710964b67ce"
+  },
+  {
+   "name": "Mabombo",
+   "code": "INSP-MABOMBO-1D0EE4C3",
+   "department_name": "BOUENZA",
+   "district_name": "Mabombo",
+   "id": "475ac25c-056d-46e6-9426-2822b5550863"
+  },
+  {
+   "name": "Madibou",
+   "code": "INSP-MADIBOU-BB554826",
+   "department_name": "BRAZZAVILLE",
+   "district_name": "Madibou",
+   "id": "e3328904-c2cb-40f0-9be4-df8630722b51"
+  },
+  {
+   "name": "Madingo-Kayes",
+   "code": "INSP-MADINGO-KAYES-2DECF1D8",
+   "department_name": "KOUILOU",
+   "district_name": "Madingo-kayes",
+   "id": "c1545439-cc5a-48f3-a9b9-af6be1aa9eda"
+  },
+  {
+   "name": "Madingou",
+   "code": "INSP-MADINGOU-3406CC3E",
+   "department_name": "BOUENZA",
+   "district_name": "Madingou",
+   "id": "728c82ff-c2b0-4dbf-b488-b0237156cebd"
+  },
+  {
+   "name": "Madingou-Kayes",
+   "code": "INSP-MADINGOU-KAYES-25055E03",
+   "department_name": "KOUILOU",
+   "district_name": "Madingou-kayes",
+   "id": "e21bc2f8-3821-4e39-814b-2eec7496f349"
+  },
+  {
+   "name": "Makoua",
+   "code": "INSP-MAKOUA-6013CF12",
+   "department_name": "CUVETTE",
+   "district_name": "Makoua",
+   "id": "af5c29e9-bc6d-458e-ae94-8096e5557a13"
+  },
+  {
+   "name": "Makoua Village",
+   "code": "INSP-MAKOUA-VILLAGE-DFFB340F",
+   "department_name": "CUVETTE",
+   "district_name": "Makoua",
+   "id": "1b13ec38-7601-49c8-a2db-513cb8913165"
+  },
+  {
+   "name": "Makoua centre",
+   "code": "INSP-MAKOUA-CENTRE-10E1F295",
+   "department_name": "CUVETTE",
+   "district_name": "Makoua",
+   "id": "43edefd0-ed2d-441f-901f-bef3906ac4e5"
+  },
+  {
+   "name": "Mayéyé",
+   "code": "INSP-MAYEYE-6FAAFE74",
+   "department_name": "LEKOUMOU",
+   "district_name": "Mayéyé",
+   "id": "017c605f-8239-4324-87e3-dc3115d3a84c"
+  },
+  {
+   "name": "Mbama",
+   "code": "INSP-MBAMA-8495B2EC",
+   "department_name": "CUVETTE OUEST",
+   "district_name": "Mbama",
+   "id": "0c853347-d5a2-4be8-ab04-700a081309c9"
+  },
+  {
+   "name": "Mbandza-Ndounga",
+   "code": "INSP-MBANDZA-NDOUNGA-2D5E7738",
+   "department_name": "POOL",
+   "district_name": "Mbandza-ndounga",
+   "id": "9719b588-f7d6-4da5-ab5b-e409fe478311"
+  },
+  {
+   "name": "Mbomo",
+   "code": "INSP-MBOMO-E8719B47",
+   "department_name": "CUVETTE OUEST",
+   "district_name": "Mbomo",
+   "id": "77d9d51e-270c-48c2-aa3c-8606360f655c"
+  },
+  {
+   "name": "Mfilou",
+   "code": "INSP-MFILOU-81BAA9A4",
+   "department_name": "BRAZZAVILLE",
+   "district_name": "Mfilou",
+   "id": "41c7cd30-ffb2-4d47-aef9-81db77df8dbf"
+  },
+  {
+   "name": "Mfouati",
+   "code": "INSP-MFOUATI-A1515EA5",
+   "department_name": "BOUENZA",
+   "district_name": "Mfouati",
+   "id": "9bea1659-8e48-4eeb-97fc-bd62f25f789d"
+  },
+  {
+   "name": "Mindouli",
+   "code": "INSP-MINDOULI-9256BAC9",
+   "department_name": "POOL",
+   "district_name": "Mindouli",
+   "id": "82673f6c-a315-41d3-a1cd-9f9a67bcefaa"
+  },
+  {
+   "name": "Mokéko",
+   "code": "INSP-MOKEKO-18687128",
+   "department_name": "SANGHA",
+   "district_name": "Mokéko",
+   "id": "a4a8b5e4-352d-42b6-8ad0-6b02de6c4f32"
+  },
+  {
+   "name": "Mongo-Poukou",
+   "code": "INSP-MONGO-POUKOU-F6DE06F0",
+   "department_name": "POINTE-NOIRE",
+   "district_name": "Mongo-poukou",
+   "id": "013ddb58-c712-476b-af7c-c87c45d4303e"
+  },
+  {
+   "name": "Mossaka",
+   "code": "INSP-MOSSAKA-F53AD815",
+   "department_name": null,
+   "district_name": null,
+   "id": "b2c93211-5dfb-46bb-befe-d93075b86404"
+  },
+  {
+   "name": "Moungali 1",
+   "code": "INSP-MOUNGALI-1-AB2C4CC3",
+   "department_name": "BRAZZAVILLE",
+   "district_name": "Moungali",
+   "id": "f12c658e-8d55-4f92-94ef-3984982e6f40"
+  },
+  {
+   "name": "Mouyondzi",
+   "code": "INSP-MOUYONDZI-0FB77EF1",
+   "department_name": "BOUENZA",
+   "district_name": "Mouyondzi",
+   "id": "aa989af8-ba1b-4e42-83bd-104d9e456b23"
+  },
+  {
+   "name": "Mouyondzi 1",
+   "code": "INSP-MOUYONDZI-1-83F42C4E",
+   "department_name": "BOUENZA",
+   "district_name": "Mouyondzi",
+   "id": "0c0c0722-c2dc-4248-8080-64ce8746e525"
+  },
+  {
+   "name": "Mouyondzi 2",
+   "code": "INSP-MOUYONDZI-2-D4F5CB48",
+   "department_name": "BOUENZA",
+   "district_name": "Mouyondzi",
+   "id": "a62705ee-687e-48fe-936f-3b6d4faacca4"
+  },
+  {
+   "name": "Mvouti",
+   "code": "INSP-MVOUTI-2FF4BEC9",
+   "department_name": "KOUILOU",
+   "district_name": "Mvouti",
+   "id": "39656457-314d-450e-a5fb-b5ced957b7e2"
+  },
+  {
+   "name": "NGABE",
+   "code": "INSP-NGABE-B50C29CD",
+   "department_name": "DJOUE-LEFINI",
+   "district_name": "Ngabé",
+   "id": "42d4f46f-f992-412f-8880-cf1b3d3815be"
+  },
+  {
+   "name": "NIARI",
+   "code": "INSP-NIARI-876BEAF2",
+   "department_name": "NIARI",
+   "district_name": null,
+   "id": "6556e00a-10a7-4da0-a1a0-a40c179a0bce"
+  },
+  {
+   "name": "NYANGA",
+   "code": "INSP-NYANGA-D42910B3",
+   "department_name": "NIARI",
+   "district_name": "Nyanga",
+   "id": "5054609e-8b75-4c25-ae4f-ae9969b413b7"
+  },
+  {
+   "name": "Ngbala",
+   "code": "INSP-NGBALA-4D9ED4AA",
+   "department_name": "SANGHA",
+   "district_name": "Mokéko",
+   "id": "aa8242e4-5fa0-4f3a-91dc-e96b82f5e9bb"
+  },
+  {
+   "name": "Ngoko",
+   "code": "INSP-NGOKO-5666ADCB",
+   "department_name": "CUVETTE",
+   "district_name": "Ngoko",
+   "id": "5d7c5757-ee55-4321-9cba-6c5305c72efd"
+  },
+  {
+   "name": "Ngoko Centre",
+   "code": "INSP-NGOKO-CENTRE-7FE500C0",
+   "department_name": "CUVETTE",
+   "district_name": "Ngoko",
+   "id": "9eaa98d0-3c02-4b6d-af24-1c5c9d745927"
+  },
+  {
+   "name": "Ngoko Village",
+   "code": "INSP-NGOKO-VILLAGE-A74113B3",
+   "department_name": "CUVETTE",
+   "district_name": "Ngoko",
+   "id": "f4e980a0-f49e-4dc4-aab6-454e5e9840f9"
+  },
+  {
+   "name": "Ngoyo",
+   "code": "INSP-NGOYO-6861C6D0",
+   "department_name": "POINTE-NOIRE",
+   "district_name": "Ngoyo",
+   "id": "8195edee-30d5-417a-95b2-e9a4e9ee50f1"
+  },
+  {
+   "name": "Ngô",
+   "code": "INSP-NGO-8A19C897",
+   "department_name": "PLATEAUX",
+   "district_name": "Ngô",
+   "id": "aed4604c-3ee1-4112-8a35-d9de820ac90b"
+  },
+  {
+   "name": "Nkayi",
+   "code": "INSP-NKAYI-6A23B844",
+   "department_name": "BOUENZA",
+   "district_name": null,
+   "id": "2e5777ed-f811-4026-adbf-32413bf3d414"
+  },
+  {
+   "name": "Ntokou Village",
+   "code": "INSP-NTOKOU-VILLAGE-575E31F7",
+   "department_name": "CUVETTE",
+   "district_name": "Ntokou",
+   "id": "bb859b5a-aa76-4a6c-9b1c-0a4743b168ad"
+  },
+  {
+   "name": "Ntokou centre",
+   "code": "INSP-NTOKOU-CENTRE-1D2AD460",
+   "department_name": "CUVETTE",
+   "district_name": "Ntokou",
+   "id": "0cc981ac-d035-4a86-9b86-a47b2b15efa2"
+  },
+  {
+   "name": "Nzambi",
+   "code": "INSP-NZAMBI-AEA7BC2A",
+   "department_name": "KOUILOU",
+   "district_name": "Nzambi",
+   "id": "529546e1-024e-4132-88dc-faa5df809546"
+  },
+  {
+   "name": "ODZIBA",
+   "code": "INSP-ODZIBA-C671EBDD",
+   "department_name": "DJOUE-LEFINI",
+   "district_name": "Odziba",
+   "id": "7c395228-1278-45e7-ac30-8324876d9877"
+  },
+  {
+   "name": "OUENZE 1",
+   "code": "INSP-OUENZE-1-1D960F75",
+   "department_name": "BRAZZAVILLE",
+   "district_name": "Ouenzé",
+   "id": "f447d447-4980-4f52-b1b9-4376949247c1"
+  },
+  {
+   "name": "Okoyo",
+   "code": "INSP-OKOYO-8B2CC818",
+   "department_name": "CUVETTE OUEST",
+   "district_name": "Okoyo",
+   "id": "829b0f0e-d160-4234-ad7f-32f00517f4c6"
+  },
+  {
+   "name": "Ouenzé 2",
+   "code": "INSP-OUENZE-2-9A45B4EF",
+   "department_name": "BRAZZAVILLE",
+   "district_name": "Ouenzé",
+   "id": "17060951-187f-4133-9bc5-c2068c6d3e4e"
+  },
+  {
+   "name": "Ouesso",
+   "code": "INSP-OUESSO-05BB6282",
+   "department_name": "SANGHA",
+   "district_name": "Ouesso",
+   "id": "c9773468-4ff9-4fd8-9281-be2e958b5ee8"
+  },
+  {
+   "name": "Owando 1",
+   "code": "INSP-OWANDO-1-E7A1DB2E",
+   "department_name": "CUVETTE",
+   "district_name": "Owando",
+   "id": "d40ebd8f-9088-403c-afbb-68d70001510f"
+  },
+  {
+   "name": "Owando 1 centre",
+   "code": "INSP-OWANDO-1-CENTRE-F784BE61",
+   "department_name": "CUVETTE",
+   "district_name": "Owando",
+   "id": "cac5ae20-2087-4ea9-b2f4-5de0a0c9ed3c"
+  },
+  {
+   "name": "Owando 2",
+   "code": "INSP-OWANDO-2-A5C93130",
+   "department_name": "CUVETTE",
+   "district_name": "Owando",
+   "id": "afbe70a1-a720-4cdc-98b3-3e70c7798321"
+  },
+  {
+   "name": "Owando 2 Centre",
+   "code": "INSP-OWANDO-2-CENTRE-D313BB35",
+   "department_name": "CUVETTE",
+   "district_name": "Owando",
+   "id": "f5eb9660-8d0e-40f2-bb2d-200f512375c2"
+  },
+  {
+   "name": "Owando 2 village",
+   "code": "INSP-OWANDO-2-VILLAGE-D3795991",
+   "department_name": "CUVETTE",
+   "district_name": "Owando",
+   "id": "3e0f0610-a416-46f9-b8c1-42d785a31965"
+  },
+  {
+   "name": "Owando village",
+   "code": "INSP-OWANDO-VILLAGE-66CA240A",
+   "department_name": "CUVETTE",
+   "district_name": "Owando",
+   "id": "ab5d82a8-93bf-46ad-929b-0448aaa75d21"
+  },
+  {
+   "name": "Oyo",
+   "code": "INSP-OYO-11A5D345",
+   "department_name": "CUVETTE",
+   "district_name": "Oyo",
+   "id": "e25ab8d3-5454-498d-abc4-7a5399747a1d"
+  },
+  {
+   "name": "Oyo centre",
+   "code": "INSP-OYO-CENTRE-015FEBCE",
+   "department_name": "CUVETTE",
+   "district_name": "Oyo",
+   "id": "a2af9b5a-08bb-4ef7-a7d3-3e0beb37c66f"
+  },
+  {
+   "name": "Oyo village",
+   "code": "INSP-OYO-VILLAGE-5B4FA582",
+   "department_name": "CUVETTE",
+   "district_name": "Oyo",
+   "id": "9c97fec9-e282-4b72-a38a-9e45e8e372d7"
+  },
+  {
+   "name": "Pikounda",
+   "code": "INSP-PIKOUNDA-D08EED53",
+   "department_name": "SANGHA",
+   "district_name": "Pikounda",
+   "id": "d3ddc9a5-ee21-438a-8f37-4a3c1e0ee66f"
+  },
+  {
+   "name": "Plateaux 1",
+   "code": "INSP-PLATEAUX-1-3FD572C6",
+   "department_name": "PLATEAUX",
+   "district_name": null,
+   "id": "90d0800f-4396-4e4d-8d5e-cf1f836cdd65"
+  },
+  {
+   "name": "Plateaux 2",
+   "code": "INSP-PLATEAUX-2-6D684241",
+   "department_name": "PLATEAUX",
+   "district_name": "Ngô",
+   "id": "ada50182-69c2-49e5-90f5-dc9bd24128fd"
+  },
+  {
+   "name": "Pointe-Noire 1",
+   "code": "INSP-POINTE-NOIRE-1-3643C2D8",
+   "department_name": "POINTE-NOIRE",
+   "district_name": null,
+   "id": "efd676e5-fff0-43ab-945f-692919119127"
+  },
+  {
+   "name": "Pointe-Noire 2",
+   "code": "INSP-POINTE-NOIRE-2-7D802292",
+   "department_name": "POINTE-NOIRE",
+   "district_name": null,
+   "id": "9c19b1c3-8898-477c-8fdd-9fd31786c710"
+  },
+  {
+   "name": "Pokola",
+   "code": "INSP-POKOLA-9CFEE312",
+   "department_name": "SANGHA",
+   "district_name": null,
+   "id": "df348466-751d-4a47-950c-805d76794e26"
+  },
+  {
+   "name": "Pool 1 Kinkala",
+   "code": "INSP-POOL-1-KINKALA-3E5BDE73",
+   "department_name": "POOL",
+   "district_name": null,
+   "id": "e45e8938-ac0c-46cf-97f9-0b70f0f18164"
+  },
+  {
+   "name": "Poto Poto",
+   "code": "INSP-POTO-POTO-7141EE5D",
+   "department_name": "BRAZZAVILLE",
+   "district_name": "Poto-poto",
+   "id": "b09ac0a4-4ae8-4317-8527-7aa59de1e9d0"
+  },
+  {
+   "name": "Sembé",
+   "code": "INSP-SEMBE-84D2D73B",
+   "department_name": "SANGHA",
+   "district_name": "Sembé",
+   "id": "88af8975-df81-4df8-8f2d-3ecdff8b7cc5"
+  },
+  {
+   "name": "Sibiti",
+   "code": "INSP-SIBITI-353BCD6D",
+   "department_name": "LEKOUMOU",
+   "district_name": "Sibiti",
+   "id": "848e39d4-6247-4195-b005-110c1f801554"
+  },
+  {
+   "name": "Sibiti 1",
+   "code": "INSP-SIBITI-1-9DB5A12D",
+   "department_name": "LEKOUMOU",
+   "district_name": "Sibiti",
+   "id": "61ead6e3-4140-4d7a-84e1-608dba3ec94f"
+  },
+  {
+   "name": "Sibiti 2",
+   "code": "INSP-SIBITI-2-7EB063C9",
+   "department_name": "LEKOUMOU",
+   "district_name": "Sibiti",
+   "id": "df9b3e7e-1a9e-44f8-b346-69ce5a9900bc"
+  },
+  {
+   "name": "Souanké",
+   "code": "INSP-SOUANKE-A97890A1",
+   "department_name": "SANGHA",
+   "district_name": "Souanké",
+   "id": "b2b6e15b-8205-4bce-85e3-0384a7d8e43b"
+  },
+  {
+   "name": "TSIAKA",
+   "code": "INSP-TSIAKA-B0E37D6B",
+   "department_name": "BOUENZA",
+   "district_name": "Tsiaka",
+   "id": "6f692b88-44d1-47a0-902a-83532f6de1d5"
+  },
+  {
+   "name": "Talangai 1",
+   "code": "INSP-TALANGAI-1-B7A08EB1",
+   "department_name": "BRAZZAVILLE",
+   "district_name": "Talangaï",
+   "id": "8caadab0-ee4f-4f28-9d6b-510acbc0c868"
+  },
+  {
+   "name": "Talangai 2",
+   "code": "INSP-TALANGAI-2-EEAE2F0B",
+   "department_name": "BRAZZAVILLE",
+   "district_name": "Talangaï",
+   "id": "d61603ee-30d5-42ba-800f-94d64e26ca92"
+  },
+  {
+   "name": "Tchikapika",
+   "code": "INSP-TCHIKAPIKA-91006B92",
+   "department_name": "CUVETTE",
+   "district_name": "Tchikapika",
+   "id": "a9168670-51fa-43e8-9d45-a8f4655fca2e"
+  },
+  {
+   "name": "Tchikapika centre",
+   "code": "INSP-TCHIKAPIKA-CENTRE-A6FE5F8F",
+   "department_name": "CUVETTE",
+   "district_name": "Tchikapika",
+   "id": "abc5ce89-9ee9-4b14-95d1-b75cbc965b76"
+  },
+  {
+   "name": "Tchikapika village",
+   "code": "INSP-TCHIKAPIKA-VILLAGE-52FF48CF",
+   "department_name": "CUVETTE",
+   "district_name": "Tchikapika",
+   "id": "018233d0-e296-4d14-837e-6098e7d0d079"
+  },
+  {
+   "name": "Tiétié",
+   "code": "INSP-TIETIE-F22FC524",
+   "department_name": "POINTE-NOIRE",
+   "district_name": "Tiétié",
+   "id": "cd3778b8-7865-4daa-9d6f-7ad672eb527a"
+  },
+  {
+   "name": "Tsiaki",
+   "code": "INSP-TSIAKI-07E79197",
+   "department_name": "BOUENZA",
+   "district_name": "Tsiaki",
+   "id": "7986a2a3-3162-460a-830f-4e28ff548d69"
+  },
+  {
+   "name": "VINDZA",
+   "code": "INSP-VINDZA-26B506C1",
+   "department_name": "DJOUE-LEFINI",
+   "district_name": "Vindza",
+   "id": "e5234236-786e-4068-ba60-34df385d1559"
+  },
+  {
+   "name": "YAYA",
+   "code": "INSP-YAYA-0B8467A2",
+   "department_name": "NIARI",
+   "district_name": "Yaya",
+   "id": "14581865-1a24-44f5-9da3-636c10f3baea"
+  },
+  {
+   "name": "Yamba",
+   "code": "INSP-YAMBA-8669373D",
+   "department_name": "BOUENZA",
+   "district_name": "Yamba",
+   "id": "b0393ed8-4a9b-41fe-9151-c09d6b372b4b"
+  },
+  {
+   "name": "Zabata",
+   "code": "INSP-ZABATA-CDDD28B0",
+   "department_name": "BOUENZA",
+   "district_name": "Zabata",
+   "id": "bb89912f-db02-4bc5-8f67-f476d60985fe"
+  },
+  {
+   "name": "Zanaga",
+   "code": "INSP-ZANAGA-4E733761",
+   "department_name": "LEKOUMOU",
+   "district_name": "Zanaga",
+   "id": "3272677d-8ecd-4c59-aac8-22b1378adff8"
+  },
+  {
+   "name": "Zanaga 1",
+   "code": "INSP-ZANAGA-1-8085D6BE",
+   "department_name": "LEKOUMOU",
+   "district_name": "Zanaga",
+   "id": "4b5a3bbc-bd2d-4eab-8018-80c9ef6008f5"
+  },
+  {
+   "name": "Zanaga 2",
+   "code": "INSP-ZANAGA-2-F016E140",
+   "department_name": "LEKOUMOU",
+   "district_name": "Zanaga",
+   "id": "f5c4d539-07f1-41a6-9bb8-0b4e459e9ccd"
+  }
+ ],
+ "cycles": [
+  {
+   "designation": "PRESCOLAIRE",
+   "code": "PRE",
+   "description": "Cycle Préscolaire",
+   "level_min": 0,
+   "level_max": 0,
+   "allows_multi_subject": true,
+   "default_quota": 30
+  },
+  {
+   "designation": "ALPHABETISATION",
+   "code": "ALP",
+   "description": "Apprentissage en éducation non formelle - Primaire",
+   "level_min": 1,
+   "level_max": 6,
+   "allows_multi_subject": true,
+   "default_quota": 16
+  },
+  {
+   "designation": "PRIMAIRE",
+   "code": "PRI",
+   "description": "Cycle primaire",
+   "level_min": 1,
+   "level_max": 6,
+   "allows_multi_subject": true,
+   "default_quota": 10
+  },
+  {
+   "designation": "RESCOLARISATION",
+   "code": "RES",
+   "description": "Rescolarisation des décrochés et des déscolarisés ",
+   "level_min": 1,
+   "level_max": 6,
+   "allows_multi_subject": true,
+   "default_quota": 16
+  },
+  {
+   "designation": "COLLEGE",
+   "code": "COL",
+   "description": "Premier cycle secondaire",
+   "level_min": 7,
+   "level_max": 10,
+   "allows_multi_subject": false,
+   "default_quota": 15
+  },
+  {
+   "designation": "POST-ALPHA S1",
+   "code": "PA1",
+   "description": "Apprentissage en éducation non formelle - collège",
+   "level_min": 7,
+   "level_max": 10,
+   "allows_multi_subject": false,
+   "default_quota": 113
+  },
+  {
+   "designation": "LYCEE",
+   "code": "LYC",
+   "description": "Second cycle secondaire",
+   "level_min": 11,
+   "level_max": 13,
+   "allows_multi_subject": false,
+   "default_quota": 15
+  },
+  {
+   "designation": "POST-ALPHA S2",
+   "code": "PA2",
+   "description": "Apprentissage en éducation non formelle - Lycée",
+   "level_min": 11,
+   "level_max": 13,
+   "allows_multi_subject": false,
+   "default_quota": 200
+  }
+ ],
+ "niveaux": [
+  {
+   "designation": "P1",
+   "code": "P-1",
+   "cycle_designation": "PRESCOLAIRE",
+   "description": "Première année du Préscolaire",
+   "display_order": 0
+  },
+  {
+   "designation": "P2",
+   "code": "P-2",
+   "cycle_designation": "PRESCOLAIRE",
+   "description": "Deuxième année du Préscolaire",
+   "display_order": 0
+  },
+  {
+   "designation": "P3",
+   "code": "P-3",
+   "cycle_designation": "PRESCOLAIRE",
+   "description": "Troisième année du Préscolaire",
+   "display_order": 0
+  },
+  {
+   "designation": "CP Unique",
+   "code": "CPU",
+   "cycle_designation": "PRIMAIRE",
+   "description": "Cours Préparatoire Unique",
+   "display_order": 1
+  },
+  {
+   "designation": "Cours Préparatoire 1",
+   "code": "CP1",
+   "cycle_designation": "PRIMAIRE",
+   "description": null,
+   "display_order": 1
+  },
+  {
+   "designation": "NIVEAU I ALPHA",
+   "code": "N I-ALPHA",
+   "cycle_designation": "ALPHABETISATION",
+   "description": "Premier Niveau Alphabétisation (CP)",
+   "display_order": 1
+  },
+  {
+   "designation": "NIVEAU I RESCO",
+   "code": "N I-RESCO",
+   "cycle_designation": "RESCOLARISATION",
+   "description": "Premier Niveau Rescolarisation (CP)",
+   "display_order": 1
+  },
+  {
+   "designation": "Cours Préparatoire 2",
+   "code": "CP2",
+   "cycle_designation": "PRIMAIRE",
+   "description": null,
+   "display_order": 2
+  },
+  {
+   "designation": "NIVEAU II ALPHA",
+   "code": "N II-ALPHA",
+   "cycle_designation": "ALPHABETISATION",
+   "description": "Deuxième Niveau Alphabétisation (CE)",
+   "display_order": 2
+  },
+  {
+   "designation": "NIVEAU II RESCO",
+   "code": "N II-RESCO",
+   "cycle_designation": "RESCOLARISATION",
+   "description": "Deuxième Niveau Rescolarisation (CE)",
+   "display_order": 2
+  },
+  {
+   "designation": "Cours Elementaire 1",
+   "code": "CE1",
+   "cycle_designation": "PRIMAIRE",
+   "description": null,
+   "display_order": 3
+  },
+  {
+   "designation": "NIVEAU III ALPHA ",
+   "code": "NIII-ALPHA",
+   "cycle_designation": "ALPHABETISATION",
+   "description": "Troisième Niveau ALPHA (CM)",
+   "display_order": 3
+  },
+  {
+   "designation": "NIVEAU III RESCO",
+   "code": "N III-RESC",
+   "cycle_designation": "RESCOLARISATION",
+   "description": "Troisième Niveau Rescolarisation (CM)",
+   "display_order": 3
+  },
+  {
+   "designation": "Cours Elementaire 2",
+   "code": "CE2",
+   "cycle_designation": "PRIMAIRE",
+   "description": null,
+   "display_order": 4
+  },
+  {
+   "designation": "Cours Moyen 1",
+   "code": "CM1",
+   "cycle_designation": "PRIMAIRE",
+   "description": "Cours moyen de niveau 5",
+   "display_order": 5
+  },
+  {
+   "designation": "Cours Moyen 2",
+   "code": "CM2",
+   "cycle_designation": "PRIMAIRE",
+   "description": "Cours moyen de niveau 2",
+   "display_order": 6
+  },
+  {
+   "designation": "NIVEAU IV POST-ALPHA",
+   "code": "N IV-P_A",
+   "cycle_designation": "POST-ALPHA S1",
+   "description": "Premier Niveau Post-Alphabétisation (6ème)",
+   "display_order": 6
+  },
+  {
+   "designation": "NIVEAU V POST-ALPHA",
+   "code": "N V-P_A",
+   "cycle_designation": "POST-ALPHA S1",
+   "description": "Deuxième Niveau Post-Alphabétisation (5ème)",
+   "display_order": 7
+  },
+  {
+   "designation": "Sixiéme",
+   "code": "6EME",
+   "cycle_designation": "COLLEGE",
+   "description": "Premiere année du collége",
+   "display_order": 7
+  },
+  {
+   "designation": "Cinquiéme",
+   "code": "5EME",
+   "cycle_designation": "COLLEGE",
+   "description": "Deuxiéme annnée du collége",
+   "display_order": 8
+  },
+  {
+   "designation": "NIVEAU VI POST-ALPHA",
+   "code": "N VI-P_A",
+   "cycle_designation": "POST-ALPHA S1",
+   "description": "Troisième Niveau Post-Alphabétisation (4ème)",
+   "display_order": 8
+  },
+  {
+   "designation": "NIVEAU VII POST-ALPHA",
+   "code": "N VII-P_A",
+   "cycle_designation": "POST-ALPHA S1",
+   "description": "Quatrième Niveau Post-Alphabétisation (3ème)",
+   "display_order": 9
+  },
+  {
+   "designation": "Quatrième",
+   "code": "4EME",
+   "cycle_designation": "COLLEGE",
+   "description": "Troisième année du Collège",
+   "display_order": 9
+  },
+  {
+   "designation": "NIVEAU VIII POST-ALPHA 2NDE A2",
+   "code": "N VIII-SA2",
+   "cycle_designation": "POST-ALPHA S2",
+   "description": "Cinquième Niveau Post-Alphabétisation (2nde A2)",
+   "display_order": 10
+  },
+  {
+   "designation": "NIVEAU VIII POST-ALPHA 2NDE A4",
+   "code": "N VIII-SA4",
+   "cycle_designation": "POST-ALPHA S2",
+   "description": "Cinquième Niveau Post-Alphabétisation (2nde A4)",
+   "display_order": 10
+  },
+  {
+   "designation": "NIVEAU VIII POST-ALPHA 2NDE C",
+   "code": "N VIII-SC",
+   "cycle_designation": "POST-ALPHA S2",
+   "description": "Sixième Niveau Post-Alphabétisation (2nde C)",
+   "display_order": 10
+  },
+  {
+   "designation": "Troisième",
+   "code": "3EME",
+   "cycle_designation": "COLLEGE",
+   "description": "Quatrième année du Collège",
+   "display_order": 10
+  },
+  {
+   "designation": "NIVEAU IX POST-ALPHA 1ERE A2",
+   "code": "N IX-PA2",
+   "cycle_designation": "POST-ALPHA S2",
+   "description": "Sixième Niveau Post-Alphabétisation (1ère A2)",
+   "display_order": 11
+  },
+  {
+   "designation": "NIVEAU IX POST-ALPHA 1ERE A4",
+   "code": "N IX-PA4",
+   "cycle_designation": "POST-ALPHA S2",
+   "description": "Sixième Niveau Post-Alphabétisation (1ère A4)",
+   "display_order": 11
+  },
+  {
+   "designation": "NIVEAU IX POST-ALPHA 1ERE C",
+   "code": "N IX-PC",
+   "cycle_designation": "POST-ALPHA S2",
+   "description": "Sixième Niveau Post-Alphabétisation (1ère C)",
+   "display_order": 11
+  },
+  {
+   "designation": "NIVEAU IX POST-ALPHA 1ERE D",
+   "code": "N IX-PD",
+   "cycle_designation": "POST-ALPHA S2",
+   "description": "Sixième Niveau Post-Alphabétisation (1ère D)",
+   "display_order": 11
+  },
+  {
+   "designation": "Première A4",
+   "code": "1ÈRE A4",
+   "cycle_designation": "LYCEE",
+   "description": "Deuxième année littéraire Espagnole/Chinois/Russe/Allemand du lycée",
+   "display_order": 11
+  },
+  {
+   "designation": "Seconde A2",
+   "code": "2NDE A2",
+   "cycle_designation": "LYCEE",
+   "description": "Première année littéraire Latin lycée ",
+   "display_order": 11
+  },
+  {
+   "designation": "Seconde A4",
+   "code": "2NDE A4",
+   "cycle_designation": "LYCEE",
+   "description": "Première année littéraire Espagnole/Chinois/Russe/Allemand du lycée",
+   "display_order": 11
+  },
+  {
+   "designation": "Seconde C",
+   "code": "2NDE C",
+   "cycle_designation": "LYCEE",
+   "description": "Première année scientifique du lycée",
+   "display_order": 11
+  },
+  {
+   "designation": "NIVEAU X POST-ALPHA TA2",
+   "code": "N X-TA2",
+   "cycle_designation": "POST-ALPHA S2",
+   "description": "Septième Niveau Post-Alphabétisation (TA2)",
+   "display_order": 12
+  },
+  {
+   "designation": "NIVEAU X POST-ALPHA TA4",
+   "code": "N X-TA4",
+   "cycle_designation": "POST-ALPHA S2",
+   "description": "Septième Niveau Post-Alphabétisation (TA4)",
+   "display_order": 12
+  },
+  {
+   "designation": "NIVEAU X POST-ALPHA TC",
+   "code": "N X-TC",
+   "cycle_designation": "POST-ALPHA S2",
+   "description": "Septième Niveau Post-Alphabétisation (TC)",
+   "display_order": 12
+  },
+  {
+   "designation": "NIVEAU X POST-ALPHA TD",
+   "code": "N X-TD",
+   "cycle_designation": "POST-ALPHA S2",
+   "description": "Septième Niveau Post-Alphabétisation (TD)",
+   "display_order": 12
+  },
+  {
+   "designation": "PREMIERE",
+   "code": "1ERE",
+   "cycle_designation": "LYCEE",
+   "description": "Deuxiéme annnée du lycée",
+   "display_order": 12
+  },
+  {
+   "designation": "Première A2",
+   "code": "1ÈRE A2",
+   "cycle_designation": "LYCEE",
+   "description": "Deuxième année littéraire Latin du lycée ",
+   "display_order": 12
+  },
+  {
+   "designation": "Première C",
+   "code": "1ÈRE C",
+   "cycle_designation": "LYCEE",
+   "description": "Deuxième année scientifique Maths du lycée",
+   "display_order": 12
+  },
+  {
+   "designation": "Première D",
+   "code": "1ÈRE D",
+   "cycle_designation": "LYCEE",
+   "description": "Deuxième année scientifique SVT du lycée",
+   "display_order": 12
+  },
+  {
+   "designation": "TERMINALE A4",
+   "code": "TA4",
+   "cycle_designation": "LYCEE",
+   "description": "*************",
+   "display_order": 13
+  },
+  {
+   "designation": "Terminale A2",
+   "code": "TA2",
+   "cycle_designation": "LYCEE",
+   "description": "Troisième année littéraire Latin du lycée ",
+   "display_order": 13
+  },
+  {
+   "designation": "Terminale A4",
+   "code": "T A4",
+   "cycle_designation": "LYCEE",
+   "description": "Troisième année littéraire Espagnole/Chinois/Russe/Allemand du lycée",
+   "display_order": 13
+  },
+  {
+   "designation": "Terminale C ",
+   "code": "TC",
+   "cycle_designation": "LYCEE",
+   "description": "Troisième année littéraire Maths du lycée ",
+   "display_order": 13
+  },
+  {
+   "designation": "Terminale D",
+   "code": "TD",
+   "cycle_designation": "LYCEE",
+   "description": "Troisième année scientifique SVT du lycée",
+   "display_order": 13
+  }
+ ],
+ "types_matieres": [
+  {
+   "designation": "Beaux-Arts",
+   "code": "B",
+   "description": "Création artistique"
+  },
+  {
+   "designation": "Générale",
+   "code": "G",
+   "description": "Matière Générale"
+  },
+  {
+   "designation": "Litteraire",
+   "code": "L",
+   "description": "Matière de langue, de littérature"
+  },
+  {
+   "designation": "Scitientifique",
+   "code": "S",
+   "description": "Matière Scientifique"
+  },
+  {
+   "designation": "Sport",
+   "code": "E",
+   "description": "Matière Sportive"
+  },
+  {
+   "designation": "Technique",
+   "code": "T",
+   "description": "Matière technique"
+  }
+ ],
+ "matieres": [
+  {
+   "designation": "Conjugaison",
+   "code": "CONJ_ALPHA",
+   "subject_type_designation": "Générale",
+   "cycle_designation": "ALPHABETISATION",
+   "description": "Cours de Conjugaison en Alphabétisation",
+   "requires_specialist": false
+  },
+  {
+   "designation": "Ecriture",
+   "code": "ECR_ALPHA",
+   "subject_type_designation": "Générale",
+   "cycle_designation": "ALPHABETISATION",
+   "description": "Cours d'Ecriture en Alphabétisation",
+   "requires_specialist": false
+  },
+  {
+   "designation": "Education Civique ",
+   "code": "EDUC_ALPHA",
+   "subject_type_designation": "Générale",
+   "cycle_designation": "ALPHABETISATION",
+   "description": "Cours d'Education Civique en Alphabétisation",
+   "requires_specialist": false
+  },
+  {
+   "designation": "Education Morale",
+   "code": "EDUM_ALPHA",
+   "subject_type_designation": "Générale",
+   "cycle_designation": "ALPHABETISATION",
+   "description": "Cours d'Education Morale en Alphabétisation",
+   "requires_specialist": false
+  },
+  {
+   "designation": "Education Pour la Paix",
+   "code": "EPP_ALPHA",
+   "subject_type_designation": "Générale",
+   "cycle_designation": "ALPHABETISATION",
+   "description": "Cours d'Education pour la Paix en Alphabétisation",
+   "requires_specialist": false
+  },
+  {
+   "designation": "Education Pour la Santé",
+   "code": "EDUS_ALPHA",
+   "subject_type_designation": "Générale",
+   "cycle_designation": "ALPHABETISATION",
+   "description": "Cours d'Education pour la Santé en Alphabétisation",
+   "requires_specialist": false
+  },
+  {
+   "designation": "Education à la vie familiale",
+   "code": "EVF_ALPHA",
+   "subject_type_designation": "Générale",
+   "cycle_designation": "ALPHABETISATION",
+   "description": "Cours d'Education à la vie familiale en Alphabétisation",
+   "requires_specialist": false
+  },
+  {
+   "designation": "Expression Ecrite",
+   "code": "EEC_ALPHA",
+   "subject_type_designation": "Générale",
+   "cycle_designation": "ALPHABETISATION",
+   "description": "Cours d'Expression Ecrite en Alphabétisation",
+   "requires_specialist": false
+  },
+  {
+   "designation": "Expression Orale",
+   "code": "EOR_ALPHA",
+   "subject_type_designation": "Générale",
+   "cycle_designation": "ALPHABETISATION",
+   "description": "Cours d'Expression Orale en Alphabétisation",
+   "requires_specialist": false
+  },
+  {
+   "designation": "Géométrie",
+   "code": "GEO_ALPHA",
+   "subject_type_designation": "Générale",
+   "cycle_designation": "ALPHABETISATION",
+   "description": "Cours de Géométrie en Alphabétisation",
+   "requires_specialist": false
+  },
+  {
+   "designation": "Histoire-Géographie",
+   "code": "HG_ALPHA",
+   "subject_type_designation": "Générale",
+   "cycle_designation": "ALPHABETISATION",
+   "description": "Cours d'Histoire Géographie en Alphabétisation",
+   "requires_specialist": false
+  },
+  {
+   "designation": "Initiation à la Production",
+   "code": "IP_ALPHA",
+   "subject_type_designation": "Générale",
+   "cycle_designation": "ALPHABETISATION",
+   "description": "Cours d'initiation à la Production en Alphabétisation",
+   "requires_specialist": false
+  },
+  {
+   "designation": "Lecture",
+   "code": "LEC_ALPHA",
+   "subject_type_designation": "Générale",
+   "cycle_designation": "ALPHABETISATION",
+   "description": "Cours de Lecture en Alphabétisation",
+   "requires_specialist": false
+  },
+  {
+   "designation": "Mesure",
+   "code": "MES_ALPHA",
+   "subject_type_designation": "Générale",
+   "cycle_designation": "ALPHABETISATION",
+   "description": "Cours de Mesure en Alphabétisation",
+   "requires_specialist": false
+  },
+  {
+   "designation": "Numérisation",
+   "code": "NUM_ALPHA",
+   "subject_type_designation": "Générale",
+   "cycle_designation": "ALPHABETISATION",
+   "description": "Cours de Numération en Alphabétisation",
+   "requires_specialist": false
+  },
+  {
+   "designation": "Opération",
+   "code": "OPE_ALPHA",
+   "subject_type_designation": "Générale",
+   "cycle_designation": "ALPHABETISATION",
+   "description": "Cours d'Opération en Alphabétisation",
+   "requires_specialist": false
+  },
+  {
+   "designation": "Problème",
+   "code": "PROB_ALPHA",
+   "subject_type_designation": "Générale",
+   "cycle_designation": "ALPHABETISATION",
+   "description": "Cours de Problème en Aphabétisation",
+   "requires_specialist": false
+  },
+  {
+   "designation": "S.V.T.",
+   "code": "SVT_ALPHA",
+   "subject_type_designation": "Générale",
+   "cycle_designation": "ALPHABETISATION",
+   "description": "Cours de Science de la Vie et de la Terre en Alphabétisation",
+   "requires_specialist": false
+  },
+  {
+   "designation": "Topologie",
+   "code": "TOP_ALPHA",
+   "subject_type_designation": "Générale",
+   "cycle_designation": "ALPHABETISATION",
+   "description": "Cours de Topologie en Alphabétisation",
+   "requires_specialist": false
+  },
+  {
+   "designation": "Vocabulaire",
+   "code": "VOC_ALPHA",
+   "subject_type_designation": "Générale",
+   "cycle_designation": "ALPHABETISATION",
+   "description": "Cours de vocabulaire en Alphabétisation",
+   "requires_specialist": false
+  },
+  {
+   "designation": "Anglais",
+   "code": "ANG_COL",
+   "subject_type_designation": "Litteraire",
+   "cycle_designation": "COLLEGE",
+   "description": "Cours d'Anglais au collège",
+   "requires_specialist": true
+  },
+  {
+   "designation": "Art-Plastique",
+   "code": "ART-COL",
+   "subject_type_designation": "Beaux-Arts",
+   "cycle_designation": "COLLEGE",
+   "description": "Cours d'Art plastique au Collège",
+   "requires_specialist": true
+  },
+  {
+   "designation": "E.P.S.",
+   "code": "EPS_COL",
+   "subject_type_designation": "Sport",
+   "cycle_designation": "COLLEGE",
+   "description": "Cours d'Education Physique et Sportive du Collège",
+   "requires_specialist": true
+  },
+  {
+   "designation": "Français ",
+   "code": "FR_COL",
+   "subject_type_designation": "Litteraire",
+   "cycle_designation": "COLLEGE",
+   "description": "Cours de Français au collège",
+   "requires_specialist": true
+  },
+  {
+   "designation": "Histoire-Géographie",
+   "code": "HG_COL",
+   "subject_type_designation": "Litteraire",
+   "cycle_designation": "COLLEGE",
+   "description": "Cours d'histoire-Géographie au collège",
+   "requires_specialist": true
+  },
+  {
+   "designation": "Mathématiques",
+   "code": "MATHS_COL",
+   "subject_type_designation": "Scitientifique",
+   "cycle_designation": "COLLEGE",
+   "description": "Cours de Mathématiques au collège",
+   "requires_specialist": true
+  },
+  {
+   "designation": "Musique",
+   "code": "MUS_COL",
+   "subject_type_designation": "Beaux-Arts",
+   "cycle_designation": "COLLEGE",
+   "description": "Cours de Musique au Collège",
+   "requires_specialist": true
+  },
+  {
+   "designation": "Physique-Chimie",
+   "code": "PC_COL",
+   "subject_type_designation": "Scitientifique",
+   "cycle_designation": "COLLEGE",
+   "description": "Cours de Physique-Chimie au collège",
+   "requires_specialist": true
+  },
+  {
+   "designation": "S.V.T.",
+   "code": "SVT_COL",
+   "subject_type_designation": "Scitientifique",
+   "cycle_designation": "COLLEGE",
+   "description": "Cours de Science de la Vie et de la Terre au Collège",
+   "requires_specialist": true
+  },
+  {
+   "designation": "Anglais",
+   "code": "ANG_LYC",
+   "subject_type_designation": "Litteraire",
+   "cycle_designation": "LYCEE",
+   "description": "Cours d'anglais au Lycée",
+   "requires_specialist": true
+  },
+  {
+   "designation": "E.P.S.",
+   "code": "EPS_LYC",
+   "subject_type_designation": "Sport",
+   "cycle_designation": "LYCEE",
+   "description": "Cous d'Education Physique et Sportive au Lycée",
+   "requires_specialist": true
+  },
+  {
+   "designation": "Français ",
+   "code": "FR_LYC",
+   "subject_type_designation": "Litteraire",
+   "cycle_designation": "LYCEE",
+   "description": "Cours de Français au Lycée",
+   "requires_specialist": true
+  },
+  {
+   "designation": "Histoire-Géographie",
+   "code": "HG_LYC",
+   "subject_type_designation": "Litteraire",
+   "cycle_designation": "LYCEE",
+   "description": "Cours d'histoire-Géographie au Lycée",
+   "requires_specialist": true
+  },
+  {
+   "designation": "Langue Vivante Etrangère",
+   "code": "LVE_LYCÉE ",
+   "subject_type_designation": "Litteraire",
+   "cycle_designation": "LYCEE",
+   "description": "Cours de Langue Etrangère au Lycée",
+   "requires_specialist": true
+  },
+  {
+   "designation": "Mathématiques",
+   "code": "MATHS_LYC",
+   "subject_type_designation": "Scitientifique",
+   "cycle_designation": "LYCEE",
+   "description": "Cours de Mathématiques au Lycée",
+   "requires_specialist": true
+  },
+  {
+   "designation": "Philosophie",
+   "code": "PHILO_LYC",
+   "subject_type_designation": "Litteraire",
+   "cycle_designation": "LYCEE",
+   "description": "Cours de Philosophie au Lycée",
+   "requires_specialist": true
+  },
+  {
+   "designation": "Physique-Chimie",
+   "code": "PC_LYC",
+   "subject_type_designation": "Scitientifique",
+   "cycle_designation": "LYCEE",
+   "description": "Cours de Physique-Chimie au Lycée",
+   "requires_specialist": true
+  },
+  {
+   "designation": "S.V.T.",
+   "code": "SVT_LYC",
+   "subject_type_designation": "Scitientifique",
+   "cycle_designation": "LYCEE",
+   "description": "Cours de Science de la Vie et de la Terre au Lycée",
+   "requires_specialist": true
+  },
+  {
+   "designation": "ART-Plastique",
+   "code": "ART_PAI",
+   "subject_type_designation": "Beaux-Arts",
+   "cycle_designation": "POST-ALPHA S1",
+   "description": "Cours de dessin en Post-Alpha S1",
+   "requires_specialist": true
+  },
+  {
+   "designation": "Anglais",
+   "code": "ANG_PAI",
+   "subject_type_designation": "Litteraire",
+   "cycle_designation": "POST-ALPHA S1",
+   "description": "Cours d'Anglais en Post-Alpha S1",
+   "requires_specialist": true
+  },
+  {
+   "designation": "E.P.S.",
+   "code": "EPS_PAI",
+   "subject_type_designation": "Sport",
+   "cycle_designation": "POST-ALPHA S1",
+   "description": "Cours d'Education Physique et Sportive en Post-Alpha S1",
+   "requires_specialist": true
+  },
+  {
+   "designation": "Français",
+   "code": "FR_PAI",
+   "subject_type_designation": "Litteraire",
+   "cycle_designation": "POST-ALPHA S1",
+   "description": "Cours de Français en Post-Alpha S1",
+   "requires_specialist": true
+  },
+  {
+   "designation": "Histoire-Géographie",
+   "code": "HG_PAI",
+   "subject_type_designation": "Litteraire",
+   "cycle_designation": "POST-ALPHA S1",
+   "description": "Cours d'Histoire Géographie en Post-Alpha S1",
+   "requires_specialist": true
+  },
+  {
+   "designation": "Mathématiques",
+   "code": "MATHS_PAI",
+   "subject_type_designation": "Scitientifique",
+   "cycle_designation": "POST-ALPHA S1",
+   "description": "Cours de Mathématiques en Post-Alpha S1",
+   "requires_specialist": true
+  },
+  {
+   "designation": "Musique",
+   "code": "MSQ_PAI",
+   "subject_type_designation": "Beaux-Arts",
+   "cycle_designation": "POST-ALPHA S1",
+   "description": "Cours de Musique en Post-Alpha S1",
+   "requires_specialist": true
+  },
+  {
+   "designation": "S.V.T.",
+   "code": "SVT_PAI",
+   "subject_type_designation": "Scitientifique",
+   "cycle_designation": "POST-ALPHA S1",
+   "description": "Cours de Science de la Vie et de la Terre en Post-Alpha S1",
+   "requires_specialist": true
+  },
+  {
+   "designation": "Sciences Physiques",
+   "code": "SP_PAI",
+   "subject_type_designation": "Scitientifique",
+   "cycle_designation": "POST-ALPHA S1",
+   "description": "Cours de science Physique en Post-Alpha S1",
+   "requires_specialist": true
+  },
+  {
+   "designation": "Accueil",
+   "code": "ACC_PRE",
+   "subject_type_designation": "Générale",
+   "cycle_designation": "PRESCOLAIRE",
+   "description": "Cours d'Accueil au Préscolaire",
+   "requires_specialist": false
+  },
+  {
+   "designation": "Activités sportives et culturelles, grands jeux ",
+   "code": "ASC_PRE",
+   "subject_type_designation": "Générale",
+   "cycle_designation": "PRESCOLAIRE",
+   "description": "Cours de sport et de culture au Préscolaire",
+   "requires_specialist": false
+  },
+  {
+   "designation": "Arts Plastiques",
+   "code": "ART_PRE",
+   "subject_type_designation": "Générale",
+   "cycle_designation": "PRESCOLAIRE",
+   "description": "Cours de dessin au Préscolaire",
+   "requires_specialist": false
+  },
+  {
+   "designation": "Education civique",
+   "code": "EC_PRE",
+   "subject_type_designation": "Générale",
+   "cycle_designation": "PRESCOLAIRE",
+   "description": "Cours d'Education civique au Préscolaire",
+   "requires_specialist": false
+  },
+  {
+   "designation": "Education morale",
+   "code": "EDUM_PRE",
+   "subject_type_designation": "Générale",
+   "cycle_designation": "PRESCOLAIRE",
+   "description": "Cours d'Education Morale au Préscolaire",
+   "requires_specialist": false
+  },
+  {
+   "designation": "Education motrice",
+   "code": "EM_PRE",
+   "subject_type_designation": "Générale",
+   "cycle_designation": "PRESCOLAIRE",
+   "description": "Cours d'Education motrice au Préscolaire",
+   "requires_specialist": false
+  },
+  {
+   "designation": "Education pour la paix",
+   "code": "EPP_PRE",
+   "subject_type_designation": "Générale",
+   "cycle_designation": "PRESCOLAIRE",
+   "description": "Cours d'Education pour la paix au Préscolaire",
+   "requires_specialist": false
+  },
+  {
+   "designation": "Education sensorielle et perceptive",
+   "code": "ESP_PRE",
+   "subject_type_designation": "Générale",
+   "cycle_designation": "PRESCOLAIRE",
+   "description": "Cours d'Education sensorielle et perceptive au Préscolaire",
+   "requires_specialist": false
+  },
+  {
+   "designation": "Initiation scientifique et technologique ",
+   "code": "IST_PRE",
+   "subject_type_designation": "Générale",
+   "cycle_designation": "PRESCOLAIRE",
+   "description": "Cours de science et technologie au Préscolaire",
+   "requires_specialist": false
+  },
+  {
+   "designation": "Langage",
+   "code": "LNG_PRE",
+   "subject_type_designation": "Générale",
+   "cycle_designation": "PRESCOLAIRE",
+   "description": "Cours de langage au Préscolaire",
+   "requires_specialist": false
+  },
+  {
+   "designation": "Musique",
+   "code": "MSQ_PRE",
+   "subject_type_designation": "Générale",
+   "cycle_designation": "PRESCOLAIRE",
+   "description": "Cours de Musique au Préscolaire",
+   "requires_specialist": false
+  },
+  {
+   "designation": "Pré-Lecture et Jeux de Lecture",
+   "code": "LEC_PRE",
+   "subject_type_designation": "Générale",
+   "cycle_designation": "PRESCOLAIRE",
+   "description": "Cours de lecture au Préscolaire",
+   "requires_specialist": false
+  },
+  {
+   "designation": "Pré-Mathématiques",
+   "code": "MATH_PRE",
+   "subject_type_designation": "Générale",
+   "cycle_designation": "PRESCOLAIRE",
+   "description": "Cours de mathématique au Préscolaire",
+   "requires_specialist": false
+  },
+  {
+   "designation": "Pré-écriture",
+   "code": "ECRI_PRE",
+   "subject_type_designation": "Générale",
+   "cycle_designation": "PRESCOLAIRE",
+   "description": "Cours d'écriture au Préscolaire",
+   "requires_specialist": false
+  },
+  {
+   "designation": "Activité d’observation et d’Éveil ",
+   "code": "AOE_PRI",
+   "subject_type_designation": "Générale",
+   "cycle_designation": "PRIMAIRE",
+   "description": "Cours d’observation et d’Éveil au Primaire ",
+   "requires_specialist": false
+  },
+  {
+   "designation": "Art Plastique ",
+   "code": "ART_PRI",
+   "subject_type_designation": "Beaux-Arts",
+   "cycle_designation": "PRIMAIRE",
+   "description": "Cours d’art Plastique au Primaire ",
+   "requires_specialist": false
+  },
+  {
+   "designation": "Dossier",
+   "code": "DOS_PRI",
+   "subject_type_designation": "Générale",
+   "cycle_designation": "PRIMAIRE",
+   "description": "Cours de consultation des documents de référence au Primaire",
+   "requires_specialist": false
+  },
+  {
+   "designation": "Dénombrement",
+   "code": "DEM_PRI",
+   "subject_type_designation": "Générale",
+   "cycle_designation": "PRIMAIRE",
+   "description": "Cours de Dénombrement au Primaire",
+   "requires_specialist": false
+  },
+  {
+   "designation": "E.P.S.",
+   "code": "EPS_PRI",
+   "subject_type_designation": "Sport",
+   "cycle_designation": "PRIMAIRE",
+   "description": "Cours Éducation Physique et Sportive Primaire",
+   "requires_specialist": true
+  },
+  {
+   "designation": "Education Pour La Paix",
+   "code": "EPP_PRI",
+   "subject_type_designation": "Générale",
+   "cycle_designation": "PRIMAIRE",
+   "description": "Cours d'Education Pour la PAIX",
+   "requires_specialist": false
+  },
+  {
+   "designation": "Expression Ecrite",
+   "code": "EEC_PRI",
+   "subject_type_designation": "Générale",
+   "cycle_designation": "PRIMAIRE",
+   "description": "Cours d'Expression Ecrite au Primaire",
+   "requires_specialist": false
+  },
+  {
+   "designation": "Expression Orale",
+   "code": "EOR_PRI",
+   "subject_type_designation": "Générale",
+   "cycle_designation": "PRIMAIRE",
+   "description": "Cours d'Expression Orale au Primaire",
+   "requires_specialist": false
+  },
+  {
+   "designation": "Grammaire",
+   "code": "GRM_PRI",
+   "subject_type_designation": "Générale",
+   "cycle_designation": "PRIMAIRE",
+   "description": "Cours de Grammaire au Primaire",
+   "requires_specialist": false
+  },
+  {
+   "designation": "Géométrie ",
+   "code": "GEO_PRI",
+   "subject_type_designation": "Générale",
+   "cycle_designation": "PRIMAIRE",
+   "description": "Cours de géographie au Primaire ",
+   "requires_specialist": false
+  },
+  {
+   "designation": "Histoire-Géographie",
+   "code": "HG_PRI",
+   "subject_type_designation": "Générale",
+   "cycle_designation": "PRIMAIRE",
+   "description": "Cours d'histoire Géographie au Primaire",
+   "requires_specialist": false
+  },
+  {
+   "designation": "Langage ",
+   "code": "LNG_PRI",
+   "subject_type_designation": "Générale",
+   "cycle_designation": "PRIMAIRE",
+   "description": "Cours de langue au Primaire",
+   "requires_specialist": false
+  },
+  {
+   "designation": "Lecture ",
+   "code": "LEC-PRI",
+   "subject_type_designation": "Générale",
+   "cycle_designation": "PRIMAIRE",
+   "description": "Cours de lecture ",
+   "requires_specialist": false
+  },
+  {
+   "designation": "Mesure ",
+   "code": "ME_PRI",
+   "subject_type_designation": "Générale",
+   "cycle_designation": "PRIMAIRE",
+   "description": "Cours de mesure",
+   "requires_specialist": false
+  },
+  {
+   "designation": "Musique",
+   "code": "MSQ_PRI",
+   "subject_type_designation": "Générale",
+   "cycle_designation": "PRIMAIRE",
+   "description": "Cours de Musique au Primaire",
+   "requires_specialist": false
+  },
+  {
+   "designation": "Numeration",
+   "code": "NUM_PRI",
+   "subject_type_designation": "Générale",
+   "cycle_designation": "PRIMAIRE",
+   "description": "Cours de Numération ",
+   "requires_specialist": false
+  },
+  {
+   "designation": "Opération ",
+   "code": "OP_PRI",
+   "subject_type_designation": "Générale",
+   "cycle_designation": "PRIMAIRE",
+   "description": "Cours des opérations ",
+   "requires_specialist": false
+  },
+  {
+   "designation": "Orthographe Grammaticale ",
+   "code": "ORTG_PRI",
+   "subject_type_designation": "Générale",
+   "cycle_designation": "PRIMAIRE",
+   "description": "Cours d'Orthographe Grammaticale au Primaire",
+   "requires_specialist": false
+  },
+  {
+   "designation": "Orthographe d’usage",
+   "code": "ORT_PRI",
+   "subject_type_designation": "Générale",
+   "cycle_designation": "PRIMAIRE",
+   "description": "Cours de Orthographe d'Usage au Primaire",
+   "requires_specialist": false
+  },
+  {
+   "designation": "Poésie ",
+   "code": "POE_PRI",
+   "subject_type_designation": "Générale",
+   "cycle_designation": "PRIMAIRE",
+   "description": "Cours de poésie ",
+   "requires_specialist": false
+  },
+  {
+   "designation": "Proportionnalité",
+   "code": "PROP_PRI",
+   "subject_type_designation": "Générale",
+   "cycle_designation": "PRIMAIRE",
+   "description": "Cours de Proportionnalité au Primaire",
+   "requires_specialist": false
+  },
+  {
+   "designation": "Résolution des Problèmes ",
+   "code": "RP_PRI",
+   "subject_type_designation": "Générale",
+   "cycle_designation": "PRIMAIRE",
+   "description": "Problème ",
+   "requires_specialist": false
+  },
+  {
+   "designation": "S.V.T.",
+   "code": "SVT_PRI",
+   "subject_type_designation": "Générale",
+   "cycle_designation": "PRIMAIRE",
+   "description": "Cours de Science de la Vie et de la Terre au Primaire",
+   "requires_specialist": false
+  },
+  {
+   "designation": "Sciences Physiques",
+   "code": "SP_PRI",
+   "subject_type_designation": "Générale",
+   "cycle_designation": "PRIMAIRE",
+   "description": "Cours de Sciences Physiques au Primaire",
+   "requires_specialist": false
+  },
+  {
+   "designation": "Structuration du temps et de l’espace ",
+   "code": "STR_PRI",
+   "subject_type_designation": "Générale",
+   "cycle_designation": "PRIMAIRE",
+   "description": "Cours de structure",
+   "requires_specialist": false
+  },
+  {
+   "designation": "Technologie",
+   "code": "TEC_PRI",
+   "subject_type_designation": "Générale",
+   "cycle_designation": "PRIMAIRE",
+   "description": "Cours de Technologie au Primaire",
+   "requires_specialist": false
+  },
+  {
+   "designation": "Écriture ",
+   "code": "ECR_PRI",
+   "subject_type_designation": "Générale",
+   "cycle_designation": "PRIMAIRE",
+   "description": "Cours d’écriture au Primaire",
+   "requires_specialist": false
+  },
+  {
+   "designation": "Éducation Civique",
+   "code": "EC_PRI",
+   "subject_type_designation": "Générale",
+   "cycle_designation": "PRIMAIRE",
+   "description": "Cours d’éducation Civique au Primaire ",
+   "requires_specialist": false
+  },
+  {
+   "designation": "Éducation Morale ",
+   "code": "EDUM_PRI",
+   "subject_type_designation": "Générale",
+   "cycle_designation": "PRIMAIRE",
+   "description": "Cours d’Education morale au Primaire",
+   "requires_specialist": false
+  },
+  {
+   "designation": "Éducation pour la Santé ",
+   "code": "EDUS_PRI",
+   "subject_type_designation": "Générale",
+   "cycle_designation": "PRIMAIRE",
+   "description": "Cours d'Education pour la Santé au Primaire ",
+   "requires_specialist": false
+  },
+  {
+   "designation": "E.P.S.",
+   "code": "EPS_RESCO",
+   "subject_type_designation": "Sport",
+   "cycle_designation": "RESCOLARISATION",
+   "description": "Cours d'Education Physique et Sportive à la Rescolarisation",
+   "requires_specialist": false
+  },
+  {
+   "designation": "Ecriture-Copie",
+   "code": "EC_RESCO",
+   "subject_type_designation": "Générale",
+   "cycle_designation": "RESCOLARISATION",
+   "description": "Cours d'Ecriture-Copie à la Rescolarisation",
+   "requires_specialist": false
+  },
+  {
+   "designation": "Education Civique",
+   "code": "EDUC_RESCO",
+   "subject_type_designation": "Générale",
+   "cycle_designation": "RESCOLARISATION",
+   "description": "Cours d'Education Civique à la Rescolarisation",
+   "requires_specialist": false
+  },
+  {
+   "designation": "Education Morale",
+   "code": "EDUM_RESCO",
+   "subject_type_designation": "Générale",
+   "cycle_designation": "RESCOLARISATION",
+   "description": "Cours d'Education Morale à la Rescolarisation",
+   "requires_specialist": false
+  },
+  {
+   "designation": "Education Pour la Paix",
+   "code": "EPP_RESCO",
+   "subject_type_designation": "Générale",
+   "cycle_designation": "RESCOLARISATION",
+   "description": "Cours d'Education pour la Paix à la Rescolarisation",
+   "requires_specialist": false
+  },
+  {
+   "designation": "Education Pour la Santé",
+   "code": "EDUS_RESCO",
+   "subject_type_designation": "Générale",
+   "cycle_designation": "RESCOLARISATION",
+   "description": "Cours d'Education pour la Santé à la Rescolarisation",
+   "requires_specialist": false
+  },
+  {
+   "designation": "Education à la Vie Familiale",
+   "code": "EVF_RESCO",
+   "subject_type_designation": "Générale",
+   "cycle_designation": "RESCOLARISATION",
+   "description": "Cours d'Education à la Vie Familiale à la Rescolarisation",
+   "requires_specialist": false
+  },
+  {
+   "designation": "Géométrie ",
+   "code": "GEO_RESCO",
+   "subject_type_designation": "Générale",
+   "cycle_designation": "RESCOLARISATION",
+   "description": "Cours de Géométrie à la Rescolarisation",
+   "requires_specialist": false
+  },
+  {
+   "designation": "Histoire-Géographie",
+   "code": "HG_RESCO",
+   "subject_type_designation": "Générale",
+   "cycle_designation": "RESCOLARISATION",
+   "description": "Cours d'Histoire Géographie à la Rescolarisation",
+   "requires_specialist": false
+  },
+  {
+   "designation": "Initiation à la Production",
+   "code": "IP_RESCO",
+   "subject_type_designation": "Générale",
+   "cycle_designation": "RESCOLARISATION",
+   "description": "Cours d'Initiation à la Production",
+   "requires_specialist": false
+  },
+  {
+   "designation": "Langage",
+   "code": "LANG_RESCO",
+   "subject_type_designation": "Générale",
+   "cycle_designation": "RESCOLARISATION",
+   "description": "Cours de Langage à la Rescolarisation",
+   "requires_specialist": false
+  },
+  {
+   "designation": "Lecture",
+   "code": "LEC_RESCO",
+   "subject_type_designation": "Générale",
+   "cycle_designation": "RESCOLARISATION",
+   "description": "Cours de Lecture à la Rescolarisation",
+   "requires_specialist": false
+  },
+  {
+   "designation": "Mesure",
+   "code": "MES_RESCO",
+   "subject_type_designation": "Générale",
+   "cycle_designation": "RESCOLARISATION",
+   "description": "Cours de Mesure à la Rescolarisation",
+   "requires_specialist": false
+  },
+  {
+   "designation": "Numération ",
+   "code": "NUM_RESCO",
+   "subject_type_designation": "Générale",
+   "cycle_designation": "RESCOLARISATION",
+   "description": "Cours de Numération à la Rescolarisation",
+   "requires_specialist": false
+  },
+  {
+   "designation": "Opération",
+   "code": "OP_RESCO",
+   "subject_type_designation": "Générale",
+   "cycle_designation": "RESCOLARISATION",
+   "description": "Cours d'Opération à la Rescolarisation",
+   "requires_specialist": false
+  },
+  {
+   "designation": "Problème",
+   "code": "PBM_RESCO",
+   "subject_type_designation": "Générale",
+   "cycle_designation": "RESCOLARISATION",
+   "description": "Cours de Problème à la Rescolarisation",
+   "requires_specialist": false
+  },
+  {
+   "designation": "S.V.T.",
+   "code": "SVT_RESCO",
+   "subject_type_designation": "Générale",
+   "cycle_designation": "RESCOLARISATION",
+   "description": "Cours de Science de la Vie et de la Terre à la Rescolarisation",
+   "requires_specialist": false
+  },
+  {
+   "designation": "Sciences Physiques",
+   "code": "SP_RESCO",
+   "subject_type_designation": "Générale",
+   "cycle_designation": "RESCOLARISATION",
+   "description": "Cours de Sciences Physiques à la Rescolarisation",
+   "requires_specialist": false
+  },
+  {
+   "designation": "Technologie",
+   "code": "TEC_RESCO",
+   "subject_type_designation": "Générale",
+   "cycle_designation": "RESCOLARISATION",
+   "description": "Cours de Technologie à la Rescolarisation",
+   "requires_specialist": false
+  },
+  {
+   "designation": "Topologie",
+   "code": "TOP_RESCO",
+   "subject_type_designation": "Générale",
+   "cycle_designation": "RESCOLARISATION",
+   "description": "Cours de Topologie à la Rescolarisation",
+   "requires_specialist": false
+  }
+ ],
+ "programmes": [
+  {
+   "niveau_code": "6EME",
+   "matiere_code": "ANG_COL",
+   "cycle_designation": "COLLEGE",
+   "quota_hour": 4,
+   "coef": 2,
+   "id": 216
+  },
+  {
+   "niveau_code": "6EME",
+   "matiere_code": "ART-COL",
+   "cycle_designation": "COLLEGE",
+   "quota_hour": 1,
+   "coef": 2,
+   "id": 221
+  },
+  {
+   "niveau_code": "6EME",
+   "matiere_code": "EPS_COL",
+   "cycle_designation": "COLLEGE",
+   "quota_hour": 2,
+   "coef": 2,
+   "id": 215
+  },
+  {
+   "niveau_code": "6EME",
+   "matiere_code": "FR_COL",
+   "cycle_designation": "COLLEGE",
+   "quota_hour": 8,
+   "coef": 2,
+   "id": 213
+  },
+  {
+   "niveau_code": "6EME",
+   "matiere_code": "HG_COL",
+   "cycle_designation": "COLLEGE",
+   "quota_hour": 3,
+   "coef": 2,
+   "id": 219
+  },
+  {
+   "niveau_code": "6EME",
+   "matiere_code": "MATHS_COL",
+   "cycle_designation": "COLLEGE",
+   "quota_hour": 5,
+   "coef": 2,
+   "id": 217
+  },
+  {
+   "niveau_code": "6EME",
+   "matiere_code": "MUS_COL",
+   "cycle_designation": "COLLEGE",
+   "quota_hour": 1,
+   "coef": 2,
+   "id": 218
+  },
+  {
+   "niveau_code": "6EME",
+   "matiere_code": "PC_COL",
+   "cycle_designation": "COLLEGE",
+   "quota_hour": 2,
+   "coef": 2,
+   "id": 220
+  },
+  {
+   "niveau_code": "6EME",
+   "matiere_code": "SVT_COL",
+   "cycle_designation": "COLLEGE",
+   "quota_hour": 2,
+   "coef": 2,
+   "id": 214
+  },
+  {
+   "niveau_code": "5EME",
+   "matiere_code": "ANG_COL",
+   "cycle_designation": "COLLEGE",
+   "quota_hour": 4,
+   "coef": 2,
+   "id": 225
+  },
+  {
+   "niveau_code": "5EME",
+   "matiere_code": "ART-COL",
+   "cycle_designation": "COLLEGE",
+   "quota_hour": 1,
+   "coef": 2,
+   "id": 230
+  },
+  {
+   "niveau_code": "5EME",
+   "matiere_code": "EPS_COL",
+   "cycle_designation": "COLLEGE",
+   "quota_hour": 2,
+   "coef": 2,
+   "id": 224
+  },
+  {
+   "niveau_code": "5EME",
+   "matiere_code": "FR_COL",
+   "cycle_designation": "COLLEGE",
+   "quota_hour": 7,
+   "coef": 2,
+   "id": 222
+  },
+  {
+   "niveau_code": "5EME",
+   "matiere_code": "HG_COL",
+   "cycle_designation": "COLLEGE",
+   "quota_hour": 3,
+   "coef": 2,
+   "id": 228
+  },
+  {
+   "niveau_code": "5EME",
+   "matiere_code": "MATHS_COL",
+   "cycle_designation": "COLLEGE",
+   "quota_hour": 5,
+   "coef": 2,
+   "id": 226
+  },
+  {
+   "niveau_code": "5EME",
+   "matiere_code": "MUS_COL",
+   "cycle_designation": "COLLEGE",
+   "quota_hour": 1,
+   "coef": 2,
+   "id": 227
+  },
+  {
+   "niveau_code": "5EME",
+   "matiere_code": "PC_COL",
+   "cycle_designation": "COLLEGE",
+   "quota_hour": 2,
+   "coef": 2,
+   "id": 229
+  },
+  {
+   "niveau_code": "5EME",
+   "matiere_code": "SVT_COL",
+   "cycle_designation": "COLLEGE",
+   "quota_hour": 2,
+   "coef": 2,
+   "id": 223
+  },
+  {
+   "niveau_code": "4EME",
+   "matiere_code": "ANG_COL",
+   "cycle_designation": "COLLEGE",
+   "quota_hour": 4,
+   "coef": 2,
+   "id": 167
+  },
+  {
+   "niveau_code": "4EME",
+   "matiere_code": "ART-COL",
+   "cycle_designation": "COLLEGE",
+   "quota_hour": 1,
+   "coef": 2,
+   "id": 173
+  },
+  {
+   "niveau_code": "4EME",
+   "matiere_code": "EPS_COL",
+   "cycle_designation": "COLLEGE",
+   "quota_hour": 2,
+   "coef": 2,
+   "id": 174
+  },
+  {
+   "niveau_code": "4EME",
+   "matiere_code": "FR_COL",
+   "cycle_designation": "COLLEGE",
+   "quota_hour": 6,
+   "coef": 2,
+   "id": 166
+  },
+  {
+   "niveau_code": "4EME",
+   "matiere_code": "HG_COL",
+   "cycle_designation": "COLLEGE",
+   "quota_hour": 3,
+   "coef": 2,
+   "id": 168
+  },
+  {
+   "niveau_code": "4EME",
+   "matiere_code": "MATHS_COL",
+   "cycle_designation": "COLLEGE",
+   "quota_hour": 5,
+   "coef": 2,
+   "id": 169
+  },
+  {
+   "niveau_code": "4EME",
+   "matiere_code": "MUS_COL",
+   "cycle_designation": "COLLEGE",
+   "quota_hour": 1,
+   "coef": 2,
+   "id": 172
+  },
+  {
+   "niveau_code": "4EME",
+   "matiere_code": "PC_COL",
+   "cycle_designation": "COLLEGE",
+   "quota_hour": 4,
+   "coef": 2,
+   "id": 170
+  },
+  {
+   "niveau_code": "4EME",
+   "matiere_code": "SVT_COL",
+   "cycle_designation": "COLLEGE",
+   "quota_hour": 2,
+   "coef": 2,
+   "id": 171
+  },
+  {
+   "niveau_code": "3EME",
+   "matiere_code": "ANG_COL",
+   "cycle_designation": "COLLEGE",
+   "quota_hour": 4,
+   "coef": 2,
+   "id": 179
+  },
+  {
+   "niveau_code": "3EME",
+   "matiere_code": "EPS_COL",
+   "cycle_designation": "COLLEGE",
+   "quota_hour": 2,
+   "coef": 2,
+   "id": 178
+  },
+  {
+   "niveau_code": "3EME",
+   "matiere_code": "FR_COL",
+   "cycle_designation": "COLLEGE",
+   "quota_hour": 6,
+   "coef": 2,
+   "id": 175
+  },
+  {
+   "niveau_code": "3EME",
+   "matiere_code": "HG_COL",
+   "cycle_designation": "COLLEGE",
+   "quota_hour": 3,
+   "coef": 2,
+   "id": 181
+  },
+  {
+   "niveau_code": "3EME",
+   "matiere_code": "MATHS_COL",
+   "cycle_designation": "COLLEGE",
+   "quota_hour": 5,
+   "coef": 4,
+   "id": 180
+  },
+  {
+   "niveau_code": "3EME",
+   "matiere_code": "PC_COL",
+   "cycle_designation": "COLLEGE",
+   "quota_hour": 6,
+   "coef": 2,
+   "id": 177
+  },
+  {
+   "niveau_code": "3EME",
+   "matiere_code": "SVT_COL",
+   "cycle_designation": "COLLEGE",
+   "quota_hour": 2,
+   "coef": 2,
+   "id": 176
+  },
+  {
+   "niveau_code": "1ÈRE A4",
+   "matiere_code": "ANG_LYC",
+   "cycle_designation": "LYCEE",
+   "quota_hour": 4,
+   "coef": 3,
+   "id": 233
+  },
+  {
+   "niveau_code": "1ÈRE A4",
+   "matiere_code": "EPS_LYC",
+   "cycle_designation": "LYCEE",
+   "quota_hour": 2,
+   "coef": 2,
+   "id": 190
+  },
+  {
+   "niveau_code": "1ÈRE A4",
+   "matiere_code": "FR_LYC",
+   "cycle_designation": "LYCEE",
+   "quota_hour": 6,
+   "coef": 4,
+   "id": 231
+  },
+  {
+   "niveau_code": "1ÈRE A4",
+   "matiere_code": "HG_LYC",
+   "cycle_designation": "LYCEE",
+   "quota_hour": 4,
+   "coef": 3,
+   "id": 236
+  },
+  {
+   "niveau_code": "1ÈRE A4",
+   "matiere_code": "LVE_LYCÉE ",
+   "cycle_designation": "LYCEE",
+   "quota_hour": 4,
+   "coef": 3,
+   "id": 234
+  },
+  {
+   "niveau_code": "1ÈRE A4",
+   "matiere_code": "MATHS_LYC",
+   "cycle_designation": "LYCEE",
+   "quota_hour": 2,
+   "coef": 2,
+   "id": 235
+  },
+  {
+   "niveau_code": "1ÈRE A4",
+   "matiere_code": "PHILO_LYC",
+   "cycle_designation": "LYCEE",
+   "quota_hour": 4,
+   "coef": 4,
+   "id": 232
+  },
+  {
+   "niveau_code": "1ÈRE A4",
+   "matiere_code": "SVT_LYC",
+   "cycle_designation": "LYCEE",
+   "quota_hour": 2,
+   "coef": 2,
+   "id": 237
+  },
+  {
+   "niveau_code": "2NDE A4",
+   "matiere_code": "ANG_LYC",
+   "cycle_designation": "LYCEE",
+   "quota_hour": 4,
+   "coef": 4,
+   "id": 184
+  },
+  {
+   "niveau_code": "2NDE A4",
+   "matiere_code": "EPS_LYC",
+   "cycle_designation": "LYCEE",
+   "quota_hour": 2,
+   "coef": 2,
+   "id": 207
+  },
+  {
+   "niveau_code": "2NDE A4",
+   "matiere_code": "FR_LYC",
+   "cycle_designation": "LYCEE",
+   "quota_hour": 5,
+   "coef": 4,
+   "id": 183
+  },
+  {
+   "niveau_code": "2NDE A4",
+   "matiere_code": "HG_LYC",
+   "cycle_designation": "LYCEE",
+   "quota_hour": 4,
+   "coef": 4,
+   "id": 185
+  },
+  {
+   "niveau_code": "2NDE A4",
+   "matiere_code": "LVE_LYCÉE ",
+   "cycle_designation": "LYCEE",
+   "quota_hour": 3,
+   "coef": 3,
+   "id": 187
+  },
+  {
+   "niveau_code": "2NDE A4",
+   "matiere_code": "MATHS_LYC",
+   "cycle_designation": "LYCEE",
+   "quota_hour": 3,
+   "coef": 2,
+   "id": 188
+  },
+  {
+   "niveau_code": "2NDE A4",
+   "matiere_code": "PHILO_LYC",
+   "cycle_designation": "LYCEE",
+   "quota_hour": 2,
+   "coef": 2,
+   "id": 186
+  },
+  {
+   "niveau_code": "2NDE A4",
+   "matiere_code": "PC_LYC",
+   "cycle_designation": "LYCEE",
+   "quota_hour": 2,
+   "coef": 2,
+   "id": 206
+  },
+  {
+   "niveau_code": "2NDE A4",
+   "matiere_code": "SVT_LYC",
+   "cycle_designation": "LYCEE",
+   "quota_hour": 2,
+   "coef": 2,
+   "id": 189
+  },
+  {
+   "niveau_code": "2NDE C",
+   "matiere_code": "ANG_LYC",
+   "cycle_designation": "LYCEE",
+   "quota_hour": 3,
+   "coef": 2,
+   "id": 128
+  },
+  {
+   "niveau_code": "2NDE C",
+   "matiere_code": "EPS_LYC",
+   "cycle_designation": "LYCEE",
+   "quota_hour": 2,
+   "coef": 2,
+   "id": 132
+  },
+  {
+   "niveau_code": "2NDE C",
+   "matiere_code": "FR_LYC",
+   "cycle_designation": "LYCEE",
+   "quota_hour": 2,
+   "coef": 3,
+   "id": 127
+  },
+  {
+   "niveau_code": "2NDE C",
+   "matiere_code": "HG_LYC",
+   "cycle_designation": "LYCEE",
+   "quota_hour": 2,
+   "coef": 2,
+   "id": 129
+  },
+  {
+   "niveau_code": "2NDE C",
+   "matiere_code": "MATHS_LYC",
+   "cycle_designation": "LYCEE",
+   "quota_hour": 6,
+   "coef": 5,
+   "id": 133
+  },
+  {
+   "niveau_code": "2NDE C",
+   "matiere_code": "PHILO_LYC",
+   "cycle_designation": "LYCEE",
+   "quota_hour": 2,
+   "coef": 2,
+   "id": 130
+  },
+  {
+   "niveau_code": "2NDE C",
+   "matiere_code": "PC_LYC",
+   "cycle_designation": "LYCEE",
+   "quota_hour": 6,
+   "coef": 5,
+   "id": 134
+  },
+  {
+   "niveau_code": "2NDE C",
+   "matiere_code": "SVT_LYC",
+   "cycle_designation": "LYCEE",
+   "quota_hour": 4,
+   "coef": 4,
+   "id": 131
+  },
+  {
+   "niveau_code": "1ÈRE A2",
+   "matiere_code": "ANG_LYC",
+   "cycle_designation": "LYCEE",
+   "quota_hour": 4,
+   "coef": 3,
+   "id": 199
+  },
+  {
+   "niveau_code": "1ÈRE A2",
+   "matiere_code": "EPS_LYC",
+   "cycle_designation": "LYCEE",
+   "quota_hour": 2,
+   "coef": 2,
+   "id": 205
+  },
+  {
+   "niveau_code": "1ÈRE A2",
+   "matiere_code": "FR_LYC",
+   "cycle_designation": "LYCEE",
+   "quota_hour": 6,
+   "coef": 4,
+   "id": 143
+  },
+  {
+   "niveau_code": "1ÈRE A2",
+   "matiere_code": "HG_LYC",
+   "cycle_designation": "LYCEE",
+   "quota_hour": 4,
+   "coef": 3,
+   "id": 200
+  },
+  {
+   "niveau_code": "1ÈRE A2",
+   "matiere_code": "LVE_LYCÉE ",
+   "cycle_designation": "LYCEE",
+   "quota_hour": 4,
+   "coef": 4,
+   "id": 203
+  },
+  {
+   "niveau_code": "1ÈRE A2",
+   "matiere_code": "MATHS_LYC",
+   "cycle_designation": "LYCEE",
+   "quota_hour": 2,
+   "coef": 2,
+   "id": 202
+  },
+  {
+   "niveau_code": "1ÈRE A2",
+   "matiere_code": "PHILO_LYC",
+   "cycle_designation": "LYCEE",
+   "quota_hour": 4,
+   "coef": 4,
+   "id": 201
+  },
+  {
+   "niveau_code": "1ÈRE A2",
+   "matiere_code": "SVT_LYC",
+   "cycle_designation": "LYCEE",
+   "quota_hour": 2,
+   "coef": 2,
+   "id": 204
+  },
+  {
+   "niveau_code": "1ÈRE C",
+   "matiere_code": "ANG_LYC",
+   "cycle_designation": "LYCEE",
+   "quota_hour": 3,
+   "coef": 2,
+   "id": 192
+  },
+  {
+   "niveau_code": "1ÈRE C",
+   "matiere_code": "EPS_LYC",
+   "cycle_designation": "LYCEE",
+   "quota_hour": 2,
+   "coef": 2,
+   "id": 198
+  },
+  {
+   "niveau_code": "1ÈRE C",
+   "matiere_code": "FR_LYC",
+   "cycle_designation": "LYCEE",
+   "quota_hour": 3,
+   "coef": 3,
+   "id": 191
+  },
+  {
+   "niveau_code": "1ÈRE C",
+   "matiere_code": "HG_LYC",
+   "cycle_designation": "LYCEE",
+   "quota_hour": 3,
+   "coef": 3,
+   "id": 193
+  },
+  {
+   "niveau_code": "1ÈRE C",
+   "matiere_code": "MATHS_LYC",
+   "cycle_designation": "LYCEE",
+   "quota_hour": 7,
+   "coef": 5,
+   "id": 195
+  },
+  {
+   "niveau_code": "1ÈRE C",
+   "matiere_code": "PHILO_LYC",
+   "cycle_designation": "LYCEE",
+   "quota_hour": 2,
+   "coef": 2,
+   "id": 194
+  },
+  {
+   "niveau_code": "1ÈRE C",
+   "matiere_code": "PC_LYC",
+   "cycle_designation": "LYCEE",
+   "quota_hour": 6,
+   "coef": 5,
+   "id": 196
+  },
+  {
+   "niveau_code": "1ÈRE C",
+   "matiere_code": "SVT_LYC",
+   "cycle_designation": "LYCEE",
+   "quota_hour": 4,
+   "coef": 4,
+   "id": 197
+  },
+  {
+   "niveau_code": "TA2",
+   "matiere_code": "ANG_LYC",
+   "cycle_designation": "LYCEE",
+   "quota_hour": 5,
+   "coef": 4,
+   "id": 245
+  },
+  {
+   "niveau_code": "TA2",
+   "matiere_code": "EPS_LYC",
+   "cycle_designation": "LYCEE",
+   "quota_hour": 2,
+   "coef": 2,
+   "id": 240
+  },
+  {
+   "niveau_code": "TA2",
+   "matiere_code": "FR_LYC",
+   "cycle_designation": "LYCEE",
+   "quota_hour": 6,
+   "coef": 5,
+   "id": 238
+  },
+  {
+   "niveau_code": "TA2",
+   "matiere_code": "HG_LYC",
+   "cycle_designation": "LYCEE",
+   "quota_hour": 5,
+   "coef": 3,
+   "id": 244
+  },
+  {
+   "niveau_code": "TA2",
+   "matiere_code": "LVE_LYCÉE ",
+   "cycle_designation": "LYCEE",
+   "quota_hour": 4,
+   "coef": 3,
+   "id": 246
+  },
+  {
+   "niveau_code": "TA2",
+   "matiere_code": "MATHS_LYC",
+   "cycle_designation": "LYCEE",
+   "quota_hour": 2,
+   "coef": 3,
+   "id": 243
+  },
+  {
+   "niveau_code": "TA2",
+   "matiere_code": "PHILO_LYC",
+   "cycle_designation": "LYCEE",
+   "quota_hour": 6,
+   "coef": 5,
+   "id": 239
+  },
+  {
+   "niveau_code": "TD",
+   "matiere_code": "ANG_LYC",
+   "cycle_designation": "LYCEE",
+   "quota_hour": 2,
+   "coef": 3,
+   "id": 250
+  },
+  {
+   "niveau_code": "TD",
+   "matiere_code": "EPS_LYC",
+   "cycle_designation": "LYCEE",
+   "quota_hour": 2,
+   "coef": 2,
+   "id": 249
+  },
+  {
+   "niveau_code": "TD",
+   "matiere_code": "FR_LYC",
+   "cycle_designation": "LYCEE",
+   "quota_hour": 3,
+   "coef": 1,
+   "id": 247
+  },
+  {
+   "niveau_code": "TD",
+   "matiere_code": "HG_LYC",
+   "cycle_designation": "LYCEE",
+   "quota_hour": 3,
+   "coef": 3,
+   "id": 252
+  },
+  {
+   "niveau_code": "TD",
+   "matiere_code": "MATHS_LYC",
+   "cycle_designation": "LYCEE",
+   "quota_hour": 6,
+   "coef": 4,
+   "id": 251
+  },
+  {
+   "niveau_code": "TD",
+   "matiere_code": "PHILO_LYC",
+   "cycle_designation": "LYCEE",
+   "quota_hour": 3,
+   "coef": 3,
+   "id": 248
+  },
+  {
+   "niveau_code": "TD",
+   "matiere_code": "PC_LYC",
+   "cycle_designation": "LYCEE",
+   "quota_hour": 5,
+   "coef": 5,
+   "id": 254
+  },
+  {
+   "niveau_code": "TD",
+   "matiere_code": "SVT_LYC",
+   "cycle_designation": "LYCEE",
+   "quota_hour": 6,
+   "coef": 5,
+   "id": 253
+  },
+  {
+   "niveau_code": "CP1",
+   "matiere_code": "AOE_PRI",
+   "cycle_designation": "PRIMAIRE",
+   "quota_hour": 1.3,
+   "coef": 1,
+   "id": 209
+  },
+  {
+   "niveau_code": "CP1",
+   "matiere_code": "LNG_PRI",
+   "cycle_designation": "PRIMAIRE",
+   "quota_hour": 6.6,
+   "coef": 1,
+   "id": 212
+  },
+  {
+   "niveau_code": "CP1",
+   "matiere_code": "LEC-PRI",
+   "cycle_designation": "PRIMAIRE",
+   "quota_hour": 10,
+   "coef": 1,
+   "id": 211
+  },
+  {
+   "niveau_code": "CP1",
+   "matiere_code": "POE_PRI",
+   "cycle_designation": "PRIMAIRE",
+   "quota_hour": 0.6,
+   "coef": 1,
+   "id": 210
+  }
+ ],
+ "types_batiments": [
+  {
+   "designation": "Bâtiment Administratif",
+   "id": "5861e1bf-e880-47b1-8d81-a540fefbc4a7"
+  },
+  {
+   "designation": "Bâtiment Pédagogique",
+   "id": "1d16901e-30eb-4085-be89-51ce06c3aca5"
+  },
+  {
+   "designation": "Bâtiment Sanitaire ",
+   "id": "932eb573-95df-4604-83ea-3e2a73a3b2a8"
+  },
+  {
+   "designation": "Bâtiment Sportif",
+   "id": "9b5178a2-ccd1-4bd6-b823-edf7412821a7"
+  }
+ ],
+ "types_salles": [
+  {
+   "designation": "Bibliothèque ",
+   "id": "f22efd40-7beb-45b0-893f-1fea49e035ac"
+  },
+  {
+   "designation": "Bloc sanitaire ",
+   "id": "d6183108-b40c-441a-a3dc-fababb62d6c1"
+  },
+  {
+   "designation": "Bureau administratif ",
+   "id": "5dba9808-d89e-47dd-bea9-aae80ae4c772"
+  },
+  {
+   "designation": "Laboratoire",
+   "id": "e778fc64-9eeb-49b2-b2b3-56c6f9369f70"
+  },
+  {
+   "designation": "Local technique",
+   "id": "15dde879-401f-45b9-a3a4-6c884a4f5876"
+  },
+  {
+   "designation": "Salle Multimédia ",
+   "id": "f3a3dc73-2651-4823-8962-97cbb92b2411"
+  },
+  {
+   "designation": "Salle de classe",
+   "id": "012945b8-1825-4c1e-8d9c-efbfa67fc604"
+  },
+  {
+   "designation": "Salle de sport",
+   "id": "b2bd9939-9b6b-4e3e-b34d-587e3e8a2aa6"
+  },
+  {
+   "designation": "Secrétariat ",
+   "id": "ebda02e3-c466-4a4c-8c01-b58c7dded995"
+  }
+ ],
+ "batiments": [
+  {
+   "designation": "A",
+   "code_batiment": "",
+   "full_code": null,
+   "building_type_designation": null,
+   "school_designation": "NGANGA EDOUARD",
+   "floor_count": 1,
+   "construction_year": 1960,
+   "id": "69b39e27-2c91-4ea8-9f88-af6cdbc9d081"
+  },
+  {
+   "designation": "A",
+   "code_batiment": "A",
+   "full_code": "COL-CBE-A",
+   "building_type_designation": null,
+   "school_designation": "Collège Delta Le Bambino",
+   "floor_count": 1,
+   "construction_year": null,
+   "id": "bc9d0642-62c7-410e-99d7-2ff225c5a6bb"
+  },
+  {
+   "designation": "B",
+   "code_batiment": "",
+   "full_code": null,
+   "building_type_designation": null,
+   "school_designation": "NGANGA EDOUARD",
+   "floor_count": 2,
+   "construction_year": 1975,
+   "id": "2cdf0824-8d7e-46cc-86ce-1570d45ca84a"
+  },
+  {
+   "designation": "Bâtiment A",
+   "code_batiment": "BTIMENTA",
+   "full_code": "COL-FCH-BTIMENTA",
+   "building_type_designation": null,
+   "school_designation": "COL-FCH",
+   "floor_count": 3,
+   "construction_year": 2022,
+   "id": "f7502cd7-5207-4460-a835-62ba54993eba"
+  },
+  {
+   "designation": "Bâtiment B",
+   "code_batiment": "BTIMENTB",
+   "full_code": "COL-FCH-BTIMENTB",
+   "building_type_designation": null,
+   "school_designation": "COL-FCH",
+   "floor_count": 3,
+   "construction_year": 2022,
+   "id": "fed5f1ef-5975-45f2-8f84-a26d56ae0bbb"
+  },
+  {
+   "designation": "Bâtiment C",
+   "code_batiment": "BTIMENTC",
+   "full_code": "COL-FCH-BTIMENTC",
+   "building_type_designation": null,
+   "school_designation": "COL-FCH",
+   "floor_count": 3,
+   "construction_year": 2022,
+   "id": "2fe1ec9d-52a0-431a-88df-8a2f212a81e7"
+  },
+  {
+   "designation": "D",
+   "code_batiment": "MST-D",
+   "full_code": null,
+   "building_type_designation": null,
+   "school_designation": "MOUSSA ETAT",
+   "floor_count": 1,
+   "construction_year": 2025,
+   "id": "7c445c4d-210d-48bb-a47a-2b3390f3cda1"
+  },
+  {
+   "designation": "D",
+   "code_batiment": "CBE-D",
+   "full_code": null,
+   "building_type_designation": null,
+   "school_designation": "DELTA BAMBINO",
+   "floor_count": 1,
+   "construction_year": 1980,
+   "id": "b8b8ba65-7e77-465c-aa66-b5e9905abf74"
+  },
+  {
+   "designation": "E",
+   "code_batiment": "NGE-E",
+   "full_code": null,
+   "building_type_designation": null,
+   "school_designation": "NGANGA EDOUARD",
+   "floor_count": 2,
+   "construction_year": 1980,
+   "id": "12e9a403-4963-4975-a0b8-390146d0ba87"
+  },
+  {
+   "designation": "E",
+   "code_batiment": "CBE-E",
+   "full_code": null,
+   "building_type_designation": null,
+   "school_designation": "DELTA BAMBINO",
+   "floor_count": 1,
+   "construction_year": null,
+   "id": "73a8b83f-6c85-4a79-8d95-4e21ece954d9"
+  },
+  {
+   "designation": "Ffgg",
+   "code_batiment": "FFGG",
+   "full_code": "ALP-QQY-FFGG",
+   "building_type_designation": null,
+   "school_designation": "ALP-QQY",
+   "floor_count": 8,
+   "construction_year": null,
+   "id": "20bd98b0-7fff-4314-b2ac-3eca81b737f4"
+  }
+ ],
+ "salles": [
+  {
+   "designation": "01",
+   "code_room": "NGE-B-01",
+   "room_type_designation": "Salle de classe",
+   "building_designation": "B",
+   "school_designation": "NGANGA EDOUARD",
+   "floor_number": 1,
+   "capacity": 40,
+   "id": "64e868d5-ca98-4cc1-be2c-b53ede2a9d1e"
+  },
+  {
+   "designation": "02",
+   "code_room": "NGE-B-02",
+   "room_type_designation": "Salle de classe",
+   "building_designation": "B",
+   "school_designation": "NGANGA EDOUARD",
+   "floor_number": 1,
+   "capacity": 40,
+   "id": "0e3d1d68-de5e-4c27-9ef0-3dde09f289b7"
+  },
+  {
+   "designation": "1",
+   "code_room": "COL-CBE-C-1",
+   "room_type_designation": "Salle de classe",
+   "building_designation": "C",
+   "school_designation": "Collège Delta Le Bambino",
+   "floor_number": 1,
+   "capacity": 45,
+   "id": "71391c19-073e-469d-ac93-8bea1cbd5e58"
+  },
+  {
+   "designation": "A1",
+   "code_room": "MST-A-A1",
+   "room_type_designation": "Salle de classe",
+   "building_designation": "A",
+   "school_designation": "MOUSSA ETAT",
+   "floor_number": 1,
+   "capacity": 55,
+   "id": "275d7a14-a025-41a3-a40f-160caf7d6a67"
+  },
+  {
+   "designation": "A1",
+   "code_room": "COL-FCH-BÂTIMENTA-A1",
+   "room_type_designation": "Salle de classe",
+   "building_designation": "Bâtiment A",
+   "school_designation": "COL-FCH",
+   "floor_number": 1,
+   "capacity": 90,
+   "id": "f3ae69d9-c0ef-4950-8586-7a587e0e9a20"
+  },
+  {
+   "designation": "A2",
+   "code_room": "MST-A-A2",
+   "room_type_designation": "Salle de classe",
+   "building_designation": "A",
+   "school_designation": "MOUSSA ETAT",
+   "floor_number": 1,
+   "capacity": 30,
+   "id": "2c4b8247-8071-4eeb-9be0-f3c44dbdb532"
+  },
+  {
+   "designation": "A2",
+   "code_room": "COL-FCH-BÂTIMENTA-A2",
+   "room_type_designation": "Salle de classe",
+   "building_designation": "Bâtiment A",
+   "school_designation": "COL-FCH",
+   "floor_number": 1,
+   "capacity": 90,
+   "id": "85b721af-707a-4e32-b4ae-ae30b7a79602"
+  },
+  {
+   "designation": "A3",
+   "code_room": "MST-A-A3",
+   "room_type_designation": "Salle de classe",
+   "building_designation": "A",
+   "school_designation": "MOUSSA ETAT",
+   "floor_number": 1,
+   "capacity": 30,
+   "id": "3e0f7174-e3f1-4a7e-8841-b2702d1a19b4"
+  },
+  {
+   "designation": "A3",
+   "code_room": "COL-FCH-BÂTIMENTA-A3",
+   "room_type_designation": "Salle de classe",
+   "building_designation": "Bâtiment A",
+   "school_designation": "COL-FCH",
+   "floor_number": 1,
+   "capacity": 90,
+   "id": "6377cf4f-b6c1-4bfe-a0b5-6814aaa4c5a6"
+  },
+  {
+   "designation": "A4",
+   "code_room": "COL-FCH-BÂTIMENTA-A4",
+   "room_type_designation": "Salle de classe",
+   "building_designation": "Bâtiment A",
+   "school_designation": "COL-FCH",
+   "floor_number": 1,
+   "capacity": 90,
+   "id": "9e52dbfe-bd2a-4296-871c-5f99ed123914"
+  },
+  {
+   "designation": "A5",
+   "code_room": "COL-FCH-BÂTIMENTA-A5",
+   "room_type_designation": "Salle de classe",
+   "building_designation": "Bâtiment A",
+   "school_designation": "COL-FCH",
+   "floor_number": 1,
+   "capacity": 90,
+   "id": "baa1a155-c1cf-455f-ac1a-03b961122e05"
+  },
+  {
+   "designation": "A6",
+   "code_room": "COL-FCH-BÂTIMENTA-A6",
+   "room_type_designation": "Salle de classe",
+   "building_designation": "Bâtiment A",
+   "school_designation": "COL-FCH",
+   "floor_number": 1,
+   "capacity": 90,
+   "id": "58f43d3b-7985-4ead-a370-b9e7df4600d3"
+  },
+  {
+   "designation": "A7",
+   "code_room": "COL-FCH-BÂTIMENTA-A7",
+   "room_type_designation": "Salle de classe",
+   "building_designation": "Bâtiment A",
+   "school_designation": "COL-FCH",
+   "floor_number": 1,
+   "capacity": 90,
+   "id": "c7b56bd5-a180-478e-8cf3-f5c3dc76ff4b"
+  },
+  {
+   "designation": "B1",
+   "code_room": "COL-FCH-BÂTIMENTB-B1",
+   "room_type_designation": "Salle de classe",
+   "building_designation": "Bâtiment B",
+   "school_designation": "COL-FCH",
+   "floor_number": 2,
+   "capacity": 90,
+   "id": "c51735ed-03de-44a3-b010-aeb67d42203d"
+  },
+  {
+   "designation": "B2",
+   "code_room": "COL-FCH-BÂTIMENTB-B2",
+   "room_type_designation": "Salle de classe",
+   "building_designation": "Bâtiment B",
+   "school_designation": "COL-FCH",
+   "floor_number": 2,
+   "capacity": 90,
+   "id": "83ee14b9-e0e0-4468-81fc-4e75e95f0574"
+  },
+  {
+   "designation": "B3",
+   "code_room": "COL-FCH-BÂTIMENTB-B3",
+   "room_type_designation": "Salle de classe",
+   "building_designation": "Bâtiment B",
+   "school_designation": "COL-FCH",
+   "floor_number": 2,
+   "capacity": 90,
+   "id": "d22a7581-22f5-4cf0-a412-2e2aa68897a5"
+  },
+  {
+   "designation": "B4",
+   "code_room": "COL-FCH-BÂTIMENTB-B4",
+   "room_type_designation": "Salle de classe",
+   "building_designation": "Bâtiment B",
+   "school_designation": "COL-FCH",
+   "floor_number": 2,
+   "capacity": 90,
+   "id": "5391d23b-ab55-4c9a-81bb-eceb0532f1e6"
+  },
+  {
+   "designation": "B5",
+   "code_room": "COL-FCH-BÂTIMENTB-B5",
+   "room_type_designation": "Salle de classe",
+   "building_designation": "Bâtiment B",
+   "school_designation": "COL-FCH",
+   "floor_number": 2,
+   "capacity": 90,
+   "id": "f5736066-44ef-4ae8-9222-fb1b10b11abf"
+  },
+  {
+   "designation": "B6",
+   "code_room": "COL-FCH-BÂTIMENTB-B6",
+   "room_type_designation": "Salle de classe",
+   "building_designation": "Bâtiment B",
+   "school_designation": "COL-FCH",
+   "floor_number": 2,
+   "capacity": 90,
+   "id": "c7c23012-a7c5-4fd0-8828-2cb0e06809b4"
+  },
+  {
+   "designation": "B7",
+   "code_room": "COL-FCH-BÂTIMENTB-B7",
+   "room_type_designation": "Salle de classe",
+   "building_designation": "Bâtiment B",
+   "school_designation": "COL-FCH",
+   "floor_number": 2,
+   "capacity": 90,
+   "id": "667ab253-4a7d-45fd-ae37-c641b53fbc8e"
+  },
+  {
+   "designation": "C1",
+   "code_room": "COL-FCH-BÂTIMENTC-C1",
+   "room_type_designation": "Salle de classe",
+   "building_designation": "Bâtiment C",
+   "school_designation": "COL-FCH",
+   "floor_number": 3,
+   "capacity": 90,
+   "id": "6124b0d8-9ed3-4fb9-8ab8-2158d3502f94"
+  },
+  {
+   "designation": "C2",
+   "code_room": "COL-FCH-BÂTIMENTC-C2",
+   "room_type_designation": "Salle de classe",
+   "building_designation": "Bâtiment C",
+   "school_designation": "COL-FCH",
+   "floor_number": 3,
+   "capacity": 90,
+   "id": "af8a3b37-81d1-40a9-86f0-f0c1b871ae4e"
+  },
+  {
+   "designation": "C3",
+   "code_room": "COL-FCH-BÂTIMENTC-C3",
+   "room_type_designation": "Salle de classe",
+   "building_designation": "Bâtiment C",
+   "school_designation": "COL-FCH",
+   "floor_number": 3,
+   "capacity": 90,
+   "id": "8e7fe06f-822b-494c-b837-2ed68b0ea323"
+  },
+  {
+   "designation": "C4",
+   "code_room": "COL-FCH-BÂTIMENTC-C4",
+   "room_type_designation": "Salle de classe",
+   "building_designation": "Bâtiment C",
+   "school_designation": "COL-FCH",
+   "floor_number": 3,
+   "capacity": 90,
+   "id": "958f7d28-2f43-462f-ac85-78e70a9bb387"
+  },
+  {
+   "designation": "C5",
+   "code_room": "COL-FCH-BÂTIMENTC-C5",
+   "room_type_designation": "Salle de classe",
+   "building_designation": "Bâtiment C",
+   "school_designation": "COL-FCH",
+   "floor_number": 3,
+   "capacity": 90,
+   "id": "7f337313-a665-4fcd-9c9e-f380f9030dab"
+  },
+  {
+   "designation": "C6",
+   "code_room": "COL-FCH-BÂTIMENTC-C6",
+   "room_type_designation": "Salle Multimédia ",
+   "building_designation": "Bâtiment C",
+   "school_designation": "COL-FCH",
+   "floor_number": 3,
+   "capacity": 20,
+   "id": "21f8ebb8-3d65-41bf-b5ae-0c38078461c1"
+  },
+  {
+   "designation": "C7",
+   "code_room": "COL-FCH-BÂTIMENTC-C7",
+   "room_type_designation": "Bibliothèque ",
+   "building_designation": "Bâtiment C",
+   "school_designation": "COL-FCH",
+   "floor_number": 3,
+   "capacity": 90,
+   "id": "cb2e9dfa-1185-435d-be77-ed099f02ee64"
+  },
+  {
+   "designation": "Cfg",
+   "code_room": "ALP-QQY-FFGG-CFG",
+   "room_type_designation": "Salle de classe",
+   "building_designation": "Ffgg",
+   "school_designation": "ALP-QQY",
+   "floor_number": 2,
+   "capacity": 85,
+   "id": "aebf6b2e-a3f4-4936-a4bf-e2e104674430"
+  },
+  {
+   "designation": "SE",
+   "code_room": "MST-D-SE",
+   "room_type_designation": "Salle de classe",
+   "building_designation": "D",
+   "school_designation": "MOUSSA ETAT",
+   "floor_number": 1,
+   "capacity": 50,
+   "id": "5f81bf68-50d2-4ec4-87cb-a36b8ab1869b"
+  }
+ ],
+ "classes": [
+  {
+   "designation": "6EME-E",
+   "code_classe": "COL-CEP-CL7-6EME-E",
+   "niveau_code": "6EME",
+   "school_code": "COL-CEP",
+   "id": "15f72e8954d2",
+   "created_at": "2026-06-17T06:32:30.168476Z",
+   "updated_at": "2026-06-17T06:32:30.168476Z"
+  },
+  {
+   "designation": "6EME-1",
+   "code_classe": "COL-FCH-CL7-6EME-1",
+   "niveau_code": "6EME",
+   "school_code": "COL-FCH",
+   "id": "c5acdb76d356",
+   "created_at": "2026-10-17T22:44:46.210349Z",
+   "updated_at": "2026-10-17T22:44:46.210349Z"
+  },
+  {
+   "designation": "6EME-2",
+   "code_classe": "COL-FCH-CL7-6EME-2",
+   "niveau_code": "6EME",
+   "school_code": "COL-FCH",
+   "id": "0d24260e0e95",
+   "created_at": "2026-10-17T23:39:11.635436Z",
+   "updated_at": "2026-10-17T23:39:11.635436Z"
+  },
+  {
+   "designation": "5EME-1",
+   "code_classe": "COL-FCH-CL8-5EME-1",
+   "niveau_code": "5EME",
+   "school_code": "COL-FCH",
+   "id": "a4fd250c373e",
+   "created_at": "2026-10-17T23:23:45.741325Z",
+   "updated_at": "2026-10-17T23:23:45.741325Z"
+  },
+  {
+   "designation": "5EME-2",
+   "code_classe": "COL-FCH-CL8-5EME-2",
+   "niveau_code": "5EME",
+   "school_code": "COL-FCH",
+   "id": "77d1122dc9d4",
+   "created_at": "2026-10-18T22:23:25.835636Z",
+   "updated_at": "2026-10-18T22:23:25.835636Z"
+  },
+  {
+   "designation": "TA2-4",
+   "code_classe": "LYC-CTL-CL13-TA2-4",
+   "niveau_code": "TA2",
+   "school_code": "LYC-CTL",
+   "id": "46126bb8d91e",
+   "created_at": "2026-08-22T08:12:18.125459Z",
+   "updated_at": "2026-08-22T08:12:18.125459Z"
+  },
+  {
+   "designation": "6EME-A",
+   "code_classe": "MST-CL7-6EME-A",
+   "niveau_code": "6EME",
+   "school_code": "MST",
+   "id": "d20d1d144f21",
+   "created_at": "2025-11-05T20:19:15Z",
+   "updated_at": "2025-11-05T20:19:15Z"
+  },
+  {
+   "designation": "5EME-C",
+   "code_classe": "MST-CL8-5EME-C",
+   "niveau_code": "5EME",
+   "school_code": "MST",
+   "id": "ed4cc69e1e32",
+   "created_at": "2025-11-08T00:46:58Z",
+   "updated_at": "2025-11-08T00:46:58Z"
+  },
+  {
+   "designation": "1ERE-A",
+   "code_classe": "NGE-CL12-1ERE-A",
+   "niveau_code": "1ERE",
+   "school_code": "NGE",
+   "id": "a7e74540ac8e",
+   "created_at": "2025-11-05T17:02:01Z",
+   "updated_at": "2025-11-05T17:02:01Z"
+  },
+  {
+   "designation": "1ERE-C",
+   "code_classe": "NGE-CL12-1ERE-C",
+   "niveau_code": "1ERE",
+   "school_code": "NGE",
+   "id": "c76f7c40b674",
+   "created_at": "2025-11-05T17:02:41Z",
+   "updated_at": "2025-11-05T17:20:00Z"
+  },
+  {
+   "designation": "TA4-2",
+   "code_classe": "NGE-CL13-TA4-2",
+   "niveau_code": "TA4",
+   "school_code": "NGE",
+   "id": "0b3051ac5098",
+   "created_at": "2025-11-08T01:08:46Z",
+   "updated_at": "2025-11-08T01:08:46Z"
+  },
+  {
+   "designation": "CP1-A",
+   "code_classe": "PRI-PUO-CL1-CP1-A",
+   "niveau_code": "CP1",
+   "school_code": "PRI-PUO",
+   "id": "979d6cae6612",
+   "created_at": "2026-08-01T07:06:11.847248Z",
+   "updated_at": "2026-08-01T07:06:11.847248Z"
+  }
+ ],
+ "types_organisations": [
+  {
+   "code": "MIN",
+   "designation": "Ministère",
+   "rang": 0,
+   "poste_responsable_id": 27,
+   "perimetre_operationnel_id": 12,
+   "poste_responsable": "Ministre"
+  },
+  {
+   "code": "CAB",
+   "designation": "Cabinet",
+   "rang": 1,
+   "poste_responsable_id": 28,
+   "perimetre_operationnel_id": 12,
+   "poste_responsable": "Directeur de Cabinet"
+  },
+  {
+   "code": "DG",
+   "designation": "Direction Générale",
+   "rang": 2,
+   "poste_responsable_id": 30,
+   "perimetre_operationnel_id": 7,
+   "poste_responsable": "Directeur Général"
+  },
+  {
+   "code": "IG",
+   "designation": "Inspection Générale",
+   "rang": 2,
+   "poste_responsable_id": 33,
+   "perimetre_operationnel_id": 7,
+   "poste_responsable": "Inspecteur Général"
+  },
+  {
+   "code": "RN",
+   "designation": "Représentation Nationale",
+   "rang": 2,
+   "poste_responsable_id": 25,
+   "perimetre_operationnel_id": 13,
+   "poste_responsable": "Correspondant National"
+  },
+  {
+   "code": "DC",
+   "designation": "Direction Centrale",
+   "rang": 3,
+   "poste_responsable_id": 31,
+   "perimetre_operationnel_id": 7,
+   "poste_responsable": "Directeur central"
+  },
+  {
+   "code": "DD",
+   "designation": "Direction Départementale",
+   "rang": 4,
+   "poste_responsable_id": 36,
+   "perimetre_operationnel_id": 8,
+   "poste_responsable": "Directeur Départemental "
+  },
+  {
+   "code": "SD",
+   "designation": "Secrétariat de Direction Générale",
+   "rang": 4,
+   "poste_responsable_id": 35,
+   "perimetre_operationnel_id": 7,
+   "poste_responsable": "Chef de Service central"
+  },
+  {
+   "code": "S/CE DC",
+   "designation": "Service de Direction Centrale",
+   "rang": 4,
+   "poste_responsable_id": 35,
+   "perimetre_operationnel_id": 7,
+   "poste_responsable": "Chef de Service central"
+  },
+  {
+   "code": "INS",
+   "designation": "Inspection",
+   "rang": 5,
+   "poste_responsable_id": 42,
+   "perimetre_operationnel_id": 8,
+   "poste_responsable": "Inspecteur coordonnateur"
+  },
+  {
+   "code": "SRV-D",
+   "designation": "Service de Direction Départementale",
+   "rang": 5,
+   "poste_responsable_id": 40,
+   "perimetre_operationnel_id": 8,
+   "poste_responsable": "Chef de Service départemental "
+  },
+  {
+   "code": "ALP",
+   "designation": "Alphabétisation",
+   "rang": 6,
+   "poste_responsable_id": null,
+   "perimetre_operationnel_id": 11,
+   "poste_responsable": null
+  },
+  {
+   "code": "COL",
+   "designation": "Collège",
+   "rang": 6,
+   "poste_responsable_id": 41,
+   "perimetre_operationnel_id": 11,
+   "poste_responsable": "Chef d'Etablissement "
+  },
+  {
+   "code": "LYC",
+   "designation": "Lycée",
+   "rang": 6,
+   "poste_responsable_id": 41,
+   "perimetre_operationnel_id": 11,
+   "poste_responsable": "Chef d'Etablissement "
+  },
+  {
+   "code": "PRI",
+   "designation": "Primaire",
+   "rang": 6,
+   "poste_responsable_id": 41,
+   "perimetre_operationnel_id": 11,
+   "poste_responsable": "Chef d'Etablissement "
+  },
+  {
+   "code": "PRE",
+   "designation": "Préscolaire",
+   "rang": 6,
+   "poste_responsable_id": 41,
+   "perimetre_operationnel_id": 11,
+   "poste_responsable": "Chef d'Etablissement "
+  },
+  {
+   "code": "SRV-I",
+   "designation": "Service d'Inspection",
+   "rang": 6,
+   "poste_responsable_id": 42,
+   "perimetre_operationnel_id": 8,
+   "poste_responsable": "Inspecteur coordonnateur"
+  }
+ ],
+ "organisations": [
+  {
+   "type_organisation": "DG",
+   "designation": "Institut National de Recherche et d'Action Pédagogiques",
+   "rattachement": null,
+   "niveau": 0,
+   "perimetre_operationnel_id": 7,
+   "department_name": null,
+   "code": "INRAP",
+   "code_saisi": "INRAP",
+   "source_code": null
+  },
+  {
+   "type_organisation": "MIN",
+   "designation": "Ministère de l'Enseignement Primmaire, Secondaire et de l'Alphabetisation",
+   "rattachement": null,
+   "niveau": 0,
+   "perimetre_operationnel_id": null,
+   "department_name": null,
+   "code": "MEPSA",
+   "code_saisi": "MEPSA",
+   "source_code": null
+  },
+  {
+   "type_organisation": "CAB",
+   "designation": "Cabinet du Ministre",
+   "rattachement": "MEPSA",
+   "niveau": 1,
+   "perimetre_operationnel_id": null,
+   "department_name": null,
+   "code": "MEPSA-CAB",
+   "code_saisi": "CAB",
+   "source_code": "MEPSA"
+  },
+  {
+   "type_organisation": "DG",
+   "designation": "Direction Générale de l'Enseignement Secondaire",
+   "rattachement": "MEPSA",
+   "niveau": 1,
+   "perimetre_operationnel_id": null,
+   "department_name": null,
+   "code": "DGES",
+   "code_saisi": "DGES",
+   "source_code": null
+  },
+  {
+   "type_organisation": "RN",
+   "designation": "Antenne Nationale PME",
+   "rattachement": null,
+   "niveau": 2,
+   "perimetre_operationnel_id": 13,
+   "department_name": null,
+   "code": "APME",
+   "code_saisi": "APME",
+   "source_code": null
+  },
+  {
+   "type_organisation": null,
+   "designation": "Antenne Nationale de la CONFEMEN",
+   "rattachement": null,
+   "niveau": 2,
+   "perimetre_operationnel_id": 13,
+   "department_name": "BRAZZAVILLE",
+   "code": "ACONFEMEN",
+   "code_saisi": "ACONFEMEN",
+   "source_code": null
+  },
+  {
+   "type_organisation": "DG",
+   "designation": "Direction Générale des Ressources Humaines et de l'Administration Scolaire",
+   "rattachement": "MEPSA",
+   "niveau": 2,
+   "perimetre_operationnel_id": null,
+   "department_name": null,
+   "code": "DGRHAS",
+   "code_saisi": "DGRHAS",
+   "source_code": null
+  },
+  {
+   "type_organisation": "DC",
+   "designation": "Direction de Recrutement et du Suivi des carrières",
+   "rattachement": "DGRHAS",
+   "niveau": 3,
+   "perimetre_operationnel_id": null,
+   "department_name": null,
+   "code": "DGRHAS-DRSC",
+   "code_saisi": "DRSC",
+   "source_code": "DGRHAS"
+  },
+  {
+   "type_organisation": "DC",
+   "designation": "Direction de la Formation Continue",
+   "rattachement": "DGRHAS",
+   "niveau": 3,
+   "perimetre_operationnel_id": null,
+   "department_name": null,
+   "code": "DGRHAS-DFC",
+   "code_saisi": "DFC",
+   "source_code": "DGRHAS"
+  },
+  {
+   "type_organisation": "DD",
+   "designation": "DDEPPSA de Brazzaville.",
+   "rattachement": null,
+   "niveau": 4,
+   "perimetre_operationnel_id": null,
+   "department_name": null,
+   "code": "DDEPPSA-BZV",
+   "code_saisi": "DDEPPSA-BZV",
+   "source_code": null
+  },
+  {
+   "type_organisation": null,
+   "designation": "Service Informatique P/N",
+   "rattachement": "DDEPPSA-BZV",
+   "niveau": 4,
+   "perimetre_operationnel_id": null,
+   "department_name": null,
+   "code": "DDEPPSA-BZV-SIPN",
+   "code_saisi": "SIPN",
+   "source_code": "DDEPPSA-BZV"
+  },
+  {
+   "type_organisation": "SD",
+   "designation": "Secretariat de Direction",
+   "rattachement": "DGRHAS",
+   "niveau": 4,
+   "perimetre_operationnel_id": null,
+   "department_name": "BRAZZAVILLE",
+   "code": "DGRHAS-SD",
+   "code_saisi": "SD",
+   "source_code": "DGRHAS"
+  },
+  {
+   "type_organisation": null,
+   "designation": "Service des Recrutements",
+   "rattachement": "DGRHAS-DRSC",
+   "niveau": 4,
+   "perimetre_operationnel_id": null,
+   "department_name": null,
+   "code": "DRSC-SR",
+   "code_saisi": "SR",
+   "source_code": "DGRHAS-DRSC"
+  },
+  {
+   "type_organisation": null,
+   "designation": "Service du suivi des Carrières",
+   "rattachement": "DGRHAS-DRSC",
+   "niveau": 5,
+   "perimetre_operationnel_id": null,
+   "department_name": null,
+   "code": "DRSC-SSC",
+   "code_saisi": "SSC",
+   "source_code": "DGRHAS-DRSC"
+  },
+  {
+   "type_organisation": null,
+   "designation": "Bureau des Recrutements et du Suivi",
+   "rattachement": "DRSC-SR",
+   "niveau": 5,
+   "perimetre_operationnel_id": null,
+   "department_name": null,
+   "code": "DRSC-BRS",
+   "code_saisi": "BRS",
+   "source_code": "DGRHAS-DRSC"
+  },
+  {
+   "type_organisation": null,
+   "designation": "Bureau du Suivi des Carrières et des Instituteurs 1",
+   "rattachement": "DRSC-SSC",
+   "niveau": 5,
+   "perimetre_operationnel_id": null,
+   "department_name": null,
+   "code": "DRSC-BCSI1",
+   "code_saisi": "BCSI1",
+   "source_code": "DGRHAS-DRSC"
+  }
+ ],
+ "perimetres": [
+  {
+   "designation": "Organismes sous tutelle",
+   "require_departement": false,
+   "require_inspection": false,
+   "require_categorie": false,
+   "id": 13
+  },
+  {
+   "designation": "Structures Centrales",
+   "require_departement": false,
+   "require_inspection": false,
+   "require_categorie": false,
+   "id": 7
+  },
+  {
+   "designation": "Structures Départementales",
+   "require_departement": true,
+   "require_inspection": false,
+   "require_categorie": false,
+   "id": 8
+  },
+  {
+   "designation": "Structures Politiques",
+   "require_departement": false,
+   "require_inspection": false,
+   "require_categorie": false,
+   "id": 12
+  },
+  {
+   "designation": "Structures Scolaires",
+   "require_departement": true,
+   "require_inspection": true,
+   "require_categorie": true,
+   "id": 11
+  }
+ ],
+ "postes": [
+  {
+   "designation": "Ministre",
+   "rang": 0,
+   "perimetre_operationnel_id": 12,
+   "type_personnel_id": 3,
+   "id": 27
+  },
+  {
+   "designation": "Directeur de Cabinet",
+   "rang": 1,
+   "perimetre_operationnel_id": 12,
+   "type_personnel_id": 3,
+   "id": 28
+  },
+  {
+   "designation": "Conseiller",
+   "rang": 2,
+   "perimetre_operationnel_id": 12,
+   "type_personnel_id": 2,
+   "id": 29
+  },
+  {
+   "designation": "Correspondant National",
+   "rang": 2,
+   "perimetre_operationnel_id": 13,
+   "type_personnel_id": 2,
+   "id": 25
+  },
+  {
+   "designation": "Directeur Général",
+   "rang": 2,
+   "perimetre_operationnel_id": 7,
+   "type_personnel_id": 2,
+   "id": 30
+  },
+  {
+   "designation": "Inspecteur Général",
+   "rang": 2,
+   "perimetre_operationnel_id": 7,
+   "type_personnel_id": 2,
+   "id": 33
+  },
+  {
+   "designation": "Point Focal",
+   "rang": 2,
+   "perimetre_operationnel_id": 13,
+   "type_personnel_id": 2,
+   "id": 26
+  },
+  {
+   "designation": "Attaché au Cabinet",
+   "rang": 3,
+   "perimetre_operationnel_id": 12,
+   "type_personnel_id": 2,
+   "id": 32
+  },
+  {
+   "designation": "Directeur central",
+   "rang": 3,
+   "perimetre_operationnel_id": 7,
+   "type_personnel_id": 2,
+   "id": 31
+  },
+  {
+   "designation": "Inspecteur Divisionnaire ",
+   "rang": 3,
+   "perimetre_operationnel_id": 7,
+   "type_personnel_id": 2,
+   "id": 34
+  },
+  {
+   "designation": "Chef de Division",
+   "rang": 4,
+   "perimetre_operationnel_id": 7,
+   "type_personnel_id": 2,
+   "id": 37
+  },
+  {
+   "designation": "Chef de Service central",
+   "rang": 4,
+   "perimetre_operationnel_id": 7,
+   "type_personnel_id": 2,
+   "id": 35
+  },
+  {
+   "designation": "Chef de Sécratariat Direction Générale",
+   "rang": 4,
+   "perimetre_operationnel_id": 7,
+   "type_personnel_id": 2,
+   "id": 44
+  },
+  {
+   "designation": "Directeur Départemental ",
+   "rang": 4,
+   "perimetre_operationnel_id": 8,
+   "type_personnel_id": 2,
+   "id": 36
+  },
+  {
+   "designation": "Inspecteur Administratif Financier et du Patrimoin",
+   "rang": 4,
+   "perimetre_operationnel_id": 7,
+   "type_personnel_id": 2,
+   "id": 51
+  },
+  {
+   "designation": "Inspecteur Pédagogique et Andragogique",
+   "rang": 4,
+   "perimetre_operationnel_id": 7,
+   "type_personnel_id": 2,
+   "id": 50
+  },
+  {
+   "designation": "Chef d'Etablissement ",
+   "rang": 5,
+   "perimetre_operationnel_id": 11,
+   "type_personnel_id": 2,
+   "id": 41
+  },
+  {
+   "designation": "Chef de Bureau",
+   "rang": 5,
+   "perimetre_operationnel_id": 7,
+   "type_personnel_id": 2,
+   "id": 38
+  },
+  {
+   "designation": "Chef de Service départemental ",
+   "rang": 5,
+   "perimetre_operationnel_id": 8,
+   "type_personnel_id": 2,
+   "id": 40
+  },
+  {
+   "designation": "Chef de Sécratariat Direction Centrale ",
+   "rang": 5,
+   "perimetre_operationnel_id": 7,
+   "type_personnel_id": 2,
+   "id": 45
+  },
+  {
+   "designation": "Chef de Sécratariat Départemental ",
+   "rang": 5,
+   "perimetre_operationnel_id": 8,
+   "type_personnel_id": 2,
+   "id": 43
+  },
+  {
+   "designation": "Directeur d’Étude",
+   "rang": 5,
+   "perimetre_operationnel_id": 11,
+   "type_personnel_id": 2,
+   "id": 49
+  },
+  {
+   "designation": "Inspecteur coordonnateur",
+   "rang": 5,
+   "perimetre_operationnel_id": 8,
+   "type_personnel_id": 2,
+   "id": 42
+  },
+  {
+   "designation": "Intendant",
+   "rang": 5,
+   "perimetre_operationnel_id": 11,
+   "type_personnel_id": 2,
+   "id": 48
+  },
+  {
+   "designation": "Surveillant Général",
+   "rang": 5,
+   "perimetre_operationnel_id": 11,
+   "type_personnel_id": 6,
+   "id": 46
+  },
+  {
+   "designation": "Économe",
+   "rang": 5,
+   "perimetre_operationnel_id": 11,
+   "type_personnel_id": 2,
+   "id": 47
+  },
+  {
+   "designation": "Chef de Section ",
+   "rang": 6,
+   "perimetre_operationnel_id": 7,
+   "type_personnel_id": 2,
+   "id": 39
+  },
+  {
+   "designation": "Secrétaire",
+   "rang": 6,
+   "perimetre_operationnel_id": 11,
+   "type_personnel_id": 2,
+   "id": 54
+  },
+  {
+   "designation": "Collaborateur",
+   "rang": 7,
+   "perimetre_operationnel_id": 7,
+   "type_personnel_id": 2,
+   "id": 52
+  },
+  {
+   "designation": "Enseignant",
+   "rang": 7,
+   "perimetre_operationnel_id": 11,
+   "type_personnel_id": 1,
+   "id": 53
+  }
+ ],
+ "types_personnel": [
+  {
+   "libelle": "Administratif",
+   "requires_speciality": false,
+   "id": 2
+  },
+  {
+   "libelle": "Enseignant",
+   "requires_speciality": true,
+   "id": 1
+  },
+  {
+   "libelle": "Politique",
+   "requires_speciality": false,
+   "id": 3
+  },
+  {
+   "libelle": "Technique",
+   "requires_speciality": false,
+   "id": 6
+  }
+ ],
+ "categories_agent": [
+  {
+   "libelle": "Hors catégorie",
+   "age_retraite": 70,
+   "code": "HORS_CATEGORIE",
+   "nombre_agents": 19
+  },
+  {
+   "libelle": "Catégorie I",
+   "age_retraite": 65,
+   "code": "I",
+   "nombre_agents": 26
+  },
+  {
+   "libelle": "Catégorie II",
+   "age_retraite": 63,
+   "code": "II",
+   "nombre_agents": 25
+  },
+  {
+   "libelle": "Catégorie III",
+   "age_retraite": 60,
+   "code": "III",
+   "nombre_agents": 15
+  }
+ ],
+ "echelles": [
+  {
+   "libelle": "Échelle 1",
+   "nombre_echelons": 16,
+   "duree_echelon_mois": 24,
+   "code": "1",
+   "nombre_agents": 32
+  },
+  {
+   "libelle": "Échelle 2",
+   "nombre_echelons": 16,
+   "duree_echelon_mois": null,
+   "code": "2",
+   "nombre_agents": 29
+  },
+  {
+   "libelle": "Échelle 3",
+   "nombre_echelons": 16,
+   "duree_echelon_mois": 50,
+   "code": "3",
+   "nombre_agents": 24
+  }
+ ],
+ "statuts_activite": [
+  {
+   "libelle": "Actif",
+   "id": 1
+  },
+  {
+   "libelle": "En congés",
+   "id": 2
+  },
+  {
+   "libelle": "Retraité",
+   "id": 4
+  },
+  {
+   "libelle": "Suspendu",
+   "id": 3
+  }
+ ],
+ "disponibilites": [
+  {
+   "libelle": "Temps Partiel",
+   "id": 2
+  },
+  {
+   "libelle": "Temps Plein",
+   "id": 1
+  }
+ ],
+ "types_affectation": [
+  {
+   "designation": "PERMANENTE",
+   "id": 1,
+   "created_at": "2025-10-14T22:46:06",
+   "updated_at": "2025-10-14T22:55:44"
+  },
+  {
+   "designation": "REMPLACEMENT",
+   "id": 2,
+   "created_at": "2025-10-14T22:55:27",
+   "updated_at": "2025-10-14T22:55:27"
+  }
+ ],
+ "statuts_affectation": [
+  {
+   "designation": "ACTIF",
+   "id": 4,
+   "created_at": "2025-12-27T09:01:02.705812",
+   "updated_at": "2025-12-27T09:01:02.705812"
+  },
+  {
+   "designation": "ANNULE",
+   "id": 2,
+   "created_at": "2025-11-07T23:38:33",
+   "updated_at": "2025-11-07T23:38:33"
+  },
+  {
+   "designation": "EN COURS",
+   "id": 1,
+   "created_at": "2025-10-14T23:21:12",
+   "updated_at": "2025-10-14T23:21:12"
+  }
+ ],
+ "types_demande": [
+  {
+   "id": "bbee917c-278a-48e9-9d6f-96e605d375be",
+   "label": "Congé Maladie",
+   "documents": [
+    {
+     "id": "055d1858-9b76-48dd-a7df-20425b79d6b0",
+     "id_type_demande": "bbee917c-278a-48e9-9d6f-96e605d375be",
+     "id_document_reference": "86eaa25c-8adc-4c66-85a8-67c09cf0d537",
+     "obligatoire": true,
+     "document_reference": {
+      "id": "86eaa25c-8adc-4c66-85a8-67c09cf0d537",
+      "libelle": "Certificat de maladie"
+     }
+    }
+   ]
+  },
+  {
+   "id": "d4fde1a0-8ebb-4b76-9621-cd2f51ef8ca0",
+   "label": "Permission d'absence",
+   "documents": []
+  },
+  {
+   "id": "type-conge-001",
+   "label": "Congé annuel",
+   "documents": [
+    {
+     "id": "e2080bc3-9c05-4fcd-9204-1df9f8b48e94",
+     "id_type_demande": "type-conge-001",
+     "id_document_reference": "86eaa25c-8adc-4c66-85a8-67c09cf0d537",
+     "obligatoire": true,
+     "document_reference": {
+      "id": "86eaa25c-8adc-4c66-85a8-67c09cf0d537",
+      "libelle": "Certificat de maladie"
+     }
+    },
+    {
+     "id": "96a21c90-fa03-4e4e-8ec9-e1a746197e6e",
+     "id_type_demande": "type-conge-001",
+     "id_document_reference": "b828a5bf-7829-4710-9e81-75635f1d75cc",
+     "obligatoire": true,
+     "document_reference": {
+      "id": "b828a5bf-7829-4710-9e81-75635f1d75cc",
+      "libelle": "FICHE"
+     }
+    },
+    {
+     "id": "7485c4df-9252-426e-b849-cd6284ad0ada",
+     "id_type_demande": "type-conge-001",
+     "id_document_reference": "e1974fd4-6be5-41ab-8bda-f589fa37a58a",
+     "obligatoire": false,
+     "document_reference": {
+      "id": "e1974fd4-6be5-41ab-8bda-f589fa37a58a",
+      "libelle": "Attestation de Domiciliation"
+     }
+    }
+   ]
+  },
+  {
+   "id": "b351940e-20e4-439e-bb56-94e0e8c19a25",
+   "label": "Demande de Congés Administratif",
+   "documents": []
+  },
+  {
+   "id": "b5a919bd-5265-46da-a894-12db9b48ec9d",
+   "label": "Demande de Congés Maladie",
+   "documents": []
+  },
+  {
+   "id": "4d808a54-bb74-4365-aa17-2ec967b2efe2",
+   "label": "Demande de mutation",
+   "documents": []
+  },
+  {
+   "id": "df9e010b-ebad-43cd-9d07-8f3ff3ab8815",
+   "label": "Test",
+   "documents": [
+    {
+     "id": "04a8efb0-f598-49c2-acf1-c647d9998c32",
+     "id_type_demande": "df9e010b-ebad-43cd-9d07-8f3ff3ab8815",
+     "id_document_reference": "c48a2a42-8c02-4799-8855-f503ac11ade8",
+     "obligatoire": true,
+     "document_reference": {
+      "id": "c48a2a42-8c02-4799-8855-f503ac11ade8",
+      "libelle": "Test"
+     }
+    },
+    {
+     "id": "cd5028b5-381d-46dd-90eb-7ca63e943c1e",
+     "id_type_demande": "df9e010b-ebad-43cd-9d07-8f3ff3ab8815",
+     "id_document_reference": "b828a5bf-7829-4710-9e81-75635f1d75cc",
+     "obligatoire": true,
+     "document_reference": {
+      "id": "b828a5bf-7829-4710-9e81-75635f1d75cc",
+      "libelle": "FICHE"
+     }
+    }
+   ]
+  }
+ ],
+ "documents_reference": [
+  {
+   "id": "c48a2a42-8c02-4799-8855-f503ac11ade8",
+   "libelle": "Test"
+  },
+  {
+   "id": "b828a5bf-7829-4710-9e81-75635f1d75cc",
+   "libelle": "FICHE"
+  },
+  {
+   "id": "86eaa25c-8adc-4c66-85a8-67c09cf0d537",
+   "libelle": "Certificat de maladie"
+  },
+  {
+   "id": "e1974fd4-6be5-41ab-8bda-f589fa37a58a",
+   "libelle": "Attestation de Domiciliation"
+  }
+ ],
+ "circuits_validation": [
+  {
+   "id_type_demande": "bbee917c-278a-48e9-9d6f-96e605d375be",
+   "designation": "Circuit de validation - CONGO Maladie",
+   "description": "Circuit de validation pour CONGO Maladie",
+   "is_active": true,
+   "id": "26220ae0-26f9-4d10-b9e9-83284fdc26e9",
+   "created_at": "2026-01-19T15:18:01.015197",
+   "updated_at": "2026-01-19T15:59:05.130919",
+   "etapes": [
+    {
+     "id_circuit": "26220ae0-26f9-4d10-b9e9-83284fdc26e9",
+     "ordre": 1,
+     "designation": "NGANGA EDOUARD",
+     "description": null,
+     "type_validateur": "ROLE",
+     "id_role": "62ea9cd5-7cf9-4df1-a0e9-37e8be9e4750",
+     "id_user": null,
+     "id_organisation": null,
+     "nom_superieur": null,
+     "is_obligatoire": true,
+     "can_reject": true,
+     "delai_jours": 1,
+     "id": "b69db667-a39a-42c9-9a6c-917a02174f80",
+     "created_at": "2026-01-19T15:59:05.236158",
+     "updated_at": "2026-01-19T15:59:05.236162",
+     "role_designation": null,
+     "user_name": null,
+     "departement_designation": null
+    }
+   ]
+  },
+  {
+   "id_type_demande": "type-conge-001",
+   "designation": "Circuit de validation - CONGO annuel",
+   "description": "Circuit de validation pour CONGO annuel",
+   "is_active": true,
+   "id": "8b2e474c-db19-4198-bd4c-b08a77af665d",
+   "created_at": "2026-01-21T15:37:39.031349",
+   "updated_at": "2026-01-21T15:37:39.031353",
+   "etapes": [
+    {
+     "id_circuit": "8b2e474c-db19-4198-bd4c-b08a77af665d",
+     "ordre": 1,
+     "designation": "Congés manuel du risque",
+     "description": null,
+     "type_validateur": "ROLE",
+     "id_role": "fac4b17a-16d7-4967-983b-8b6f5e517057",
+     "id_user": null,
+     "id_organisation": null,
+     "nom_superieur": null,
+     "is_obligatoire": true,
+     "can_reject": true,
+     "delai_jours": 3,
+     "id": "beb773df-0be1-4ced-b589-a58ce6b600d0",
+     "created_at": "2026-01-21T15:37:39.202295",
+     "updated_at": "2026-01-21T15:37:39.202303",
+     "role_designation": null,
+     "user_name": null,
+     "departement_designation": null
+    },
+    {
+     "id_circuit": "8b2e474c-db19-4198-bd4c-b08a77af665d",
+     "ordre": 2,
+     "designation": "Confirmation de la demane",
+     "description": null,
+     "type_validateur": "ROLE",
+     "id_role": "fac4b17a-16d7-4967-983b-8b6f5e517057",
+     "id_user": null,
+     "id_organisation": null,
+     "nom_superieur": null,
+     "is_obligatoire": true,
+     "can_reject": true,
+     "delai_jours": 1,
+     "id": "7f8a1b55-5ca1-4e1a-87d6-2bd60d9a689c",
+     "created_at": "2026-01-21T15:37:39.308524",
+     "updated_at": "2026-01-21T15:37:39.308528",
+     "role_designation": null,
+     "user_name": null,
+     "departement_designation": null
+    }
+   ]
+  },
+  {
+   "id_type_demande": "b5a919bd-5265-46da-a894-12db9b48ec9d",
+   "designation": "Circuit de validation - Demande de Congés Maladie",
+   "description": "Circuit de validation pour Demande de Congés Maladie",
+   "is_active": true,
+   "id": "a2719a07-b2de-4e0c-9fdb-bbe94b24f102",
+   "created_at": "2026-03-01T13:40:04.894381",
+   "updated_at": "2026-03-01T13:41:11.067833",
+   "etapes": [
+    {
+     "id_circuit": "a2719a07-b2de-4e0c-9fdb-bbe94b24f102",
+     "ordre": 1,
+     "designation": "Validation du chef hierarchique",
+     "description": null,
+     "type_validateur": "HIERARCHIE",
+     "id_role": null,
+     "id_user": null,
+     "id_organisation": null,
+     "nom_superieur": null,
+     "is_obligatoire": true,
+     "can_reject": true,
+     "delai_jours": 3,
+     "id": "c87b1bbc-f679-4a82-97c4-790d6644f3d2",
+     "created_at": "2026-03-01T13:41:03.086144",
+     "updated_at": "2026-03-01T13:41:03.086156",
+     "role_designation": null,
+     "user_name": null,
+     "departement_designation": null
+    },
+    {
+     "id_circuit": "a2719a07-b2de-4e0c-9fdb-bbe94b24f102",
+     "ordre": 1,
+     "designation": "Validation du chef hierarchique",
+     "description": null,
+     "type_validateur": "HIERARCHIE",
+     "id_role": null,
+     "id_user": null,
+     "id_organisation": null,
+     "nom_superieur": null,
+     "is_obligatoire": true,
+     "can_reject": true,
+     "delai_jours": 3,
+     "id": "71ccefff-c847-40db-b6de-1c1ca24a0747",
+     "created_at": "2026-03-01T13:41:11.162814",
+     "updated_at": "2026-03-01T13:41:11.162822",
+     "role_designation": null,
+     "user_name": null,
+     "departement_designation": null
+    }
+   ]
+  },
+  {
+   "id_type_demande": "4d808a54-bb74-4365-aa17-2ec967b2efe2",
+   "designation": "Circuit de validation - Demande de mutation",
+   "description": "Circuit de validation pour Demande de mutation",
+   "is_active": true,
+   "id": "d30ae1e5-7006-4bac-bc8c-4ad422d2b356",
+   "created_at": "2026-03-01T15:37:59.288174",
+   "updated_at": "2026-03-01T15:37:59.288186",
+   "etapes": [
+    {
+     "id_circuit": "d30ae1e5-7006-4bac-bc8c-4ad422d2b356",
+     "ordre": 1,
+     "designation": "Validation du chef hierarchique",
+     "description": "C'est l'avis du chef hiérarchique. ",
+     "type_validateur": "HIERARCHIE",
+     "id_role": null,
+     "id_user": null,
+     "id_organisation": null,
+     "nom_superieur": "AZERTY",
+     "is_obligatoire": true,
+     "can_reject": true,
+     "delai_jours": 3,
+     "id": "da1bb1b5-f260-45cb-9a59-01e1ce52aeac",
+     "created_at": "2026-03-01T15:37:59.423674",
+     "updated_at": "2026-03-01T15:37:59.423683",
+     "role_designation": null,
+     "user_name": null,
+     "departement_designation": null
+    }
+   ]
+  }
+ ]
+}

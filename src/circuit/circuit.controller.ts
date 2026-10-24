@@ -11,8 +11,13 @@ import {
   Post,
   Put,
   Query,
+  Res,
+  UploadedFile,
+  UseInterceptors,
 } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
 import { InjectRepository } from '@nestjs/typeorm';
+import type { Response } from 'express';
 import {
   ArrayMaxSize,
   IsArray,
@@ -32,7 +37,8 @@ import {
   type UtilisateurConnecte,
 } from '../auth/auth';
 import { DemandeMutation } from '../entities';
-import { TYPES_STRUCTURE } from './catalogue';
+import { CYCLES_STRUCTURE, TYPES_LOCALITE, TYPES_STRUCTURE } from './catalogue';
+import { ImportStructuresService } from './structures-import.service';
 import { CircuitService } from './circuit.service';
 
 class StructureDto {
@@ -41,6 +47,9 @@ class StructureDto {
   @IsOptional() @IsString() @MaxLength(80) sigle?: string | null;
   @IsOptional() @IsInt() parentId?: number | null;
   @IsOptional() @IsInt() departementId?: number | null;
+  @IsOptional() @IsString() cycle?: string | null;
+  @IsOptional() @IsString() typeLocalite?: string | null;
+  @IsOptional() @IsString() @MaxLength(120) localite?: string | null;
   @IsOptional() @IsBoolean() actif?: boolean;
 }
 
@@ -97,6 +106,7 @@ const entier = (v?: string) => {
 export class CircuitController {
   constructor(
     private readonly service: CircuitService,
+    private readonly importStructures: ImportStructuresService,
     @InjectRepository(DemandeMutation)
     private readonly demandes: Repository<DemandeMutation>,
   ) {}
@@ -113,6 +123,46 @@ export class CircuitController {
     return TYPES_STRUCTURE;
   }
 
+  @Get('structures/referentiels')
+  referentielsStructure() {
+    return {
+      types: TYPES_STRUCTURE,
+      cycles: CYCLES_STRUCTURE,
+      localites: TYPES_LOCALITE,
+    };
+  }
+
+  /** Modèle Excel des établissements (département, inspection, cycle, école, localisation). */
+  @Get('structures/modele')
+  async modeleStructures(@Res() res: Response) {
+    const contenu = await this.importStructures.modele();
+    res.setHeader(
+      'Content-Type',
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    );
+    res.setHeader(
+      'Content-Disposition',
+      'attachment; filename="Etablissements et inspections.xlsx"',
+    );
+    res.send(contenu);
+  }
+
+  /** Import des établissements et des inspections (essai d'abord, puis enregistrement). */
+  @Roles('DG')
+  @Post('structures/import')
+  @UseInterceptors(
+    FileInterceptor('fichier', { limits: { fileSize: 20 * 1024 * 1024 } }),
+  )
+  importerStructures(
+    @Utilisateur() u: UtilisateurConnecte,
+    @Query('essai') essai: string | undefined,
+    @UploadedFile() fichier?: Express.Multer.File,
+  ) {
+    if (!fichier || !/\.xlsx$/i.test(fichier.originalname))
+      throw new BadRequestException('Choisissez un fichier Excel (.xlsx).');
+    return this.importStructures.importer(u, fichier.buffer, essai !== '0');
+  }
+
   @Roles('DG')
   @Post('structures')
   ajouter(@Utilisateur() u: UtilisateurConnecte, @Body() dto: StructureDto) {
@@ -127,6 +177,33 @@ export class CircuitController {
     @Body() dto: StructureDto,
   ) {
     return this.service.enregistrerStructure(u, id, dto);
+  }
+
+  /** Compte « Responsable de structure » du responsable en poste (mot de passe provisoire montré une fois). */
+  @Roles('DG')
+  @Post('structures/:id/compte-responsable')
+  compteResponsable(
+    @Utilisateur() u: UtilisateurConnecte,
+    @Param('id', ParseIntPipe) id: number,
+    @Body() body: { email?: string | null },
+  ) {
+    return this.service.compteResponsable(u, id, body?.email);
+  }
+
+  /** Responsable en poste : agent de la base du personnel (vide : poste vacant). */
+  @Roles('DG')
+  @Put('structures/:id/responsable')
+  responsable(
+    @Utilisateur() u: UtilisateurConnecte,
+    @Param('id', ParseIntPipe) id: number,
+    @Body() body: { agentId?: number | null; interim?: boolean },
+  ) {
+    return this.service.nommerResponsable(
+      u,
+      id,
+      Number(body?.agentId) || null,
+      body?.interim === true,
+    );
   }
 
   @Roles('DG')

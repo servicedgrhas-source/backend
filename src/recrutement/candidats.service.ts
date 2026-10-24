@@ -58,6 +58,8 @@ export interface CandidatDto {
   origineBrute?: string | null;
   observation?: string | null;
   forcerDoublon?: boolean;
+  /** Fiche de la base du personnel choisie (volontaire ou communautaire). */
+  agentRecenseId?: number | null;
 }
 
 export type EtatListe =
@@ -220,6 +222,162 @@ export class CandidatsService implements OnApplicationBootstrap {
             : null,
       };
     });
+  }
+
+  /* ---------------------- Base du personnel et vagues ---------------------- */
+
+  /**
+   * Recherche dans la base du personnel des volontaires et communautaires à présenter : la commission
+   * choisit la personne au lieu de la ressaisir (nom, naissance, diplôme, département, vague).
+   */
+  async personnel(recherche?: string) {
+    const mots = normaliser(recherche ?? '')
+      .split(/\s+/)
+      .filter((m) => m.length >= 2)
+      .slice(0, 5);
+    if (!mots.length) return [];
+    const lignes = await this.agents.query<
+      {
+        id: number;
+        numeroFiche: string;
+        statut: string;
+        nomComplet: string;
+        dateNaissance: string | null;
+        lieuNaissance: string | null;
+        diplome: string | null;
+        departementId: number | null;
+        lieuService: string | null;
+        vague: number | null;
+        registre: string | null;
+        candidat: string | null;
+      }[]
+    >(
+      `SELECT a.id, a."numeroFiche", a.statut, a."nomComplet", to_char(a."dateNaissance", 'YYYY-MM-DD') AS "dateNaissance",
+              a.donnees->>'LIEU_NAISSANCE' AS "lieuNaissance", coalesce(a.donnees->>'DIPLOME_PRO', v.diplome) AS diplome,
+              a."departementId", a.donnees->>'LIEU_SERVICE' AS "lieuService", v."vagueNumero" AS vague, v.statut AS registre,
+              (SELECT g."nomComplet" || ' (quota ' || coalesce(g.quota::text, '?') || ')' FROM agent g WHERE g."agentRecenseId" = a.id LIMIT 1) AS candidat
+         FROM agent_recense a LEFT JOIN volontaire v ON v.id = a."volontaireId"
+        WHERE ${mots.map((_, i) => `a."nomNormalise" LIKE $${i + 1}`).join(' AND ')}
+          AND (a.contentieux IS NULL OR a.contentieux->>'etat' <> 'REJETE')
+        ORDER BY a."nomNormalise" LIMIT 30`,
+      mots.map((m) => `%${m}%`),
+    );
+    const regles = await this.regles.find();
+    const diplomeCode = (d: string | null) => {
+      const k = cleCompacte(d);
+      if (!k) return null;
+      return (
+        (
+          regles.find((r) => cleCompacte(r.code) === k) ??
+          regles.find((r) => cleCompacte(r.libelle) === k) ??
+          regles.find((r) => k.startsWith(cleCompacte(r.code)))
+        )?.code ?? null
+      );
+    };
+    return lignes.map((l) => ({
+      ...l,
+      diplomeCode: diplomeCode(l.diplome),
+      // Seuls les volontaires et communautaires passent par la commission
+      presentable: ['VOLONTAIRE', 'COMMUNAUTAIRE'].includes(l.statut),
+    }));
+  }
+
+  /** Fiche du personnel liée au candidat : statut (Volontaire / Communautaire) et vague. */
+  private async liaisonPersonnel(dto: CandidatDto, ex?: Agent) {
+    const id =
+      dto.agentRecenseId === undefined
+        ? ex?.agentRecenseId
+        : dto.agentRecenseId;
+    if (!id) {
+      // Un volontaire est forcément dans la base dès qu'elle contient des volontaires
+      // (seulement pour une nouvelle fiche ou un statut changé : les fiches déjà saisies restent modifiables)
+      if (
+        /^volon/i.test(dto.statut ?? '') &&
+        (!ex || !/^volon/i.test(ex.statut ?? ''))
+      ) {
+        const [{ n }] = await this.agents.query<{ n: number }[]>(
+          `SELECT count(*)::int AS n FROM agent_recense WHERE statut = 'VOLONTAIRE'`,
+        );
+        if (n > 0)
+          throw new BadRequestException(
+            'Un volontaire est déjà dans la base du personnel : cherchez-le et choisissez-le (« Chercher dans la base »). Une personne absente de la base est enregistrée comme communautaire.',
+          );
+      }
+      return null;
+    }
+    const [f] = await this.agents.query<
+      {
+        id: number;
+        statut: string;
+        nomComplet: string;
+        numeroFiche: string;
+        vague: number | null;
+      }[]
+    >(
+      `SELECT a.id, a.statut, a."nomComplet", a."numeroFiche", v."vagueNumero" AS vague
+         FROM agent_recense a LEFT JOIN volontaire v ON v.id = a."volontaireId" WHERE a.id = $1`,
+      [id],
+    );
+    if (!f) throw new BadRequestException('Fiche du personnel introuvable.');
+    if (!['VOLONTAIRE', 'COMMUNAUTAIRE'].includes(f.statut))
+      throw new BadRequestException(
+        `${f.nomComplet} (${f.numeroFiche}) est déjà agent de l’État (${f.statut.toLowerCase()}) : il ne passe plus par la commission.`,
+      );
+    const autre = await this.agents.findOne({
+      where: { agentRecenseId: f.id },
+      loadEagerRelations: false,
+    });
+    if (autre && autre.id !== ex?.id)
+      throw new BadRequestException(
+        `${f.nomComplet} a déjà un dossier de candidat (quota ${autre.quota ?? '?'}, n° ${autre.numeroOrdre ?? '?'}).`,
+      );
+    return {
+      id: f.id,
+      statut: f.statut === 'VOLONTAIRE' ? 'Volontaire' : 'Communautaire',
+      vague: f.vague,
+    };
+  }
+
+  /**
+   * Volontaires en poste par vague, et ceux déjà présentés : on recrute d'abord les anciennes
+   * vagues (DG, 23/10/2026).
+   */
+  async vagues(quota: number | null) {
+    return this.agents.query<
+      {
+        vague: number | null;
+        enPoste: number;
+        presentes: number;
+        presentesQuota: number;
+      }[]
+    >(
+      `SELECT v."vagueNumero" AS vague,
+              count(*) FILTER (WHERE v.statut = 'EN_POSTE')::int AS "enPoste",
+              count(g.id)::int AS presentes,
+              count(g.id) FILTER (WHERE g.quota = $1)::int AS "presentesQuota"
+         FROM volontaire v
+         LEFT JOIN agent_recense a ON a."volontaireId" = v.id
+         LEFT JOIN agent g ON g."agentRecenseId" = a.id
+        WHERE v.population = 'VOLONTAIRE' AND (v.statut = 'EN_POSTE' OR g.id IS NOT NULL)
+        GROUP BY 1 ORDER BY 1 NULLS LAST`,
+      [quota],
+    );
+  }
+
+  /** Avertissement : un volontaire d'une vague récente passe avant des volontaires de vagues plus anciennes. */
+  private async avertissementVague(vague: number | null, quota: number | null) {
+    if (!vague) return null;
+    const [{ n, plusAncienne }] = await this.agents.query<
+      { n: number; plusAncienne: number | null }[]
+    >(
+      `SELECT count(*)::int AS n, min(v."vagueNumero") AS "plusAncienne"
+         FROM volontaire v LEFT JOIN agent_recense a ON a."volontaireId" = v.id
+        WHERE v.population = 'VOLONTAIRE' AND v.statut = 'EN_POSTE' AND v."vagueNumero" BETWEEN 1 AND $1 - 1
+          AND NOT EXISTS (SELECT 1 FROM agent g WHERE g."agentRecenseId" = a.id)`,
+      [vague],
+    );
+    if (!n) return null;
+    return `Volontaire de la ${vague}e vague : ${n} volontaire(s) en poste de vagues plus anciennes (dès la ${plusAncienne === 1 ? '1re' : `${plusAncienne}e`}) ne sont pas encore présentés${quota ? ` (quota ${quota})` : ''}. Les anciennes vagues passent d’abord.`;
   }
 
   /** Prochain n° d'ordre libre dans un quota (liste du MEPPSA). */
@@ -522,7 +680,12 @@ export class CandidatsService implements OnApplicationBootstrap {
         );
     }
 
-    const statut = texteOuNull(dto.statut) ?? (meppsa ? null : 'Autres');
+    // Personne choisie dans la base du personnel : son statut vient de sa fiche ; une personne
+    // absente de la base ne peut être que communautaire (DG, 23/10/2026)
+    const lien = await this.liaisonPersonnel(dto, ex);
+    const statut = lien
+      ? lien.statut
+      : (texteOuNull(dto.statut) ?? (meppsa ? null : 'Autres'));
     // Lot de la commission : au plus N dossiers ; volontaires (un diplôme),
     // communautaires (diplômes du cycle) ou mixte (les deux statuts du cycle)
     const lotCommission = lotCommissionNormalise(dto.lotCommission);
@@ -608,6 +771,8 @@ export class CandidatsService implements OnApplicationBootstrap {
         texteOuNull(dto.origineBrute) ??
         (membre ? `Membre de la commission : ${membre.nom}` : null),
       membreCommissionId: membre?.id ?? null,
+      agentRecenseId: lien?.id ?? null,
+      vagueNumero: lien?.vague ?? null,
       observation: texteOuNull(dto.observation),
       contentieuxAge,
       anomalies: [],
@@ -627,6 +792,10 @@ export class CandidatsService implements OnApplicationBootstrap {
 
   async creer(u: UtilisateurConnecte, dto: CandidatDto) {
     const data = await this.preparer(dto);
+    const avertissement = await this.avertissementVague(
+      data.vagueNumero,
+      data.quota,
+    );
     const a = await this.agents.save(
       this.agents.create({
         ...data,
@@ -640,7 +809,7 @@ export class CandidatsService implements OnApplicationBootstrap {
       departementId: data.departementId,
       ...(data.contentieuxAge ? { contentieux: 'âge' } : {}),
     });
-    return this.rendu(a.id);
+    return { ...(await this.rendu(a.id)), avertissementVague: avertissement };
   }
 
   async modifier(u: UtilisateurConnecte, id: string, dto: CandidatDto) {

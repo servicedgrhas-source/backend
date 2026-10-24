@@ -70,6 +70,7 @@ class CandidatDto {
   @IsOptional() @IsString() @MaxLength(300) origineBrute?: string | null;
   @IsOptional() @IsString() @MaxLength(500) observation?: string | null;
   @IsOptional() @IsBoolean() forcerDoublon?: boolean;
+  @IsOptional() @IsInt() agentRecenseId?: number | null;
 }
 
 class ControleDto {
@@ -247,6 +248,18 @@ export class RecrutementController {
       exclure || undefined,
       feuille === 'QUOTA_AUTRES' ? 'QUOTA_AUTRES' : 'MEPPSA',
     );
+  }
+
+  /** Volontaires et communautaires de la base du personnel, à choisir au lieu de les ressaisir. */
+  @Get('candidats/personnel')
+  personnel(@Query('recherche') recherche?: string) {
+    return this.candidats.personnel(recherche);
+  }
+
+  /** Volontaires en poste par vague, et ceux déjà présentés dans ce quota. */
+  @Get('candidats/vagues')
+  vagues(@Query('quota') quota?: string) {
+    return this.candidats.vagues(Number(quota) || null);
   }
 
   @Get('candidats/doublons')

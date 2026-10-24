@@ -1170,22 +1170,154 @@ export const CATALOGUE = [INTERNE, ...D].map((d, i) => ({
   ordre: i,
 }));
 
-/** Types de structures : libellés et ordre dans la voie hiérarchique. */
+/**
+ * Types de structures. Niveau dans l'organigramme du ministère (DG, réunion de cadrage du
+ * 21/10/2026) : 0 ministère, 1 cabinet, 2 directions générales et inspection générale,
+ * 3 directions centrales, 4 services et directions départementales, 5 inspections et bureaux,
+ * 6 écoles. Chaque type a son poste de responsable ; périmètre : POLITIQUE, CENTRAL,
+ * DEPARTEMENTAL ou SCOLAIRE.
+ */
 export const TYPES_STRUCTURE: Record<
   string,
-  { libelle: string; externe: boolean }
+  {
+    libelle: string;
+    externe: boolean;
+    niveau: number;
+    responsable: string;
+    perimetre: 'POLITIQUE' | 'CENTRAL' | 'DEPARTEMENTAL' | 'SCOLAIRE';
+  }
 > = {
-  ETABLISSEMENT: { libelle: 'Établissement scolaire', externe: true },
+  MINISTERE: {
+    libelle: 'Ministère',
+    externe: true,
+    niveau: 0,
+    responsable: 'Ministre',
+    perimetre: 'POLITIQUE',
+  },
+  CABINET: {
+    libelle: 'Cabinet',
+    externe: true,
+    niveau: 1,
+    responsable: 'Directeur de cabinet',
+    perimetre: 'POLITIQUE',
+  },
+  DIRECTION_GENERALE: {
+    libelle: 'Direction générale',
+    externe: true,
+    niveau: 2,
+    responsable: 'Directeur général',
+    perimetre: 'CENTRAL',
+  },
+  INSPECTION_GENERALE: {
+    libelle: 'Inspection générale',
+    externe: true,
+    niveau: 2,
+    responsable: 'Inspecteur général',
+    perimetre: 'CENTRAL',
+  },
+  DGRHAS: {
+    libelle: 'Direction générale (DGRHAS)',
+    externe: false,
+    niveau: 2,
+    responsable: 'Directeur général',
+    perimetre: 'CENTRAL',
+  },
+  DIRECTION_CENTRALE: {
+    libelle: 'Direction centrale',
+    externe: true,
+    niveau: 3,
+    responsable: 'Directeur central',
+    perimetre: 'CENTRAL',
+  },
+  DIRECTION_DGRHAS: {
+    libelle: 'Direction de la DGRHAS',
+    externe: false,
+    niveau: 3,
+    responsable: 'Directeur central',
+    perimetre: 'CENTRAL',
+  },
+  SERVICE: {
+    libelle: 'Service (administration centrale)',
+    externe: true,
+    niveau: 4,
+    responsable: 'Chef de service',
+    perimetre: 'CENTRAL',
+  },
+  SERVICE_DGRHAS: {
+    libelle: 'Service de la DGRHAS',
+    externe: false,
+    niveau: 4,
+    responsable: 'Chef de service',
+    perimetre: 'CENTRAL',
+  },
+  DDEPPSA: {
+    libelle: 'Direction départementale (DDEPPSA)',
+    externe: true,
+    niveau: 4,
+    responsable: 'Directeur départemental',
+    perimetre: 'DEPARTEMENTAL',
+  },
+  BUREAU: {
+    libelle: 'Bureau',
+    externe: true,
+    niveau: 5,
+    responsable: 'Chef de bureau',
+    perimetre: 'CENTRAL',
+  },
+  BUREAU_DGRHAS: {
+    libelle: 'Bureau de la DGRHAS',
+    externe: false,
+    niveau: 5,
+    responsable: 'Chef de bureau',
+    perimetre: 'CENTRAL',
+  },
   INSPECTION: {
     libelle: 'Inspection (circonscription scolaire)',
     externe: true,
+    niveau: 5,
+    responsable: 'Inspecteur coordonnateur',
+    perimetre: 'DEPARTEMENTAL',
   },
-  DDEPPSA: { libelle: 'Direction départementale (DDEPPSA)', externe: true },
-  SERVICE: { libelle: 'Service (administration centrale)', externe: true },
-  DIRECTION_CENTRALE: { libelle: 'Direction centrale', externe: true },
-  DIRECTION_GENERALE: { libelle: 'Direction générale', externe: true },
-  BUREAU_DGRHAS: { libelle: 'Bureau de la DGRHAS', externe: false },
-  SERVICE_DGRHAS: { libelle: 'Service de la DGRHAS', externe: false },
-  DIRECTION_DGRHAS: { libelle: 'Direction de la DGRHAS', externe: false },
-  DGRHAS: { libelle: 'Direction générale (DGRHAS)', externe: false },
+  ETABLISSEMENT: {
+    libelle: 'Établissement scolaire',
+    externe: true,
+    niveau: 6,
+    responsable: 'Chef d’établissement',
+    perimetre: 'SCOLAIRE',
+  },
+};
+
+/** Responsable d'un établissement selon son cycle. */
+const RESPONSABLE_CYCLE: Record<string, string> = {
+  PRESCOLAIRE: 'Directeur d’école',
+  PRIMAIRE: 'Directeur d’école',
+  COLLEGE: 'Directeur de collège',
+  LYCEE: 'Proviseur',
+  ALPHABETISATION: 'Responsable de centre',
+};
+
+/** Poste du responsable d'une structure (le proviseur d'un lycée, le chef d'un service…). */
+export function posteResponsable(s: { type: string; cycle?: string | null }) {
+  if (s.type === 'ETABLISSEMENT' && s.cycle && RESPONSABLE_CYCLE[s.cycle])
+    return RESPONSABLE_CYCLE[s.cycle];
+  return TYPES_STRUCTURE[s.type]?.responsable ?? 'Responsable';
+}
+
+/** Une demande ne remonte pas au-delà du niveau des directions générales. */
+export const NIVEAU_FIN_CIRCUIT = 2;
+
+/** Cycle d'une inspection ou d'une école (une inspection par cycle dans chaque département). */
+export const CYCLES_STRUCTURE: Record<string, string> = {
+  PRESCOLAIRE: 'Préscolaire',
+  PRIMAIRE: 'Primaire',
+  COLLEGE: 'Collège (CEG)',
+  LYCEE: 'Lycée',
+  ALPHABETISATION: 'Alphabétisation',
+};
+
+/** Localisation physique : district (rural), commune ou arrondissement (urbain). */
+export const TYPES_LOCALITE: Record<string, string> = {
+  DISTRICT: 'District',
+  COMMUNE: 'Commune',
+  ARRONDISSEMENT: 'Arrondissement',
 };

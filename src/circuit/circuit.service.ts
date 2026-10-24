@@ -9,6 +9,9 @@ import {
 import { InjectRepository } from '@nestjs/typeorm';
 import { In, IsNull, Repository } from 'typeorm';
 import type { UtilisateurConnecte } from '../auth/auth';
+import * as bcrypt from 'bcryptjs';
+import { randomBytes } from 'node:crypto';
+import { chiffrerCode, nouveauCode } from '../common/code-personnel';
 import { JournalService } from '../core/core.service';
 import {
   Alerte,
@@ -21,7 +24,15 @@ import {
   Utilisateur,
   type EtapeCircuit,
 } from '../entities';
-import { CATALOGUE, STRUCTURES_DGRHAS, TYPES_STRUCTURE } from './catalogue';
+import {
+  CATALOGUE,
+  CYCLES_STRUCTURE,
+  STRUCTURES_DGRHAS,
+  TYPES_LOCALITE,
+  NIVEAU_FIN_CIRCUIT,
+  posteResponsable,
+  TYPES_STRUCTURE,
+} from './catalogue';
 import { joursDepuis, SQL_AUJOURDHUI, sqlJourLocal } from '../common/jours';
 
 /* --------- Requêtes du travail de chacun ($1 : structures du compte) --------- */
@@ -297,10 +308,124 @@ export class CircuitService implements OnModuleInit {
 
   /* ------------------------------ Organigramme ------------------------------ */
 
-  listeStructures() {
-    return this.structures.find({
-      order: { ordre: 'ASC', type: 'ASC', sigle: 'ASC' },
+  /** Toutes les structures, avec leur niveau, le poste de responsable et qui l'occupe. */
+  async listeStructures() {
+    const [liste, responsables] = await Promise.all([
+      this.structures.find({
+        order: { ordre: 'ASC', type: 'ASC', sigle: 'ASC' },
+      }),
+      this.structures.query<{ id: number; nom: string }[]>(
+        `SELECT a.id, a."nomComplet" AS nom FROM agent_recense a WHERE a.id IN (SELECT "responsableId" FROM structure WHERE "responsableId" IS NOT NULL)`,
+      ),
+    ]);
+    const noms = new Map(responsables.map((r) => [r.id, r.nom]));
+    return liste.map((s) => ({
+      ...s,
+      niveau: TYPES_STRUCTURE[s.type]?.niveau ?? null,
+      posteResponsable: posteResponsable(s),
+      responsable: s.responsableId
+        ? { id: s.responsableId, nom: noms.get(s.responsableId) ?? '?' }
+        : null,
+    }));
+  }
+
+  /**
+   * Compte du responsable d'une structure (chef d'établissement, inspecteur, chef de service…) :
+   * rôle « Responsable de structure », rattaché à sa structure. Le mot de passe provisoire et le
+   * code personnel ne sont montrés qu'ici, à remettre à la personne.
+   */
+  async compteResponsable(
+    u: UtilisateurConnecte,
+    id: number,
+    emailDonne?: string | null,
+  ) {
+    const s = await this.structures.findOne({ where: { id } });
+    if (!s) throw new NotFoundException('Structure introuvable');
+    if (!s.responsableId)
+      throw new BadRequestException(
+        'Désignez d’abord le responsable en poste.',
+      );
+    const [a] = await this.structures.query<
+      { nom: string; mail: string | null }[]
+    >(
+      `SELECT "nomComplet" AS nom, donnees->>'MAIL' AS mail FROM agent_recense WHERE id = $1`,
+      [s.responsableId],
+    );
+    if (!a) throw new BadRequestException('Fiche du responsable introuvable.');
+    const email = (emailDonne || a.mail || '').trim().toLowerCase();
+    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email))
+      throw new BadRequestException(
+        'Indiquez l’adresse e-mail du responsable (elle sert d’identifiant).',
+      );
+    if (await this.users.exist({ where: { email } }))
+      throw new BadRequestException(
+        'Un compte existe déjà avec cette adresse : modifiez-le dans Administration › Utilisateurs.',
+      );
+    const motDePasse = `${randomBytes(6).toString('base64url')}-${Math.floor(100 + Math.random() * 900)}`;
+    const code = nouveauCode();
+    const compte = await this.users.save({
+      email,
+      nom: a.nom,
+      initiales: null,
+      role: 'STRUCTURE',
+      departementId: s.departementId,
+      structureId: s.id,
+      actif: true,
+      motDePasseHash: await bcrypt.hash(motDePasse, 10),
+      codeChiffre: chiffrerCode(code),
+      codeCreeLe: new Date(),
     });
+    await this.journal.log(
+      u,
+      'CREATION_UTILISATEUR',
+      'utilisateur',
+      compte.id,
+      {
+        email,
+        role: 'STRUCTURE',
+        structure: s.sigle,
+      },
+    );
+    return { email, nom: a.nom, motDePasse, code, structure: s.nom };
+  }
+
+  /** Responsable en poste (ou intérim) ; vide : poste vacant. */
+  async nommerResponsable(
+    u: UtilisateurConnecte,
+    id: number,
+    agentId: number | null,
+    interim: boolean,
+  ) {
+    const s = await this.structures.findOne({ where: { id } });
+    if (!s) throw new NotFoundException('Structure introuvable');
+    let nom: string | null = null;
+    if (agentId) {
+      const [a] = await this.structures.query<{ nom: string }[]>(
+        `SELECT "nomComplet" AS nom FROM agent_recense WHERE id = $1`,
+        [agentId],
+      );
+      if (!a)
+        throw new BadRequestException(
+          'Agent introuvable dans la base du personnel.',
+        );
+      nom = a.nom;
+    }
+    s.responsableId = agentId || null;
+    s.responsableInterim = !!agentId && interim;
+    await this.structures.save(s);
+    await this.journal.log(
+      u,
+      'STRUCTURE_RESPONSABLE',
+      'structure',
+      String(id),
+      {
+        sigle: s.sigle,
+        poste: posteResponsable(s),
+        responsable: nom,
+        interim: s.responsableInterim,
+      },
+    );
+    return { ok: true };
   }
 
   /** Structures du même niveau : même structure supérieure (ou, à la racine, même type et département). */
@@ -357,8 +482,11 @@ export class CircuitService implements OnModuleInit {
           'INSPECTION',
           'DDEPPSA',
           'SERVICE',
+          'BUREAU',
           'DIRECTION_CENTRALE',
           'DIRECTION_GENERALE',
+          'INSPECTION_GENERALE',
+          'CABINET',
         ]),
       },
       select: ['id', 'type', 'sigle', 'nom', 'parentId', 'departementId'],
@@ -375,6 +503,9 @@ export class CircuitService implements OnModuleInit {
       sigle?: string | null;
       parentId?: number | null;
       departementId?: number | null;
+      cycle?: string | null;
+      typeLocalite?: string | null;
+      localite?: string | null;
       actif?: boolean;
     },
   ) {
@@ -396,6 +527,11 @@ export class CircuitService implements OnModuleInit {
       parentId: parent?.id ?? null,
       // Le département se reprend de la structure supérieure s'il n'est pas donné
       departementId: dto.departementId ?? parent?.departementId ?? null,
+      cycle: CYCLES_STRUCTURE[dto.cycle ?? ''] ? dto.cycle! : null,
+      typeLocalite: TYPES_LOCALITE[dto.typeLocalite ?? '']
+        ? dto.typeLocalite!
+        : null,
+      localite: dto.localite?.replace(/\s+/g, ' ').trim() || null,
       actif: dto.actif ?? true,
     };
     const s = id
@@ -426,6 +562,14 @@ export class CircuitService implements OnModuleInit {
     if (await this.structures.exist({ where: { parentId: id } }))
       throw new BadRequestException(
         'Cette structure a des structures rattachées : déplacez-les ou désactivez-la.',
+      );
+    const [{ n }] = await this.structures.query<{ n: number }[]>(
+      `SELECT count(*)::int AS n FROM agent_recense WHERE "structureId" = $1`,
+      [id],
+    );
+    if (n)
+      throw new BadRequestException(
+        `${n} agent(s) de la base du personnel y sont rattachés : désactivez-la plutôt.`,
       );
     if (await this.users.exist({ where: { structureId: id } }))
       throw new BadRequestException(
@@ -544,16 +688,21 @@ export class CircuitService implements OnModuleInit {
       while (s && !vus.has(s.id)) {
         vus.add(s.id);
         circuit.push(this.etape('EXTERNE', s, null));
-        if (s.type === 'DDEPPSA' || s.type === 'DIRECTION_GENERALE') break;
+        // Jusqu'au DDEPPSA ou à la direction générale (pas au cabinet ni au ministère)
+        if (
+          s.type === 'DDEPPSA' ||
+          (TYPES_STRUCTURE[s.type]?.niveau ?? 9) <= NIVEAU_FIN_CIRCUIT
+        )
+          break;
         if (decideur === 'LIEU_SERVICE') break;
         s = s.parentId
           ? await this.structures.findOne({ where: { id: s.parentId } })
           : null;
       }
-      const centrale = circuit.some((e) =>
-        ['SERVICE', 'DIRECTION_CENTRALE', 'DIRECTION_GENERALE'].includes(
-          e.type,
-        ),
+      const centrale = circuit.some(
+        (e) =>
+          TYPES_STRUCTURE[e.type]?.perimetre === 'CENTRAL' ||
+          TYPES_STRUCTURE[e.type]?.perimetre === 'POLITIQUE',
       );
       if (
         !centrale &&

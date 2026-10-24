@@ -2,6 +2,7 @@ import { Controller, Get } from '@nestjs/common';
 import { InjectDataSource } from '@nestjs/typeorm';
 import { DataSource } from 'typeorm';
 import { Public, Roles, ROLES_TRAITEMENT } from './auth/auth';
+import { ParametresService } from './core/core.service';
 
 type Ligne = Record<string, string | number | null>;
 
@@ -11,7 +12,10 @@ const REFUSEE = `(decision IS NOT DISTINCT FROM 'REJETEE' OR (decision IS NULL A
 
 @Controller()
 export class DashboardController {
-  constructor(@InjectDataSource() private readonly db: DataSource) {}
+  constructor(
+    @InjectDataSource() private readonly db: DataSource,
+    private readonly params: ParametresService,
+  ) {}
 
   @Public()
   @Get('sante')
@@ -56,45 +60,85 @@ export class DashboardController {
   @Roles(...ROLES_TRAITEMENT)
   @Get('tableau-de-bord')
   async tableau() {
-    const [agents] = await this.db.query<Ligne[]>(`
-      SELECT count(*)::int AS total,
-        count(*) FILTER (WHERE "lotPublicationId" IS NOT NULL)::int AS "textesRecus",
-        count(*) FILTER (WHERE jsonb_array_length(anomalies) > 0)::int AS anomalies
-      FROM agent`);
-    const affectations = await this.db.query<Ligne[]>(
-      `SELECT statut, count(*)::int AS n FROM affectation GROUP BY 1`,
-    );
-    const notes = await this.db.query<Ligne[]>(
-      `SELECT module, statut, count(*)::int AS n FROM note_service GROUP BY 1, 2`,
-    );
-    const [recos] = await this.db.query<Ligne[]>(
-      `SELECT count(*) FILTER (WHERE statut = 'EN_ATTENTE')::int AS "enAttente", count(*)::int AS total FROM recommandation`,
-    );
-    // Demandes retirées exclues ; état : décision du circuit, sinon instruction des anciens dossiers
-    // (mêmes règles que la liste des mutations : total = en cours + en instance + accordées + refusées)
-    const [mutations] = await this.db.query<Ligne[]>(`
-      SELECT count(*)::int AS total,
-        count(*) FILTER (WHERE ${ACCORDEE})::int AS accordees,
-        count(*) FILTER (WHERE ${REFUSEE})::int AS refusees,
-        count(*) FILTER (WHERE decision = 'EN_INSTANCE')::int AS "enInstance",
-        count(*) FILTER (WHERE NOT ${ACCORDEE} AND NOT ${REFUSEE}
-                           AND decision IS DISTINCT FROM 'EN_INSTANCE')::int AS "enCours"
-      FROM demande_mutation WHERE NOT retiree`);
-    // Textes reçus par paquet (un envoi de la FP)
-    const lots = await this.db.query<Ligne[]>(`
-      SELECT p.numero, p."dateReception"::text AS "dateReception", count(a.id)::int AS agents,
-        count(f.id) FILTER (WHERE f.statut = 'AFFECTE')::int AS affectes,
-        count(DISTINCT l.id)::int AS lots
-      FROM paquet_reception p JOIN lot_publication l ON l."paquetId" = p.id
-      LEFT JOIN agent a ON a."lotPublicationId" = l.id
-      LEFT JOIN affectation f ON f."agentId" = a.id
-      GROUP BY p.id ORDER BY p."dateReception" NULLS LAST, p.numero`);
+    // Tout le pays en un seul aller-retour (sous-requêtes agrégées) ; les paquets à part, en parallèle
+    const [[t], lots] = await Promise.all([
+      this.db.query<Record<string, unknown>[]>(
+        `SELECT
+          (SELECT json_build_object(
+             'total', count(*),
+             'textesRecus', count(*) FILTER (WHERE "lotPublicationId" IS NOT NULL),
+             'anomalies', count(*) FILTER (WHERE jsonb_array_length(anomalies) > 0)) FROM agent) AS agents,
+          (SELECT coalesce(json_agg(x), '[]') FROM (SELECT statut, count(*)::int AS n FROM affectation GROUP BY 1) x) AS affectations,
+          (SELECT coalesce(json_agg(x), '[]') FROM (SELECT module, statut, count(*)::int AS n FROM note_service GROUP BY 1, 2) x) AS notes,
+          (SELECT json_build_object(
+             'enAttente', count(*) FILTER (WHERE statut = 'EN_ATTENTE'),
+             'avisDirecteur', count(*) FILTER (WHERE statut = 'EN_ATTENTE' AND etape = 'AVIS_DIRECTEUR'),
+             'decisionDg', count(*) FILTER (WHERE statut = 'EN_ATTENTE' AND etape = 'DECISION_DG'),
+             'total', count(*)) FROM recommandation) AS recommandations,
+          (SELECT json_build_object(
+             'total', count(*) FILTER (WHERE mutation),
+             'accordees', count(*) FILTER (WHERE mutation AND accordee),
+             'refusees', count(*) FILTER (WHERE mutation AND refusee),
+             'enInstance', count(*) FILTER (WHERE mutation AND decision = 'EN_INSTANCE'),
+             'enCours', count(*) FILTER (WHERE mutation AND NOT accordee AND NOT refusee AND decision IS DISTINCT FROM 'EN_INSTANCE'),
+             'anomalies', count(*) FILTER (WHERE mutation AND NOT accordee AND NOT refusee AND jsonb_array_length(anomalies) > 0),
+             'autres', count(*) FILTER (WHERE NOT mutation),
+             'autresEnCours', count(*) FILTER (WHERE NOT mutation AND "etapeCourante" IS NOT NULL),
+             'enRetard', count(*) FILTER (WHERE "etapeCourante" IS NOT NULL
+                AND (circuit -> "etapeCourante" ->> 'arriveeLe')::timestamptz < now() - interval '7 days'))
+           FROM (SELECT d.decision, d.anomalies, d.circuit, d."etapeCourante",
+                   ${ACCORDEE.replaceAll('decision', 'd.decision').replaceAll('"instructionMinistre"', 'd."instructionMinistre"')} AS accordee,
+                   ${REFUSEE.replaceAll('decision', 'd.decision').replaceAll('"instructionMinistre"', 'd."instructionMinistre"')} AS refusee,
+                   (d."typePrestation" IS NULL OR d."typePrestation" ~ '^(MUTATION|PERMUTATION)' OR t."motifMutation" IS NOT NULL) AS mutation
+                 FROM demande_mutation d LEFT JOIN type_prestation t ON t.code = d."typePrestation"
+                 WHERE NOT d.retiree) m) AS demandes,
+          (SELECT json_build_object(
+             'total', count(*) FILTER (WHERE admise),
+             'complets', count(*) FILTER (WHERE admise AND complet),
+             'incomplets', count(*) FILTER (WHERE admise AND NOT complet),
+             'aControler', count(*) FILTER (WHERE contentieux->>'etat' = 'EN_COURS'),
+             'aDecider', count(*) FILTER (WHERE contentieux->>'etat' = 'CONTROLE'),
+             'sansStructure', count(*) FILTER (WHERE admise AND "structureId" IS NULL),
+             'doublons', (SELECT count(*) FROM (SELECT 1 FROM agent_recense WHERE "dateNaissance" IS NOT NULL
+                 GROUP BY "nomNormalise", "dateNaissance" HAVING count(*) > 1) x),
+             'parStatut', (SELECT coalesce(json_object_agg(statut, n), '{}') FROM (
+                SELECT statut, count(*)::int AS n FROM agent_recense
+                 WHERE coalesce(contentieux->>'etat', 'CONFIRME') = 'CONFIRME' GROUP BY 1) s))
+           FROM (SELECT complet, contentieux, "structureId",
+                   coalesce(contentieux->>'etat', 'CONFIRME') = 'CONFIRME' AS admise FROM agent_recense) a) AS personnel,
+          (SELECT json_build_object(
+             'volontaires', count(*) FILTER (WHERE population = 'VOLONTAIRE' AND statut = 'EN_POSTE'),
+             'communautaires', count(*) FILTER (WHERE population = 'COMMUNAUTAIRE' AND statut = 'EN_POSTE'),
+             'sansCategorie', count(*) FILTER (WHERE statut = 'EN_POSTE' AND categorie IS NULL),
+             'sansDepartement', count(*) FILTER (WHERE statut = 'EN_POSTE' AND "departementId" IS NULL)) FROM volontaire) AS registre,
+          (SELECT coalesce(json_agg(x), '[]') FROM (
+             SELECT population, statut, effectif, total FROM etat_bourse WHERE mois = to_char(now(), 'YYYY-MM')) x) AS "paiementsDuMois",
+          (SELECT json_build_object('ecoles', count(DISTINCT "structureId"), 'classes', count(*)) FROM classe
+             WHERE "anneeScolaire" = $1) AS ecoles`,
+        [this.params.get('ANNEE_SCOLAIRE')],
+      ),
+      // Textes reçus par paquet (un envoi de la FP)
+      this.db.query<Ligne[]>(`
+        SELECT p.numero, p."dateReception"::text AS "dateReception", count(a.id)::int AS agents,
+          count(f.id) FILTER (WHERE f.statut = 'AFFECTE')::int AS affectes,
+          count(DISTINCT l.id)::int AS lots
+        FROM paquet_reception p JOIN lot_publication l ON l."paquetId" = p.id
+        LEFT JOIN agent a ON a."lotPublicationId" = l.id
+        LEFT JOIN affectation f ON f."agentId" = a.id
+        GROUP BY p.id ORDER BY p."dateReception" NULLS LAST, p.numero`),
+    ]);
+    const d = t.demandes as Record<string, number>;
     return {
-      agents,
-      affectations,
-      notes,
-      recommandations: recos,
-      mutations,
+      ...t,
+      // Noms d'avant, gardés pour les écrans qui les lisent
+      mutations: {
+        total: d.total,
+        accordees: d.accordees,
+        refusees: d.refusees,
+        enCours: d.enCours,
+        enInstance: d.enInstance,
+      },
+      anneeScolaire: this.params.get('ANNEE_SCOLAIRE'),
       lots,
     };
   }

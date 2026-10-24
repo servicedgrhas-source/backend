@@ -15,7 +15,13 @@ import {
   titreDepartement,
 } from './referentiels';
 import { motsDuNom, ressemblance } from './ressemblance';
-import { ageRevolu, dateEnLettres, lireDate, romainVersEntier } from './texte';
+import {
+  ageRevolu,
+  codeCategorie,
+  dateEnLettres,
+  lireDate,
+  romainVersEntier,
+} from './texte';
 
 const P = {
   ageLimite: 30,
@@ -365,5 +371,22 @@ describe('Ressemblance des noms (même personne écrite autrement)', () => {
   it('deux personnes différentes', () => {
     expect(r('MOUANDA Jean', 'MOUANDA Paul')).toBeNull();
     expect(r('MOUANDA Jean', 'KIMBOUALA Jean')).toBeNull();
+  });
+});
+
+describe('Catégorie écrite à la main (âge de la retraite)', () => {
+  it('reconnaît les écritures courantes', () => {
+    expect(codeCategorie('I')).toBe('I');
+    expect(codeCategorie('Cat. II')).toBe('II');
+    expect(codeCategorie('catégorie 3')).toBe('III');
+    expect(codeCategorie('Catégorie III')).toBe('III');
+    expect(codeCategorie('Hors catégorie')).toBe('HORS_CATEGORIE');
+    expect(codeCategorie('HC')).toBe('HORS_CATEGORIE');
+  });
+  it('ne devine pas une catégorie inconnue', () => {
+    expect(codeCategorie('')).toBeNull();
+    expect(codeCategorie(null)).toBeNull();
+    expect(codeCategorie('IV')).toBeNull();
+    expect(codeCategorie('Instituteur')).toBeNull();
   });
 });

@@ -1,3 +1,4 @@
+import { distance } from './ressemblance';
 import { cleCompacte, normaliser, sansPrefixeNumero } from './texte';
 
 /* ------------------------------------------------------------------ */
@@ -38,7 +39,7 @@ const ALIAS_DEPARTEMENTS: [RegExp, string][] = [
   [/^(CUVETTE|CUEVTTE|CUVVETTE|CUVET)/, 'CUVETTE'],
   [/^(BRAZZAVILLE|BRAEZZAVILLE|BZV|BRAZA)/, 'BRAZZAVILLE'],
   [/^(POINTENOIRE|PNOIRE|PNR)/, 'POINTE_NOIRE'],
-  [/^(KOUILOU|KOUIOU|KOUILO)/, 'KOUILOU'],
+  [/^(KOUILOU|KOUIOU|KOUILO|KUOILOU)/, 'KOUILOU'],
   [/^(LEKOUMOU|LEKOUMO)/, 'LEKOUMOU'],
   [/^LIKOUALA/, 'LIKOUALA'],
   [/^(NIARI|NIARIE)/, 'NIARI'],
@@ -54,7 +55,17 @@ export function codeDepartement(brut: unknown): string | null {
   if (!s) return null;
   const k = cleCompacte(s);
   for (const [re, code] of ALIAS_DEPARTEMENTS) if (re.test(k)) return code;
-  return null;
+  // Faute de frappe (« Dloue-Lefini », « Kuoilou », « Brazzavile », « Pointa-Noire ») :
+  // nom du département à deux lettres près, en tête du texte
+  let meilleur: { code: string; d: number } | null = null;
+  for (const dep of DEPARTEMENTS) {
+    const nom = cleCompacte(dep.nom);
+    if (nom.length < 4) continue;
+    const d = distance(k.slice(0, nom.length), nom);
+    if (d <= (nom.length >= 8 ? 2 : 1) && (!meilleur || d < meilleur.d))
+      meilleur = { code: dep.code, d };
+  }
+  return meilleur?.code ?? null;
 }
 
 /** "DEPARTEMENT SCOLAIRE DE LA BOUENZA" */

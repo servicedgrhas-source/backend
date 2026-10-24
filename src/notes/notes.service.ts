@@ -38,6 +38,7 @@ import {
   type AvisConformite,
 } from '../entities';
 import { MutationService } from '../mutation/mutation.service';
+import { AffectationsPersonnelService } from '../recensement/affectations-personnel.service';
 import { DIPLOMES_ENROLEMENT } from '../enrolement/enrolement.service';
 
 export interface Colonne {
@@ -199,6 +200,7 @@ export class NotesService {
     private readonly campagnes: Repository<CampagneEnrolement>,
     @InjectRepository(Structure)
     private readonly structures: Repository<Structure>,
+    private readonly personnel: AffectationsPersonnelService,
   ) {}
 
   private annee(
@@ -1030,6 +1032,9 @@ export class NotesService {
       numero,
       dateSignature,
     });
+    // Note signée : elle entre dans la fiche du personnel de chaque personne (sans faire attendre)
+    if (n.module === 'AFFECTATION')
+      void this.personnel.synchroniser().catch(() => undefined);
     return { ok: true };
   }
 
@@ -1190,7 +1195,47 @@ export class NotesService {
       action: string;
       detail: string;
       depuis: number | null;
+      /** Page à ouvrir quand ce n'est pas une note (agents ajoutés au recensement…). */
+      lien?: string;
     }[] = [];
+    // Agents ajoutés au recensement (absents de la base) : contrôle, puis décision du DG
+    const etapeRecensement =
+      u.role === 'DG'
+        ? {
+            etat: 'CONTROLE',
+            action: 'RECENSEMENT_DECISION',
+            onglet: 'decider',
+          }
+        : ['CHEF_SERVICE', 'DIRECTEUR', 'BUREAU_ETUDES', 'ADMIN'].includes(
+              u.role,
+            )
+          ? {
+              etat: 'EN_COURS',
+              action: 'RECENSEMENT_CONTROLE',
+              onglet: 'controler',
+            }
+          : null;
+    if (etapeRecensement) {
+      const [r] = await this.notes.query<
+        { n: number; plusAncien: string | null }[]
+      >(
+        `SELECT count(*)::int AS n, min(contentieux->>'ouvertLe') AS "plusAncien" FROM agent_recense WHERE contentieux->>'etat' = $1`,
+        [etapeRecensement.etat],
+      );
+      if (r?.n)
+        notes.push({
+          id: `recensement-${etapeRecensement.onglet}`,
+          libelle: `Recensement : ${r.n} agent(s) ajouté(s), absents de la base`,
+          module: 'RECENSEMENT',
+          action: etapeRecensement.action,
+          detail:
+            u.role === 'DG'
+              ? 'Contrôlés par le bureau du contrôle : acceptez-les dans la base, ou rejetez-les.'
+              : 'Vérifiez chaque fiche (pièces, même personne déjà dans la base ?) et donnez votre avis au DG.',
+          depuis: jours(r.plusAncien ? new Date(r.plusAncien) : null),
+          lien: `/recensement?onglet=${etapeRecensement.onglet}`,
+        });
+    }
     const validees = await this.notes.find({ where: { statut: 'VALIDEE' } });
     for (const n of validees) {
       const avis = n.conformite ?? [];
