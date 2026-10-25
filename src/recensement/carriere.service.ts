@@ -8,11 +8,16 @@ import { Repository } from 'typeorm';
 import type { UtilisateurConnecte } from '../auth/auth';
 import { StockageService } from '../common/stockage';
 import { cleCompacte } from '../common/texte';
-import { JournalService } from '../core/core.service';
+import { JournalService, ParametresService } from '../core/core.service';
 import { AgentRecense, EvenementCarriere, Referentiel } from '../entities';
 import type { ChampFiche } from './configuration';
 import { parcoursDe, RecensementService } from './recensement.service';
-import { estVide, lireValeur } from './valeurs';
+import {
+  estVide,
+  lireValeur,
+  prochainAvancement,
+  valeurLisible,
+} from './valeurs';
 
 /**
  * Dossier de carrière d'un agent (DG, réunion de cadrage du 21/10/2026) : tout ce qui lui est
@@ -28,23 +33,68 @@ import { estVide, lireValeur } from './valeurs';
 const SITUATION = ['GRADE', 'CATEGORIE', 'ECHELLE', 'ECHELON', 'INDICE_SOLDE'];
 export const TYPES_CARRIERE: Record<
   string,
-  { libelle: string; champs: string[]; aide?: string }
+  {
+    libelle: string;
+    champs: string[];
+    aide?: string;
+    /** Ancien type : il s'affiche encore, mais ne se choisit plus pour un nouvel événement. */
+    ancien?: boolean;
+  }
 > = {
   ENTREE: {
-    libelle: 'Situation à l’entrée',
+    libelle: 'Intégration ou engagement (situation à l’entrée)',
     champs: SITUATION,
-    aide: 'Grade, échelle et échelon au recrutement ou à l’intégration.',
+    aide: 'Fonctionnaire : arrêté ou décret d’intégration (et de titularisation). Contractuel : arrêté ou décret d’engagement. Grade, échelle et échelon à l’entrée.',
   },
-  TITULARISATION: { libelle: 'Titularisation', champs: SITUATION },
-  AVANCEMENT_ECHELON: {
-    libelle: 'Avancement d’échelon',
-    champs: ['ECHELON', 'INDICE_SOLDE'],
+  PROMOTION: {
+    libelle: 'Promotion (fonctionnaire)',
+    champs: SITUATION,
+    aide: 'Ordinaire tous les 2 ans ; arrêté de promotion.',
   },
-  AVANCEMENT_GRADE: { libelle: 'Avancement de grade', champs: SITUATION },
+  AVANCEMENT: {
+    libelle: 'Avancement (contractuel)',
+    champs: SITUATION,
+    aide: 'Ordinaire tous les 2 ans et 4 mois ; arrêté d’avancement.',
+  },
+  EXCEPTIONNEL: {
+    libelle: 'Promotion ou avancement exceptionnel',
+    champs: SITUATION,
+    aide: 'Agent excellent promu avant le délai (ex. 1 an et 8 mois), selon le décret.',
+  },
   RECLASSEMENT: {
     libelle: 'Reclassement',
     champs: SITUATION,
-    aide: 'Après un nouveau diplôme, par exemple.',
+    aide: 'Grade supérieur grâce à un diplôme supérieur, avant ou après l’intégration ; arrêté de reclassement.',
+  },
+  RCA: {
+    libelle: 'Révision de la carrière administrative (fonctionnaire)',
+    champs: SITUATION,
+    aide: 'Changement de grade après 3 ans d’ancienneté et une formation sanctionnée par un diplôme supérieur ; arrêté.',
+  },
+  TITULARISATION: {
+    libelle: 'Titularisation (contractuel devenu fonctionnaire)',
+    champs: SITUATION,
+    aide: 'Au premier échelon, à la demande de l’agent ; arrêté de titularisation.',
+  },
+  RSA: {
+    libelle: 'Révision de la situation administrative (contractuel)',
+    champs: SITUATION,
+    aide: 'Contractuel titularisé : prise en compte de son ancienneté et, le cas échéant, de sa nouvelle qualification ; arrêté.',
+  },
+  REINTEGRATION: {
+    libelle: 'Réintégration',
+    champs: SITUATION,
+    aide: 'Agent radié, déserteur… repris avec la situation qu’il avait.',
+  },
+  AVANCEMENT_ECHELON: {
+    libelle: 'Avancement d’échelon',
+    champs: ['ECHELON', 'INDICE_SOLDE'],
+    ancien: true,
+  },
+  AVANCEMENT_GRADE: {
+    libelle: 'Avancement de grade',
+    champs: SITUATION,
+    ancien: true,
   },
   AFFECTATION: {
     libelle: 'Affectation (antérieure au système)',
@@ -93,11 +143,14 @@ export interface EvenementDto {
   commentaire?: string | null;
   /** Mettre la fiche à jour (non : événement ancien, pour l'historique seulement). */
   reporter?: boolean;
+  /** Modification d'un événement déjà saisi avec un ancien type : gardé tel quel. */
+  ancienAccepte?: boolean;
 }
 
 export interface ElementCarriere {
   genre:
     | 'STATUT'
+    | 'GRADE'
     | 'AFFECTATION'
     | 'MUTATION'
     | 'PRESTATION'
@@ -106,6 +159,8 @@ export interface ElementCarriere {
   id: string;
   date: string | null;
   type: string | null;
+  /** Colonne « Nature » : intégration, engagement, promotion, affectation… */
+  nature: string;
   intitule: string;
   acte: string | null;
   lieu: string | null;
@@ -149,11 +204,40 @@ const court = (v: unknown, n: number) =>
 const ordre = (a: EvenementCarriere, b: EvenementCarriere) =>
   (a.dateEffet ?? '').localeCompare(b.dateEffet ?? '') ||
   a.creeLe.getTime() - b.creeLe.getTime();
-const ajouterMois = (date: string, mois: number) => {
-  const d = new Date(`${date}T00:00:00Z`);
-  d.setUTCMonth(d.getUTCMonth() + mois);
-  return d.toISOString().slice(0, 10);
+
+/** Acte d'entrée selon le statut : le fonctionnaire est intégré, le contractuel engagé. */
+const ENTREE: Record<
+  string,
+  { nature: string; premier: string; suite: string }
+> = {
+  FONCTIONNAIRE: {
+    nature: 'Intégration',
+    premier: 'Intégration comme fonctionnaire',
+    suite: 'Intégration : devient fonctionnaire',
+  },
+  CONTRACTUEL: {
+    nature: 'Engagement',
+    premier: 'Engagement comme contractuel',
+    suite: 'Engagement : devient contractuel',
+  },
 };
+
+/**
+ * Lieu de service lisible : « À la disposition de la DDEPPSA Pool » devient « DDEPPSA Pool », le
+ * nom développé d'une direction départementale devient « DDEPPSA » (DG, 24/10/2026).
+ */
+export function lieuCourt(lieu: string | null | undefined): string | null {
+  const t = (lieu ?? '').replace(/\s+/g, ' ').trim();
+  if (!t) return null;
+  const dispo = /^[àa] la disposition de (la |l[’'])?(.+)$/i.exec(t);
+  if (dispo) return dispo[2];
+  const ddep =
+    /^direction d[ée]partementale de l[’']enseignement pr[ée]scolaire.*?(?:\(([^)]+)\))?$/i.exec(
+      t,
+    );
+  if (ddep) return `DDEPPSA${ddep[1] ? ` ${ddep[1]}` : ''}`;
+  return t;
+}
 
 @Injectable()
 export class CarriereService {
@@ -167,6 +251,7 @@ export class CarriereService {
     private readonly rec: RecensementService,
     private readonly journal: JournalService,
     private readonly stockage: StockageService,
+    private readonly params: ParametresService,
   ) {}
 
   /** Rubriques actives de la fiche, par code. */
@@ -197,6 +282,7 @@ export class CarriereService {
         code,
         libelle: t.libelle,
         aide: t.aide ?? null,
+        ancien: !!t.ancien,
         rubriques: t.champs
           .map((c) => ch.get(c))
           .filter((c): c is ChampFiche => !!c)
@@ -228,7 +314,8 @@ export class CarriereService {
 
     // 1. Statuts successifs
     const parcours = parcoursDe(a);
-    parcours.forEach((e, i) =>
+    parcours.forEach((e, i) => {
+      const entree = ENTREE[e.statut];
       elements.push({
         genre: 'STATUT',
         id: `statut-${i}`,
@@ -237,19 +324,64 @@ export class CarriereService {
           e.depuis ??
           (parcours.length === 1 ? texte(a.donnees.DATE_RECRUTEMENT) : null),
         type: e.statut,
-        intitule:
-          i === 0
-            ? `Entrée comme ${libelleStatut(e.statut).toLowerCase()}`
+        nature: entree?.nature ?? 'Recrutement',
+        intitule: entree
+          ? i === 0
+            ? entree.premier
+            : entree.suite
+          : i === 0
+            ? `Recrutement comme ${libelleStatut(e.statut).toLowerCase()}`
             : `Devient ${libelleStatut(e.statut).toLowerCase()}`,
-        acte: e.texte,
+        // Un seul statut : son texte est celui de la fiche (nature et référence)
+        acte:
+          e.texte ??
+          (parcours.length === 1 ? this.texteEntree(a.donnees, ch) : null),
         lieu: null,
         changements: [],
         commentaire: null,
         fichier: false,
         origine: e.par,
         modifiable: false,
-      }),
-    );
+      });
+    });
+
+    // Grade et échelon successifs saisis dans la fiche
+    const grades = (
+      Array.isArray(a.donnees.PROMOTIONS) ? a.donnees.PROMOTIONS : []
+    ) as Record<string, unknown>[];
+    const colNature = ch
+      .get('PROMOTIONS')
+      ?.colonnes.find((x) => x.code === 'NATURE');
+    grades.forEach((l, i) => {
+      if (!l || typeof l !== 'object') return;
+      const nature =
+        colNature?.options.find((o) => o.code === l.NATURE)?.libelle ??
+        texte(l.NATURE) ??
+        'Changement de grade ou d’échelon';
+      elements.push({
+        genre: 'GRADE',
+        id: `grade-${i}`,
+        date: texte(l.DATE),
+        type: texte(l.NATURE),
+        nature: nature.replace(/\s*\((fonctionnaire|contractuel)\)$/, ''),
+        intitule: nature,
+        acte: texte(l.TEXTE),
+        lieu: null,
+        changements: (
+          [
+            ['GRADE', 'Grade'],
+            ['ECHELON', 'Échelon'],
+          ] as const
+        ).flatMap(([champ, libelle]) => {
+          const vers = texte(l[champ]);
+          return vers ? [{ champ, libelle, de: null, vers }] : [];
+        }),
+        commentaire: null,
+        fichier: false,
+        origine: 'Fiche (grade et échelon successifs)',
+        modifiable: false,
+      });
+    });
 
     // 2. Affectations de la fiche (notes signées, affectations anciennes)
     const lignes = (
@@ -263,13 +395,14 @@ export class CarriereService {
         id: `affectation-${i}`,
         date: l.DATE ?? this.dateDansNote(l.NOTE),
         type: null,
+        nature: 'Affectation',
         intitule: /enr[ôo]lement/i.test(l.NOTE ?? '')
           ? 'Affectation comme volontaire'
           : i === 0
             ? 'Première affectation'
             : 'Affectation',
         acte: l.NOTE ?? null,
-        lieu: l.LIEU ?? null,
+        lieu: lieuCourt(l.LIEU),
         changements: [],
         commentaire: l.DATE ? `Prise de service le ${dateFr(l.DATE)}` : null,
         fichier: false,
@@ -285,6 +418,7 @@ export class CarriereService {
         id: `demande-${m.id}`,
         date: m.dateSignature,
         type: m.typePrestation,
+        nature: m.prestation ? 'Prestation' : 'Mutation',
         intitule: m.prestation ?? 'Mutation',
         acte: m.numero
           ? `Note n° ${m.numero}${m.dateSignature ? ` du ${dateFr(m.dateSignature)}` : ''}`
@@ -315,7 +449,7 @@ export class CarriereService {
     >(
       `SELECT id, annee, to_char(date, 'YYYY-MM-DD') AS date, "competenceProfessionnelle" AS pro,
               "competenceSociale" AS social, globale, appreciation, decision, evaluateur
-         FROM evaluation_agent WHERE "agentId" = $1`,
+         FROM evaluation_agent WHERE "agentId" = $1 AND "valideeLe" IS NOT NULL`,
       [id],
     );
     for (const e of evaluations)
@@ -324,6 +458,7 @@ export class CarriereService {
         id: `evaluation-${e.id}`,
         date: e.date,
         type: null,
+        nature: 'Évaluation',
         intitule: `Évaluation ${e.annee} : ${e.appreciation.toLowerCase()} (${String(e.globale).replace('.', ',')}/5)`,
         acte: null,
         lieu: null,
@@ -351,6 +486,10 @@ export class CarriereService {
         id: e.id,
         date: e.dateEffet,
         type: e.type,
+        nature: (t?.libelle ?? 'Carrière').replace(
+          /\s*\((fonctionnaire|contractuel|contractuel devenu fonctionnaire|situation à l’entrée)\)$/,
+          '',
+        ),
         intitule: t?.libelle ?? e.type,
         acte: this.acte(e),
         lieu: texte(e.nouveau.LIEU_SERVICE),
@@ -396,20 +535,58 @@ export class CarriereService {
       return rang.get(x)! - rang.get(y)!;
     });
 
+    const lisible = (k: string) => {
+      const x = ch.get(k);
+      return x ? valeurLisible(x, a.donnees[k]) || null : null;
+    };
+    const enfants = (
+      Array.isArray(a.donnees.ENFANTS) ? a.donnees.ENFANTS : []
+    ) as Record<string, unknown>[];
     return {
       agent: {
         id: a.id,
         numeroFiche: a.numeroFiche,
         nomComplet: a.nomComplet,
         dateNaissance: a.dateNaissance,
+        lieuNaissance: lisible('LIEU_NAISSANCE'),
+        genre: lisible('GENRE'),
+        nationalite: lisible('NATIONALITE'),
         matricule: a.matricule,
         statut: a.statut,
         libelleStatut: libelleStatut(a.statut),
+      },
+      famille: {
+        situationMatrimoniale: lisible('SITUATION_MATRIMONIALE'),
+        nombreEnfants: texte(a.donnees.NOMBRE_ENFANTS),
+        enfants: enfants
+          .filter((x) => x && typeof x === 'object')
+          .map((x) => ({
+            nom: texte(x.NOM),
+            naissance: texte(x.NAISSANCE),
+            pere: texte(x.PERE),
+            mere: texte(x.MERE),
+          })),
+      },
+      signature: {
+        titre: this.params.get('DG_TITRE'),
+        nom: this.params.get('DG_NOM') || null,
+        lieu: this.params.get('LIEU_SIGNATURE'),
       },
       situation: await this.situation(a, evs),
       elements,
       ...this.catalogue(),
     };
+  }
+
+  /** « Arrêté n° 21996/MFPTSS/DGFP du 31/12/2025 » : nature et référence du texte d'entrée. */
+  private texteEntree(d: Record<string, unknown>, ch: Map<string, ChampFiche>) {
+    const ref = texte(d.TEXTE_RECRUTEMENT);
+    if (!ref) return null;
+    const c = ch.get('NATURE_TEXTE_RECRUTEMENT');
+    const nature = c ? valeurLisible(c, d.NATURE_TEXTE_RECRUTEMENT) : '';
+    return nature && !cleCompacte(ref).startsWith(cleCompacte(nature))
+      ? `${nature} ${ref}`
+      : ref;
   }
 
   private acte(e: EvenementCarriere) {
@@ -475,7 +652,7 @@ export class CarriereService {
     );
   }
 
-  /** Situation actuelle : statut, grade, échelon depuis quand, prochain avancement d'échelon. */
+  /** Situation actuelle : statut, grade, dernière promotion (ou dernier avancement) et le prochain. */
   private async situation(a: AgentRecense, evs: EvenementCarriere[]) {
     const ch = this.champs();
     const d = a.donnees;
@@ -497,11 +674,22 @@ export class CarriereService {
           },
         ]),
     );
-    // Échelon : depuis le dernier événement qui l'a changé, sinon la date du grade
+    if (valeurs.LIEU_SERVICE?.valeur)
+      valeurs.LIEU_SERVICE.valeur = lieuCourt(valeurs.LIEU_SERVICE.valeur);
+    // Dernière promotion (fonctionnaire) ou dernier avancement (contractuel), puis le prochain dû
     const dernier = [...evs]
       .reverse()
-      .find((e) => 'ECHELON' in e.nouveau && e.dateEffet);
-    const echelonDepuis = dernier?.dateEffet ?? texte(d.DATE_GRADE);
+      .find(
+        (e) => ('ECHELON' in e.nouveau || 'GRADE' in e.nouveau) && e.dateEffet,
+      );
+    const av = prochainAvancement(this.rec.config.get(), a.statut, {
+      ...d,
+      DATE_GRADE:
+        [texte(d.DATE_GRADE), dernier?.dateEffet]
+          .filter((x): x is string => !!x)
+          .sort()
+          .at(-1) ?? null,
+    });
     const echelle = texte(d.ECHELLE)
       ? await this.refs.findOne({
           where: { type: 'ECHELLE', code: cleCompacte(d.ECHELLE) },
@@ -513,7 +701,17 @@ export class CarriereService {
     const dernierEchelon = !!nombre && !!echelon && echelon >= nombre;
     return {
       valeurs,
-      echelonDepuis,
+      // Fonctionnaire : « date de dernière promotion » ; contractuel : « date du dernier avancement »
+      avancement: av
+        ? {
+            ...av,
+            libelle:
+              av.nature === 'PROMOTION'
+                ? 'Date de dernière promotion'
+                : 'Date du dernier avancement',
+          }
+        : null,
+      echelonDepuis: av?.origine === 'DERNIER' ? av.depuis : null,
       echelle: echelle
         ? {
             libelle: echelle.libelle,
@@ -521,10 +719,7 @@ export class CarriereService {
             nombreEchelons: nombre,
           }
         : null,
-      prochainEchelon:
-        echelonDepuis && duree && !dernierEchelon
-          ? ajouterMois(echelonDepuis, duree)
-          : null,
+      prochainEchelon: av && !dernierEchelon ? av.prochain : null,
       dernierEchelon,
     };
   }
@@ -535,6 +730,10 @@ export class CarriereService {
   private lire(dto: EvenementDto) {
     const t = TYPES_CARRIERE[dto.type];
     if (!t) throw new BadRequestException('Choisissez le type d’événement.');
+    if (t.ancien && !dto.ancienAccepte)
+      throw new BadRequestException(
+        `« ${t.libelle} » n’est plus proposé : choisissez promotion (fonctionnaire) ou avancement (contractuel).`,
+      );
     const dateEffet = dto.dateEffet?.trim();
     if (!dateEffet || !DATE.test(dateEffet))
       throw new BadRequestException('Indiquez la date d’effet.');
@@ -601,9 +800,9 @@ export class CarriereService {
       avant[k] = d[k] ?? null;
       d[k] = e.nouveau[k];
     }
-    // Nouveau grade : la date du grade suit
+    // Nouveau grade ou nouvel échelon : la date de la dernière promotion (ou du dernier avancement) suit
     if (
-      champs.includes('GRADE') &&
+      (champs.includes('GRADE') || champs.includes('ECHELON')) &&
       this.champs().has('DATE_GRADE') &&
       e.dateEffet
     ) {

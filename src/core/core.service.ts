@@ -59,6 +59,14 @@ export const PARAMETRES_DEFAUT: Record<string, [string, string]> = {
     '300',
     'Point indiciaire : salaire brut = indice × point indiciaire',
   ],
+  EDT_JOURS: [
+    '1,2,3,4,5,6',
+    'Emplois du temps : jours de cours (1 = lundi … 6 = samedi ; le samedi, la matinée seulement)',
+  ],
+  EDT_CRENEAUX: [
+    '07:30-08:25, 08:25-09:20, 09:20-10:15, 10:30-11:25, 11:25-12:20, 12:20-13:15, 15:00-15:55, 15:55-16:50, 16:50-17:45',
+    'Emplois du temps : créneaux d’une heure de cours (début-fin, séparés par des virgules) ; avant 13 h, le matin (vague A), après, l’après-midi (vague B)',
+  ],
   HEURES_ENSEIGNANT: [
     '20',
     'Heures de cours par semaine d’un enseignant du collège et du lycée : les heures des classes divisées par ce nombre donnent les enseignants nécessaires',
@@ -70,7 +78,12 @@ export const PARAMETRES_DEFAUT: Record<string, [string, string]> = {
   SIGNATAIRE_TITRE: ['Le Ministre,', 'Titre du signataire des notes'],
   SIGNATAIRE_NOM: ['Jean-Luc MOUTHOU', 'Nom du signataire des notes'],
   LIEU_SIGNATURE: ['Brazzaville', 'Lieu de signature (« Fait à … »)'],
-  REFERENCE_NOTE: ['MEPPSA-CAB-DGRHAS-DRSC', 'Suffixe du numéro de note'],
+  // Le numéro dit le chemin de la note, du cabinet au service qui l'a initiée (DG, 24/10/2026 :
+  // le Service de recrutement à la fin)
+  REFERENCE_NOTE: [
+    'MEPPSA-CAB-DGRHAS-DRSC-SR',
+    'Suffixe du numéro de note : le chemin hiérarchique, du cabinet au service qui a initié la note',
+  ],
   PIED_PAGE_DROITE: [
     'MEPPSA {an}',
     'Mention en bas à droite des notes ({an} = année d’édition)',
@@ -214,6 +227,30 @@ export class ParametresService {
   async charger() {
     const tous = await this.repo.find();
     this.cache = new Map(tous.map((p) => [p.cle, p.valeur]));
+    await this.miseAJourReference();
+  }
+
+  /**
+   * Numéro des notes (DG, 24/10/2026) : le suffixe va jusqu'au service qui a initié la note, le
+   * Service de recrutement. Une seule fois : un suffixe enregistré tel quel (l'ancien par défaut)
+   * reçoit « -SR » ; un suffixe que le DG a écrit autrement est gardé.
+   */
+  private async miseAJourReference() {
+    const MARQUE = 'MIGRATION_REFERENCE_SR_20261024';
+    if (this.cache.has(MARQUE)) return;
+    if (this.cache.get('REFERENCE_NOTE') === 'MEPPSA-CAB-DGRHAS-DRSC') {
+      await this.repo.update(
+        { cle: 'REFERENCE_NOTE' },
+        { valeur: PARAMETRES_DEFAUT.REFERENCE_NOTE[0] },
+      );
+      this.cache.set('REFERENCE_NOTE', PARAMETRES_DEFAUT.REFERENCE_NOTE[0]);
+    }
+    await this.repo.save({
+      cle: MARQUE,
+      valeur: new Date().toISOString(),
+      description: 'Suffixe des notes complété par le Service de recrutement',
+    });
+    this.cache.set(MARQUE, 'fait');
   }
 
   get(cle: string): string {
@@ -242,6 +279,29 @@ export class ParametresService {
       if (!an || Number(an[2]) !== Number(an[1]) + 1)
         throw new BadRequestException(
           'Écrivez l’année scolaire sous la forme « 2027-2028 » (deux années qui se suivent).',
+        );
+      return;
+    }
+    // Emplois du temps : des jours de 1 à 6, des créneaux « 07:30-08:25 » qui se suivent
+    if (cle === 'EDT_JOURS') {
+      const j = valeur.split(/[,; ]+/).filter(Boolean);
+      if (!j.length || j.some((x) => !/^[1-6]$/.test(x)))
+        throw new BadRequestException(
+          'Écrivez les jours de cours avec des chiffres de 1 (lundi) à 6 (samedi), séparés par des virgules : 1,2,3,4,5,6.',
+        );
+      return;
+    }
+    if (cle === 'EDT_CRENEAUX') {
+      const morceaux = valeur
+        .split(/[,;\n]+/)
+        .map((x) => x.trim())
+        .filter(Boolean);
+      const faux = morceaux.find(
+        (x) => !/^\d{1,2}:\d{2}\s*-\s*\d{1,2}:\d{2}$/.test(x),
+      );
+      if (!morceaux.length || faux)
+        throw new BadRequestException(
+          `Créneau « ${faux ?? ''} » mal écrit : écrivez chaque heure de cours comme 07:30-08:25, séparées par des virgules.`,
         );
       return;
     }

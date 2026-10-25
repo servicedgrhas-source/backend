@@ -249,6 +249,7 @@ export class ReferentielsService implements OnApplicationBootstrap {
         );
       }
       await this.assurerTypesMatiere();
+      await this.corrigerNiveaux();
       // Fiches du personnel sans établissement : rattachées d'après leur lieu de service
       const n = await this.rec.rattacherAutomatiquement();
       if (n)
@@ -264,6 +265,18 @@ export class ReferentielsService implements OnApplicationBootstrap {
    * Base chargée avant l'arrivée des types de matières (24/10/2026) : la liste est ajoutée une fois,
    * et le type des matières reprises est écrit avec la bonne orthographe.
    */
+  /** Orthographe des niveaux repris de l'ancien système (« Sixiéme » : les classes en prennent le nom). */
+  private async corrigerNiveaux() {
+    for (const [code, faux, juste] of [
+      ['6EME', 'Sixiéme', 'Sixième'],
+      ['5EME', 'Cinquiéme', 'Cinquième'],
+    ])
+      await this.refs.query(
+        `UPDATE referentiel SET libelle = $3, "libelleNormalise" = $4 WHERE type = 'NIVEAU' AND code = $1 AND libelle = $2`,
+        [code, faux, juste, normaliser(juste)],
+      );
+  }
+
   private async assurerTypesMatiere() {
     if (await this.refs.exist({ where: { type: 'TYPE_MATIERE' } })) return;
     await this.refs.save(

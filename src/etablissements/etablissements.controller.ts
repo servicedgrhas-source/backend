@@ -17,6 +17,7 @@ import {
   type UtilisateurConnecte,
 } from '../auth/auth';
 import { EtablissementsService } from './etablissements.service';
+import { EmploisDuTempsService } from './emplois-du-temps.service';
 
 const nombre = (v?: string) => (v && /^\d+$/.test(v) ? Number(v) : undefined);
 const QUOI = {
@@ -29,7 +30,29 @@ const QUOI = {
 @Roles(...ROLES_TRAITEMENT, 'DDEPPSA', 'STRUCTURE')
 @Controller('etablissements')
 export class EtablissementsController {
-  constructor(private readonly service: EtablissementsService) {}
+  constructor(
+    private readonly service: EtablissementsService,
+    private readonly edt: EmploisDuTempsService,
+  ) {}
+
+  /** Emploi du temps de l'année (général et par enseignant). */
+  @Get(':id/emploi-du-temps')
+  emploiDuTemps(
+    @Utilisateur() u: UtilisateurConnecte,
+    @Param('id', ParseIntPipe) id: number,
+    @Query('annee') annee?: string,
+  ) {
+    return this.edt.lire(u, id, annee);
+  }
+
+  @Post(':id/emploi-du-temps/generer')
+  genererEmploiDuTemps(
+    @Utilisateur() u: UtilisateurConnecte,
+    @Param('id', ParseIntPipe) id: number,
+    @Body() body: { anneeScolaire?: string },
+  ) {
+    return this.edt.generer(u, id, body?.anneeScolaire);
+  }
 
   @Get()
   liste(
@@ -125,5 +148,28 @@ export class EtablissementsController {
       : q === 'salle'
         ? this.service.enregistrerSalle(u, id, x, dto)
         : this.service.enregistrerClasse(u, id, x, dto);
+  }
+}
+
+/**
+ * Structures administratives (DG, 24/10/2026) : du cabinet aux services, des DDEPPSA aux
+ * inspections, chacune avec son personnel.
+ */
+@Roles(...ROLES_TRAITEMENT, 'DDEPPSA')
+@Controller('structures')
+export class StructuresController {
+  constructor(private readonly service: EtablissementsService) {}
+
+  @Get('arbre')
+  arbre(@Utilisateur() u: UtilisateurConnecte) {
+    return this.service.arbreStructures(u);
+  }
+
+  @Get(':id/personnel')
+  personnel(
+    @Utilisateur() u: UtilisateurConnecte,
+    @Param('id', ParseIntPipe) id: number,
+  ) {
+    return this.service.personnelStructure(u, id);
   }
 }

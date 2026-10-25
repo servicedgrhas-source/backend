@@ -98,6 +98,19 @@ export function lireNumeroEnregistrement(brut: unknown): number | null {
   return n > 0 ? n : null;
 }
 
+/** Champs lourds laissés hors de la liste des demandes (lus dans la fiche de chaque demande). */
+const HORS_LISTE = [
+  'circuit',
+  'justificatif',
+  'observation',
+  'origine',
+  'avisDdeppsaCommentaire',
+  'avisDgrhasCommentaire',
+  'instructionCommentaire',
+  'decisionMotivation',
+  'motifRetrait',
+] as const;
+
 /** Motif des demandes qui ne sont pas des mutations (le motif est obligatoire en base). */
 export const MOTIF_PRESTATION = 'PRESTATION';
 
@@ -111,11 +124,18 @@ export function anomaliesMutation(d: Partial<DemandeMutation>): string[] {
   }
   if (!d.departementOrigineId) a.push("Département d'origine non reconnu");
   if (!d.departementSolliciteId) a.push('Département sollicité non reconnu');
+  // Mutation interne : on reste dans le département (décidée par le DDEPPSA) ; les autres en sortent
+  const interne = d.typePrestation === 'MUTATION_DEPARTEMENT';
   if (
     d.departementOrigineId &&
-    d.departementOrigineId === d.departementSolliciteId
+    d.departementSolliciteId &&
+    interne !== (d.departementOrigineId === d.departementSolliciteId)
   )
-    a.push("Département sollicité identique au département d'origine");
+    a.push(
+      interne
+        ? "Mutation à l'intérieur du département, mais vers un autre département : changez le type de demande"
+        : "Département sollicité identique au département d'origine",
+    );
   if (d.typeAgent === 'FONCTIONNAIRE' && !d.matricule)
     a.push('Matricule solde non communiqué');
   if (!d.grade) a.push('Grade non renseigné');
@@ -258,7 +278,13 @@ export class MutationService {
       liste = liste.filter(
         (d) => groupeDuCycle(codeCycle(d.cycle)) === f.groupe,
       );
-    return liste;
+    // Liste : sans le circuit ni les longs textes (avis, motivations, observations), lus dans la
+    // fiche de chaque demande ; la réponse pèse plusieurs fois moins.
+    return liste.map((d) => {
+      const leger: Partial<typeof d> = { ...d };
+      for (const k of HORS_LISTE) delete leger[k];
+      return leger as Omit<typeof d, (typeof HORS_LISTE)[number]>;
+    });
   }
 
   async obtenir(id: string, u?: UtilisateurConnecte) {
@@ -366,8 +392,29 @@ export class MutationService {
    * Dossier papier reçu à la DGRHAS et saisi ici : il entre au bureau de la DGRHAS (la voie
    * hiérarchique a eu lieu sur papier).
    */
+  /**
+   * Un agent ajouté au recensement n'est pas encore dans la base tant que le bureau du contrôle et le
+   * DG ne l'ont pas accepté (DG, 24/10/2026) : il ne peut pas encore déposer de demande.
+   */
+  private async verifierAgent(agentId: number | null | undefined) {
+    if (!agentId) return;
+    const [a] = await this.repo.query<{ etat: string | null }[]>(
+      `SELECT contentieux->>'etat' AS etat FROM agent_recense WHERE id = $1`,
+      [agentId],
+    );
+    if (a?.etat === 'EN_COURS' || a?.etat === 'CONTROLE')
+      throw new BadRequestException(
+        'Cet agent a été ajouté au recensement et n’est pas encore accepté dans la base (contrôle, puis décision du DG) : il ne peut pas encore déposer de demande.',
+      );
+    if (a?.etat === 'REJETE')
+      throw new BadRequestException(
+        'Cet agent a été rejeté par le DG lors du recensement : il ne peut pas déposer de demande.',
+      );
+  }
+
   async creer(u: UtilisateurConnecte, dto: DemandeDto) {
     const champs = this.normaliserDto(dto);
+    await this.verifierAgent(champs.agentId);
     const numero = await this.prochainNumero();
     const typePrestation = this.typeDe(dto);
     const c = await this.circuit.construire(
@@ -386,7 +433,7 @@ export class MutationService {
         champs.dateEnregistrement ?? new Date().toISOString().slice(0, 10),
       cle: `S|${numero}`,
       saisiePar: u.nom,
-      anomalies: anomaliesMutation(champs),
+      anomalies: anomaliesMutation({ ...champs, typePrestation }),
       typePrestation,
       canal: 'SAISIE',
       circuit: c.circuit,
@@ -469,6 +516,7 @@ export class MutationService {
     par?: UtilisateurConnecte,
   ) {
     const champs = this.normaliserDto(dto);
+    await this.verifierAgent(champs.agentId);
     if (!champs.departementOrigineId)
       throw new BadRequestException('Choisissez votre département actuel.');
     if (

@@ -8,7 +8,7 @@ import { In, Repository } from 'typeorm';
 import { AffectationService } from '../affectation/affectation.service';
 import { deriver } from '../affectation/calcul';
 import { IndexNoms } from '../common/index-noms';
-import { JournalService } from '../core/core.service';
+import { JournalService, ParametresService } from '../core/core.service';
 import {
   Affectation,
   AgentRecense,
@@ -34,6 +34,17 @@ const dateFr = (d: string | null | undefined) =>
   d ? d.slice(0, 10).split('-').reverse().join('/') : null;
 const referenceNote = (numero: string | null, date: string | null) =>
   `Note n° ${numero ?? '?'}${date ? ` du ${dateFr(date)}` : ''}`;
+/**
+ * Référence d'une note signée telle qu'elle est imprimée (DG, 24/10/2026) : « Note de service
+ * n° 220/MEPPSA-CAB-DGRHAS-DRSC-SR du 15/10/2026 » ; le suffixe dit le chemin hiérarchique, du
+ * cabinet au service qui a initié la note.
+ */
+const referenceComplete = (
+  numero: string | null,
+  suffixe: string | null | undefined,
+  date: string | null,
+) =>
+  `Note de service n° ${numero ?? '?'}${suffixe ? `/${suffixe}` : ''}${date ? ` du ${dateFr(date)}` : ''}`;
 
 type LigneAffectation = { NOTE?: string; DATE?: string; LIEU?: string };
 
@@ -56,6 +67,7 @@ export class AffectationsPersonnelService implements OnApplicationBootstrap {
     private readonly affSvc: AffectationService,
     private readonly rec: RecensementService,
     private readonly journal: JournalService,
+    private readonly params: ParametresService,
   ) {}
 
   onApplicationBootstrap() {
@@ -222,7 +234,12 @@ export class AffectationsPersonnelService implements OnApplicationBootstrap {
     const nouvelles: AgentRecense[] = [];
 
     for (const n of notes) {
-      const note = referenceNote(n.numero, n.dateSignature);
+      const note = referenceComplete(
+        n.numero,
+        (n.contenu as { entete?: { reference?: string } } | null)?.entete
+          ?.reference ?? this.params.get('REFERENCE_NOTE'),
+        n.dateSignature,
+      );
       // Grade imprimé sur la note validée (« Inst.C. » : contractuel)
       const grades = new Map<string, string>();
       for (const s of (
@@ -246,7 +263,7 @@ export class AffectationsPersonnelService implements OnApplicationBootstrap {
         const lieu =
           aff.etablissement ??
           aff.structure ??
-          (dep ? `À la disposition de la DDEPPSA ${dep.nom}` : null);
+          (dep ? `DDEPPSA ${dep.nom}` : null);
         const typeTexte = /DECRET/i.test(ag.typeTexte ?? '')
           ? 'Décret'
           : 'Arrêté';

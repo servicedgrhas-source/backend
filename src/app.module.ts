@@ -39,6 +39,7 @@ import {
   ParametresService,
 } from './core/core.service';
 import { DashboardController } from './dashboard.controller';
+import { MenuController } from './menu.controller';
 import { ENTITES } from './entities';
 import { optionsBase } from './base-de-donnees';
 import { SessionService } from './auth/session.service';
@@ -58,8 +59,12 @@ import { ExcelRecensementService } from './recensement/excel-recensement.service
 import { RecensementController } from './recensement/recensement.controller';
 import { RecensementService } from './recensement/recensement.service';
 import { CarriereService } from './recensement/carriere.service';
-import { EtablissementsController } from './etablissements/etablissements.controller';
+import {
+  EtablissementsController,
+  StructuresController,
+} from './etablissements/etablissements.controller';
 import { EtablissementsService } from './etablissements/etablissements.service';
+import { EmploisDuTempsService } from './etablissements/emplois-du-temps.service';
 import { SuiviController } from './etablissements/suivi.controller';
 import { SuiviService } from './etablissements/suivi.service';
 import { DemandesController } from './circuit/demandes.controller';
@@ -95,6 +100,7 @@ import { ReferentielsService } from './referentiels/referentiels.service';
   controllers: [
     DemandesController,
     EtablissementsController,
+    StructuresController,
     SuiviController,
     CoreController,
     ConfigurationController,
@@ -104,6 +110,7 @@ import { ReferentielsService } from './referentiels/referentiels.service';
     NotesController,
     MutationController,
     DashboardController,
+    MenuController,
     DossiersController,
     CircuitController,
     PortailController,
@@ -155,6 +162,7 @@ import { ReferentielsService } from './referentiels/referentiels.service';
     RecensementService,
     CarriereService,
     EtablissementsService,
+    EmploisDuTempsService,
     SuiviService,
     DemandesService,
     ExcelRecensementService,

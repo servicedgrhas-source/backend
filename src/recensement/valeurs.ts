@@ -55,13 +55,15 @@ export function lireDateFichier(v: unknown): string | null {
     /^(\d{1,2})[-/ ]([A-Z]{3})[A-Z]*[-/ ](\d{2}|\d{4})$/,
   );
   if (!m || !MOIS_EN[m[2]]) return null;
+  // « JUILLET » et « JUIN » commencent tous deux par JUI
+  const mois = /^\d{1,2}[-/ ]JUIL/.test(normaliser(v)) ? 7 : MOIS_EN[m[2]];
   let an = Number(m[3]);
   if (m[3].length === 2) {
     const siecle = new Date().getFullYear() % 100;
     an += an > siecle ? 1900 : 2000;
   }
   const j = Number(m[1]);
-  const mo = MOIS_EN[m[2]];
+  const mo = mois;
   const dt = new Date(Date.UTC(an, mo - 1, j));
   if (dt.getUTCMonth() !== mo - 1 || dt.getUTCDate() !== j) return null;
   return `${an}-${String(mo).padStart(2, '0')}-${String(j).padStart(2, '0')}`;
@@ -85,12 +87,18 @@ const morceaux = (v: unknown, virgule = true): string[] =>
     .filter((s) => s && !estVide(s));
 
 function option(ch: ChampFiche, brut: unknown) {
-  const k = cleCompacte(brut);
-  if (!k) return null;
-  return (
+  const trouver = (k: string) =>
     ch.options.find((o) =>
       [o.code, o.libelle, ...o.synonymes].some((x) => cleCompacte(x) === k),
-    ) ?? null
+    ) ?? null;
+  const k = cleCompacte(brut);
+  if (!k) return null;
+  // « 2-PRIMAIRE », « 4-COLLÈGE » : numéro d'ordre devant le libellé
+  const sansNumero = cleCompacte(
+    enTexte(brut).replace(/^\s*\d{1,2}\s*-\s*(?=\D)/, ''),
+  );
+  return (
+    trouver(k) ?? (sansNumero && sansNumero !== k ? trouver(sansNumero) : null)
   );
 }
 
@@ -199,6 +207,17 @@ export function lireValeur(ch: ChampFiche, brut: unknown): ValeurLue {
   }
 }
 
+/** Valeur reconnue d'une case « liste » (code, libellé ou autre écriture), sinon null. */
+function lireCaseListe(c: ColonneTableau, brut: unknown) {
+  const k = cleCompacte(brut);
+  if (!k) return null;
+  return (
+    c.options.find((x) =>
+      [x.code, x.libelle, ...x.synonymes].some((y) => cleCompacte(y) === k),
+    ) ?? null
+  );
+}
+
 /** Case d'une ligne de tableau. */
 function lireCase(c: ColonneTableau, brut: unknown): ValeurLue {
   if (estVide(brut)) return { valeur: null };
@@ -217,10 +236,7 @@ function lireCase(c: ColonneTableau, brut: unknown): ValeurLue {
         : { valeur: null, erreur: `« ${t} » n’est pas un nombre` };
     }
     case 'LISTE': {
-      const k = cleCompacte(t);
-      const o = c.options.find((x) =>
-        [x.code, x.libelle, ...x.synonymes].some((y) => cleCompacte(y) === k),
-      );
+      const o = lireCaseListe(c, t);
       return { valeur: o ? o.code : t.slice(0, 200) };
     }
     default:
@@ -255,9 +271,13 @@ function lireTableau(ch: ChampFiche, brut: unknown): ValeurLue {
         .map((x) => x.trim());
       cases = {};
       if (parts.length === 1) {
+        // Une seule case : la valeur d'une liste (« CEPE » d'une ancienne liste de diplômes) va dans
+        // cette liste, un texte (« Arrêté n° 12 du… ») dans la première case de texte
+        const liste = cols.find(
+          (c) => c.type === 'LISTE' && lireCaseListe(c, parts[0]),
+        );
         const texte = cols.find((c) => c.type === 'TEXTE');
-        if (texte) cases[texte.code] = parts[0];
-        else cases[cols[0].code] = parts[0];
+        cases[(liste ?? texte ?? cols[0]).code] = parts[0];
       } else cols.forEach((c, i) => (cases[c.code] = parts[i] ?? null));
     }
     // Date vide mais écrite dans le texte (« Arrêté n° 12 du 12/05/2018 ») : elle remplit la case de date
@@ -283,7 +303,10 @@ function lireTableau(ch: ChampFiche, brut: unknown): ValeurLue {
 
 /** Texte d'une ligne de tableau : « 12/05/2018 | Arrêté n° 1234 | Avancement d’échelon ». */
 export function ligneLisible(ch: ChampFiche, l: unknown): string {
-  if (!l || typeof l !== 'object') return enTexte(l);
+  if (!l || typeof l !== 'object') {
+    const liste = (ch.colonnes ?? []).find((c) => c.type === 'LISTE');
+    return (liste && lireCaseListe(liste, l)?.libelle) || enTexte(l);
+  }
   const x = l as Record<string, unknown>;
   return (ch.colonnes ?? [])
     .map((c) => {
@@ -388,6 +411,12 @@ export function evaluer(
       !conditionRemplie(r.alors, donnees)
     )
       aVerifier.push(`REGLE:${r.code}`);
+  // Un fonctionnaire n'entre que par un arrêté ou un décret d'intégration (DG, 24/10/2026)
+  if (
+    statut === 'FONCTIONNAIRE' &&
+    donnees.NATURE_TEXTE_RECRUTEMENT === 'NOTE_SERVICE'
+  )
+    aVerifier.push(`REGLE:${REGLE_INTEGRATION}`);
   return {
     champs,
     pieces,
@@ -433,3 +462,144 @@ export function valeurLisible(
 
 export const libelleStatut = (statuts: StatutAgent[], code: string) =>
   statuts.find((s) => s.code === code)?.libelle ?? code;
+
+const ISO = /^\d{4}-\d{2}-\d{2}$/;
+const ajouterMois = (date: string, mois: number) => {
+  const d = new Date(`${date}T00:00:00Z`);
+  const jour = d.getUTCDate();
+  d.setUTCDate(1);
+  d.setUTCMonth(d.getUTCMonth() + mois);
+  // 31 août + 6 mois : fin février, pas début mars
+  const dernier = new Date(
+    Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 0),
+  ).getUTCDate();
+  d.setUTCDate(Math.min(jour, dernier));
+  return d.toISOString().slice(0, 10);
+};
+
+export interface Avancement {
+  /** « promotion » (fonctionnaire) ou « avancement » (contractuel). */
+  nature: 'PROMOTION' | 'AVANCEMENT';
+  /** Date de la dernière promotion ou du dernier avancement (sinon de l'entrée). */
+  depuis: string;
+  /** « dernière promotion » ou « entrée » : d'où vient la date de départ. */
+  origine: 'DERNIER' | 'ENTREE';
+  /** Date à laquelle le prochain est dû. */
+  prochain: string;
+}
+
+/**
+ * Prochaine promotion (fonctionnaire, tous les 2 ans) ou prochain avancement (contractuel, tous les
+ * 2 ans et 4 mois) : à compter de la date la plus récente entre « date de la dernière promotion ou du
+ * dernier avancement » et les lignes « grade et échelon successifs » ; sans elles, de l'entrée
+ * (intégration ou engagement). Les délais se règlent dans la configuration du personnel.
+ */
+export function prochainAvancement(
+  c: Pick<ConfigRecensement, 'delaiPromotionMois' | 'delaiAvancementMois'>,
+  statut: string,
+  donnees: Record<string, unknown>,
+): Avancement | null {
+  // Fiche de gestion de la carrière administrative (DG) : après sa titularisation ou la révision
+  // de sa situation administrative, le contractuel est géré comme un fonctionnaire
+  const lignes = Array.isArray(donnees.PROMOTIONS)
+    ? (donnees.PROMOTIONS as Record<string, unknown>[])
+    : [];
+  const gereCommeFonctionnaire = lignes.some(
+    (l) =>
+      l &&
+      typeof l === 'object' &&
+      ['TITULARISATION', 'RSA'].includes(enTexte(l.NATURE)),
+  );
+  const nature =
+    statut === 'FONCTIONNAIRE' ||
+    (statut === 'CONTRACTUEL' && gereCommeFonctionnaire)
+      ? 'PROMOTION'
+      : statut === 'CONTRACTUEL'
+        ? 'AVANCEMENT'
+        : null;
+  if (!nature) return null;
+  const mois =
+    nature === 'PROMOTION' ? c.delaiPromotionMois : c.delaiAvancementMois;
+  if (!mois) return null;
+  const dates = [
+    donnees.DATE_GRADE,
+    ...(Array.isArray(donnees.PROMOTIONS)
+      ? (donnees.PROMOTIONS as Record<string, unknown>[]).map((l) =>
+          l && typeof l === 'object' ? l.DATE : null,
+        )
+      : []),
+  ]
+    .map((x) => enTexte(x))
+    .filter((x) => ISO.test(x))
+    .sort();
+  const dernier = dates.at(-1);
+  const entree = enTexte(donnees.DATE_RECRUTEMENT);
+  const depuis = dernier ?? (ISO.test(entree) ? entree : null);
+  if (!depuis) return null;
+  return {
+    nature,
+    depuis,
+    origine: dernier ? 'DERNIER' : 'ENTREE',
+    prochain: ajouterMois(depuis, mois),
+  };
+}
+
+/** Contrôle fixe : texte d'entrée d'un fonctionnaire qui n'est ni un arrêté ni un décret. */
+export const REGLE_INTEGRATION = 'INTEGRATION_PAR_ARRETE';
+export const LIBELLE_REGLE_INTEGRATION =
+  'Fonctionnaire entré par une note de service : son texte d’intégration est un arrêté ou un décret';
+
+const motNom = (m: string) =>
+  m
+    .toLowerCase()
+    .replace(
+      /(^|[-'’])(\p{L})/gu,
+      (_, sep: string, l: string) => sep + l.toUpperCase(),
+    );
+
+/**
+ * « NOM Prénoms » (DG, 24/10/2026) : les mots du début écrits en majuscules sont le nom, le reste
+ * les prénoms, avec une majuscule au début. Un nom tout en majuscules (fichier Excel) reste tel
+ * quel : on ne peut pas savoir où commencent les prénoms ; tout en minuscules, le premier mot est
+ * pris pour le nom.
+ */
+export function formaterNom(brut: string): string {
+  const mots = brut.replace(/\s+/g, ' ').trim().split(' ').filter(Boolean);
+  if (!mots.length) return '';
+  const lettres = (m: string) => m.replace(/[^\p{L}]/gu, '');
+  const majuscule = (m: string) =>
+    !!lettres(m) && lettres(m) === lettres(m).toUpperCase();
+  if (mots.every(majuscule)) return mots.join(' ');
+  let n = 0;
+  while (n < mots.length && majuscule(mots[n])) n++;
+  if (!n) n = 1;
+  return [
+    ...mots.slice(0, n).map((m) => m.toUpperCase()),
+    ...mots.slice(n).map(motNom),
+  ].join(' ');
+}
+
+/**
+ * Rubriques qui se déduisent d'une autre : la nature du texte de recrutement (arrêté, décret, note
+ * de service) d'après le début de sa référence, quand elle n'est pas choisie.
+ */
+export function deduire(
+  c: ConfigRecensement,
+  donnees: Record<string, unknown>,
+) {
+  const nature = c.champs.find(
+    (x) => x.code === 'NATURE_TEXTE_RECRUTEMENT' && x.actif,
+  );
+  if (nature && estVide(donnees.NATURE_TEXTE_RECRUTEMENT)) {
+    const t = normaliser(donnees.TEXTE_RECRUTEMENT);
+    const code = /^ARRETE/.test(t)
+      ? 'ARRETE'
+      : /^DECRET/.test(t)
+        ? 'DECRET'
+        : /^NOTE/.test(t)
+          ? 'NOTE_SERVICE'
+          : null;
+    if (code && nature.options.some((o) => o.code === code))
+      donnees.NATURE_TEXTE_RECRUTEMENT = code;
+  }
+}

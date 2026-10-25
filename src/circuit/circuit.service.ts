@@ -319,8 +319,19 @@ export class CircuitService implements OnModuleInit {
       ),
     ]);
     const noms = new Map(responsables.map((r) => [r.id, r.nom]));
+    // Seulement ce que lisent l'organigramme et les listes de choix (3 000 structures et plus)
     return liste.map((s) => ({
-      ...s,
+      id: s.id,
+      type: s.type,
+      sigle: s.sigle,
+      nom: s.nom,
+      parentId: s.parentId,
+      departementId: s.departementId,
+      cycle: s.cycle,
+      typeLocalite: s.typeLocalite,
+      localite: s.localite,
+      actif: s.actif,
+      responsableInterim: s.responsableInterim,
       niveau: TYPES_STRUCTURE[s.type]?.niveau ?? null,
       posteResponsable: posteResponsable(s),
       responsable: s.responsableId

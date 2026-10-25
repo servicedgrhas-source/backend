@@ -7,7 +7,11 @@ import {
 import { InjectRepository } from '@nestjs/typeorm';
 import { In, Repository } from 'typeorm';
 import { ROLES_TRAITEMENT, type UtilisateurConnecte } from '../auth/auth';
-import { StockageService } from '../common/stockage';
+import {
+  ENVOIS_SIMULTANES,
+  parallele,
+  StockageService,
+} from '../common/stockage';
 import {
   ageRevolu,
   cleCompacte,
@@ -15,7 +19,7 @@ import {
   enTexte,
   normaliser,
 } from '../common/texte';
-import { JournalService } from '../core/core.service';
+import { JournalService, ParametresService } from '../core/core.service';
 import {
   AgentRecense,
   Departement,
@@ -30,7 +34,14 @@ import {
   ConfigRecensementService,
   type ConfigRecensement,
 } from './configuration';
-import { estVide, evaluer, lireValeur } from './valeurs';
+import {
+  deduire,
+  estVide,
+  evaluer,
+  formaterNom,
+  lireValeur,
+  prochainAvancement,
+} from './valeurs';
 import { IndexNoms } from '../common/index-noms';
 import { IndexStructures } from './rattachement';
 
@@ -71,7 +82,17 @@ export interface ChangementStatutDto {
 }
 
 const PAR_PAGE = 50;
+/** Bottin imprimé en une fois : au-delà, on filtre (par département, par type d'agent). */
+const BOTTIN_MAX = 20000;
 const jourIso = () => new Date().toISOString().slice(0, 10);
+/** 24 → « 2 ans », 28 → « 2 ans et 4 mois ». */
+export const duree = (mois: number) => {
+  const a = Math.floor(mois / 12);
+  const m = mois % 12;
+  return [a && `${a} an${a > 1 ? 's' : ''}`, m && `${m} mois`]
+    .filter(Boolean)
+    .join(' et ');
+};
 export const numeroFiche = (id: number) => `REC-${String(id).padStart(6, '0')}`;
 
 /** Étape du parcours d'un agent (statut, date d'effet, texte). */
@@ -112,6 +133,7 @@ export class RecensementService {
     private readonly journal: JournalService,
     private readonly stockage: StockageService,
     private readonly affectation: AffectationService,
+    private readonly params: ParametresService,
   ) {}
 
   /* ------------------------------ Périmètre ------------------------------ */
@@ -174,16 +196,9 @@ export class RecensementService {
       where: { actif: true },
       order: { ordre: 'ASC', nom: 'ASC' },
     });
+    // Toutes les structures, DGRHAS comprise : son personnel se rattache comme celui des autres
+    // directions (DG, 24/10/2026 : « le personnel du cabinet, des directions… »)
     return toutes
-      .filter(
-        (s) =>
-          ![
-            'BUREAU_DGRHAS',
-            'SERVICE_DGRHAS',
-            'DIRECTION_DGRHAS',
-            'DGRHAS',
-          ].includes(s.type),
-      )
       .filter((s) =>
         'tous' in p
           ? true
@@ -264,7 +279,8 @@ export class RecensementService {
 
   /* ------------------------------ Lecture ------------------------------ */
 
-  async liste(u: UtilisateurConnecte, f: FiltresAgents) {
+  /** Conditions SQL des filtres de la base du personnel (liste, bottin, export). */
+  private async filtres(u: UtilisateurConnecte, f: FiltresAgents) {
     const p = await this.perimetre(u);
     const conds: string[] = [];
     const params: unknown[] = [];
@@ -339,7 +355,11 @@ export class RecensementService {
         (await this.controles(u)).ids.get(f.controle) ?? new Set<number>();
       ajouter('a.id = ANY($X)', [...ids]);
     }
-    const where = conds.join(' AND ') || 'TRUE';
+    return { where: conds.join(' AND ') || 'TRUE', params };
+  }
+
+  async liste(u: UtilisateurConnecte, f: FiltresAgents) {
+    const { where, params } = await this.filtres(u, f);
     const page = Math.max(1, f.page ?? 1);
     const [{ n }] = await this.agents.query<{ n: number }[]>(
       `SELECT count(*)::int AS n FROM agent_recense a WHERE ${where}`,
@@ -348,6 +368,7 @@ export class RecensementService {
     const lignes = await this.agents.query<Record<string, unknown>[]>(
       `SELECT a.id, a."numeroFiche", a.statut, a."nomComplet", a."dateNaissance", a.matricule, a.telephone,
               a."departementId", a."structureId", s.nom AS "structureNom", a.donnees->>'LIEU_SERVICE' AS "lieuService",
+              a.donnees->>'GENRE' AS genre, a.donnees->>'LIEU_NAISSANCE' AS "lieuNaissance",
               a.taux, a.complet, a.manques, a.source, a."modifieLe", a.contentieux->>'etat' AS contentieux,
               a.contentieux->>'ouvertLe' AS "ajouteLe", a.contentieux->>'ouvertPar' AS "ajoutePar",
               a.contentieux->>'motif' AS "motifAjout", a.contentieux->>'avisControle' AS "avisControle",
@@ -359,6 +380,66 @@ export class RecensementService {
       params,
     );
     return { total: n, page, parPage: PAR_PAGE, lignes };
+  }
+
+  /**
+   * Bottin du personnel à imprimer (DG, 24/10/2026) : la liste entière, par ordre alphabétique, avec
+   * les filtres de la base (type d'agent, département…). Seules les fiches acceptées y figurent.
+   */
+  async bottin(u: UtilisateurConnecte, f: FiltresAgents) {
+    const { where, params } = await this.filtres(u, { ...f, page: undefined });
+    const lignes = await this.agents.query<
+      {
+        numeroFiche: string;
+        nomComplet: string;
+        genre: string | null;
+        statut: string;
+        dateNaissance: string | null;
+        lieuNaissance: string | null;
+        matricule: string | null;
+        lieuService: string | null;
+        departement: string | null;
+      }[]
+    >(
+      `SELECT a."numeroFiche", a."nomComplet", a.donnees->>'GENRE' AS genre, a.statut,
+              to_char(a."dateNaissance", 'YYYY-MM-DD') AS "dateNaissance", a.donnees->>'LIEU_NAISSANCE' AS "lieuNaissance",
+              a.matricule, coalesce(s.nom, a.donnees->>'LIEU_SERVICE') AS "lieuService", d.nom AS departement
+         FROM agent_recense a
+         LEFT JOIN structure s ON s.id = a."structureId"
+         LEFT JOIN departement d ON d.id = a."departementId"
+        WHERE ${where} AND coalesce(a.contentieux->>'etat', 'CONFIRME') = 'CONFIRME'
+        ORDER BY a."nomNormalise", a.id
+        LIMIT ${BOTTIN_MAX + 1}`,
+      params,
+    );
+    const c = this.config.get();
+    const statut = f.statut ? c.statuts.find((x) => x.code === f.statut) : null;
+    const dep = f.departement
+      ? (await this.departements()).parId.get(f.departement)
+      : null;
+    // Ce que la liste contient, écrit sous le titre du bottin
+    const portee = [
+      statut ? `${statut.libelle}s` : 'Tout le personnel',
+      dep && `département : ${dep.nom}`,
+      f.recherche?.trim() && `recherche « ${f.recherche.trim()} »`,
+    ]
+      .filter(Boolean)
+      .join(' · ');
+    return {
+      portee,
+      trop: lignes.length > BOTTIN_MAX,
+      max: BOTTIN_MAX,
+      lignes: lignes.slice(0, BOTTIN_MAX).map((l) => ({
+        ...l,
+        genre: l.genre === 'F' ? 'F' : l.genre === 'M' ? 'M' : null,
+        statut: c.statuts.find((x) => x.code === l.statut)?.libelle ?? l.statut,
+      })),
+      signature: {
+        titre: this.params.get('DG_TITRE'),
+        nom: this.params.get('DG_NOM') || null,
+        lieu: this.params.get('LIEU_SIGNATURE'),
+      },
+    };
   }
 
   async trouver(u: UtilisateurConnecte, id: number) {
@@ -413,6 +494,7 @@ export class RecensementService {
         nomOrigine: p.nomOrigine,
         mime: p.mime,
         taille: p.taille,
+        ligne: p.ligne,
         ajoutePar: p.ajoutePar,
         creeLe: p.creeLe,
       })),
@@ -435,13 +517,22 @@ export class RecensementService {
       const lu = lireValeur(ch, brutes[ch.code]);
       if (lu.erreur)
         throw new BadRequestException(`${ch.libelle} : ${lu.erreur}.`);
-      if (!estVide(lu.valeur)) donnees[ch.code] = lu.valeur;
+      if (!estVide(lu.valeur))
+        donnees[ch.code] =
+          ch.code === 'NOMS_PRENOMS'
+            ? formaterNom(String(lu.valeur))
+            : lu.valeur;
     }
     return donnees;
   }
 
-  /** Colonnes recopiées des rubriques (recherche, doublons, périmètre). */
+  /**
+   * Colonnes recopiées des rubriques (recherche, doublons, périmètre). Les rubriques qui se
+   * déduisent d'une autre sont remplies au passage (nature du texte de recrutement d'après sa
+   * référence), pour toutes les fiches : saisie, import, notes de service.
+   */
   async colonnes(donnees: Record<string, unknown>) {
+    deduire(this.config.get(), donnees);
     const nom = enTexte(donnees.NOMS_PRENOMS).replace(/\s+/g, ' ').trim();
     const dep = donnees.DEPARTEMENT
       ? ((await this.departements()).parCode.get(
@@ -523,14 +614,12 @@ export class RecensementService {
     const c = this.config.get();
     const existe = (code: string) =>
       c.champs.some((x) => x.code === code && x.actif);
-    if (
-      [
-        'ETABLISSEMENT',
-        'INSPECTION',
-        'DDEPPSA',
-        'SERVICE',
-        'DIRECTION_CENTRALE',
-      ].includes(s.type)
+    // « DDEPPSA Pool » plutôt que le nom développé de la direction départementale (DG, 24/10/2026)
+    if (s.type === 'DDEPPSA') d.LIEU_SERVICE = s.sigle || s.nom;
+    else if (
+      ['ETABLISSEMENT', 'INSPECTION', 'SERVICE', 'DIRECTION_CENTRALE'].includes(
+        s.type,
+      )
     )
       d.LIEU_SERVICE = s.nom;
     let insp: Structure | null = s.type === 'INSPECTION' ? s : null;
@@ -1158,9 +1247,17 @@ export class RecensementService {
     id: number,
     type: string,
     f: Express.Multer.File,
+    /** Pièce d'une ligne de tableau (l'acte de naissance du 2ᵉ enfant : 2). */
+    ligne: number | null = null,
   ) {
     const a = await this.trouver(u, id);
     const tp = this.typePiece(type);
+    // Un enfant n'a qu'un acte de naissance : le nouveau scan remplace l'ancien
+    const ancienne = ligne
+      ? await this.pieces.findOne({
+          where: { agentId: id, type: tp.code, ligne },
+        })
+      : null;
     const nom = await this.stockage.enregistrer('recensement', f);
     const p = await this.pieces.save(
       this.pieces.create({
@@ -1170,9 +1267,14 @@ export class RecensementService {
         fichier: nom,
         mime: f.mimetype,
         taille: f.size,
+        ligne,
         ajoutePar: u.nom,
       }),
     );
+    if (ancienne) {
+      await this.pieces.delete(ancienne.id);
+      await this.stockage.supprimer('recensement', ancienne.fichier);
+    }
     await this.reevaluer([a.id]);
     await this.journal.log(u, 'RECENSEMENT_PIECE', 'agent_recense', id, {
       piece: tp.libelle,
@@ -1214,22 +1316,34 @@ export class RecensementService {
     const p = await this.perimetre(u);
     const types = [...c.pieces].sort((x, y) => y.code.length - x.code.length);
     const resultats: { fichier: string; ok: boolean; message: string }[] = [];
-    const touches = new Set<number>();
+    const refuser = (f: Express.Multer.File, message: string) =>
+      resultats.push({ fichier: f.originalname, ok: false, message });
+    // Un même agent a souvent plusieurs scans dans le lot : il n'est cherché qu'une fois
+    const agentsParRef = new Map<string, AgentRecense | null>();
+    const aDeposer: {
+      i: number;
+      f: Express.Multer.File;
+      a: AgentRecense;
+      tp: (typeof c.pieces)[number];
+      ligne: number | null;
+    }[] = [];
+
+    // 1. Reconnaître chaque fichier (nom, type de pièce, agent, périmètre)
     for (const f of fichiers) {
       const base = f.originalname.replace(/\.[a-z0-9]{1,5}$/i, '');
       const k = normaliser(base).replace(/[^A-Z0-9]+/g, '_');
       const m = k.match(/^(REC_?\d+|\d+[A-Z]?|[A-Z0-9]+?)_(.+)$/);
       if (!m) {
-        resultats.push({
-          fichier: f.originalname,
-          ok: false,
-          message:
-            'Nom non reconnu : « N° de fiche_TYPE » attendu (ex. REC-000123_CNI.pdf).',
-        });
+        refuser(
+          f,
+          'Nom non reconnu : « N° de fiche_TYPE » attendu (ex. REC-000123_CNI.pdf).',
+        );
         continue;
       }
       const ref = m[1].replace('_', '');
       const reste = m[2].replace(/_\d+$/, '');
+      // « …_ACTE_NAISSANCE_ENFANT_2 » : l'acte du 2ᵉ enfant
+      const rang = Number(/_(\d{1,2})$/.exec(m[2])?.[1]) || null;
       const tp = types.find(
         (t) =>
           reste === t.code ||
@@ -1237,65 +1351,111 @@ export class RecensementService {
           cleCompacte(reste) === cleCompacte(t.code),
       );
       if (!tp) {
-        resultats.push({
-          fichier: f.originalname,
-          ok: false,
-          message: `Type de pièce « ${m[2]} » inconnu (codes : ${c.pieces.map((x) => x.code).join(', ')}).`,
-        });
+        refuser(
+          f,
+          `Type de pièce « ${m[2]} » inconnu (codes : ${c.pieces.map((x) => x.code).join(', ')}).`,
+        );
         continue;
       }
-      const num = /^REC\d+$/.test(ref)
-        ? numeroFiche(Number(ref.slice(3)))
-        : /^\d{1,6}$/.test(ref)
-          ? numeroFiche(Number(ref))
-          : null;
-      const a =
-        (num
-          ? await this.agents.findOne({ where: { numeroFiche: num } })
-          : null) ?? (await this.agents.findOne({ where: { matricule: ref } }));
+      if (!agentsParRef.has(ref)) {
+        const num = /^REC\d+$/.test(ref)
+          ? numeroFiche(Number(ref.slice(3)))
+          : /^\d{1,6}$/.test(ref)
+            ? numeroFiche(Number(ref))
+            : null;
+        agentsParRef.set(
+          ref,
+          (num
+            ? await this.agents.findOne({ where: { numeroFiche: num } })
+            : null) ??
+            (await this.agents.findOne({ where: { matricule: ref } })),
+        );
+      }
+      const a = agentsParRef.get(ref);
       if (!a) {
-        resultats.push({
-          fichier: f.originalname,
-          ok: false,
-          message: `Aucun agent avec le n° de fiche ou le matricule « ${ref} ».`,
-        });
+        refuser(
+          f,
+          `Aucun agent avec le n° de fiche ou le matricule « ${ref} ».`,
+        );
         continue;
       }
       if (!this.dansPerimetre(p, a)) {
-        resultats.push({
-          fichier: f.originalname,
-          ok: false,
-          message: `${a.nomComplet} n’est pas dans votre établissement.`,
-        });
+        refuser(f, `${a.nomComplet} n’est pas dans votre établissement.`);
         continue;
       }
       if (!/\.(pdf|jpe?g|png)$/i.test(f.originalname)) {
-        resultats.push({
-          fichier: f.originalname,
-          ok: false,
-          message: 'Seuls les PDF, JPG et PNG sont acceptés.',
-        });
+        refuser(f, 'Seuls les PDF, JPG et PNG sont acceptés.');
         continue;
       }
-      const nom = await this.stockage.enregistrer('recensement', f);
-      await this.pieces.save(
-        this.pieces.create({
-          agentId: a.id,
-          type: tp.code,
-          nomOrigine: f.originalname,
-          fichier: nom,
-          mime: f.mimetype,
-          taille: f.size,
-          ajoutePar: u.nom,
-        }),
-      );
-      touches.add(a.id);
-      resultats.push({
-        fichier: f.originalname,
-        ok: true,
-        message: `${tp.libelle} de ${a.nomComplet} (${a.numeroFiche})`,
-      });
+      aDeposer.push({ i: resultats.length, f, a, tp, ligne: rang });
+      resultats.push({ fichier: f.originalname, ok: false, message: '' });
     }
+
+    // 2. Écarter les doublons : même agent, même type, même nom de fichier et même taille
+    // (dossier de scans redéposé), déjà dans la base ou deux fois dans ce lot
+    const cle = (agentId: number, type: string, nom: string, taille: number) =>
+      `${agentId}|${type}|${nom}|${taille}`;
+    const dejaLa = new Set(
+      aDeposer.length
+        ? (
+            await this.pieces.find({
+              where: { agentId: In([...new Set(aDeposer.map((x) => x.a.id))]) },
+              select: {
+                agentId: true,
+                type: true,
+                nomOrigine: true,
+                taille: true,
+              },
+            })
+          ).map((x) => cle(x.agentId, x.type, x.nomOrigine, x.taille))
+        : [],
+    );
+    const nouveaux = aDeposer.filter(({ i, f, a, tp }) => {
+      const k = cle(a.id, tp.code, f.originalname, f.size);
+      if (!dejaLa.has(k)) return dejaLa.add(k);
+      resultats[i] = {
+        fichier: f.originalname,
+        ok: false,
+        message: `Déjà déposé : ${tp.libelle} de ${a.nomComplet} (${a.numeroFiche}).`,
+      };
+      return false;
+    });
+
+    // 3. Garder les fichiers, quelques-uns à la fois
+    const touches = new Set<number>();
+    await parallele(
+      nouveaux,
+      ENVOIS_SIMULTANES,
+      async ({ i, f, a, tp, ligne }) => {
+        try {
+          const nom = await this.stockage.enregistrer('recensement', f);
+          await this.pieces.save(
+            this.pieces.create({
+              agentId: a.id,
+              type: tp.code,
+              nomOrigine: f.originalname,
+              fichier: nom,
+              mime: f.mimetype,
+              taille: f.size,
+              ligne,
+              ajoutePar: u.nom,
+            }),
+          );
+          touches.add(a.id);
+          resultats[i] = {
+            fichier: f.originalname,
+            ok: true,
+            message: `${tp.libelle} de ${a.nomComplet} (${a.numeroFiche})`,
+          };
+        } catch (e) {
+          resultats[i] = {
+            fichier: f.originalname,
+            ok: false,
+            message: e instanceof Error ? e.message : 'Fichier non enregistré.',
+          };
+        }
+      },
+    );
     await this.reevaluer([...touches]);
     if (touches.size)
       await this.journal.log(
@@ -1361,6 +1521,8 @@ export class RecensementService {
         telephone: string | null;
         position: string | null;
         categorie: string | null;
+        statut: string;
+        carriere: Record<string, unknown>;
         manques: AgentRecense['manques'];
         nomComplet: string;
         registre: string | null;
@@ -1369,7 +1531,9 @@ export class RecensementService {
       }[]
     >(
       `SELECT a.id, a."nomNormalise", to_char(a."dateNaissance", 'YYYY-MM-DD') AS "dateNaissance", a.matricule, a.telephone,
-              a.donnees->>'POSITION' AS position, a.donnees->>'CATEGORIE' AS categorie, a.manques, a."nomComplet", v.statut AS registre,
+              a.donnees->>'POSITION' AS position, a.donnees->>'CATEGORIE' AS categorie, a.statut,
+              jsonb_build_object('DATE_GRADE', a.donnees->'DATE_GRADE', 'PROMOTIONS', a.donnees->'PROMOTIONS',
+                                 'DATE_RECRUTEMENT', a.donnees->'DATE_RECRUTEMENT') AS carriere, a.manques, a."nomComplet", v.statut AS registre,
               a.contentieux->>'etat' AS contentieux, a.distinctes
          FROM agent_recense a LEFT JOIN volontaire v ON v.id = a."volontaireId"
         WHERE ${fp.sql.replace('$X', '$1')}`,
@@ -1467,10 +1631,22 @@ export class RecensementService {
         const age = ageRevolu(l.dateNaissance, aujourdhui);
         if (age < c.ageMinimum) ajouter('AGE_MINIMUM', l.id);
         const cat = codeCategorie(l.categorie);
+        // Catégorie inconnue et aucun âge réglé : on ne suppose rien (la catégorie est signalée manquante)
         const limite = (cat && ageCategorie.get(cat)) || c.ageRetraite;
-        if (age >= limite && (!l.position || l.position === 'ACTIVITE'))
+        if (
+          limite &&
+          age >= limite &&
+          (!l.position || l.position === 'ACTIVITE')
+        )
           ajouter('AGE_RETRAITE', l.id);
       }
+      // Promotion ou avancement dû (DG, 24/10/2026) : agent en activité, accepté dans la base
+      const av =
+        (!l.position || l.position === 'ACTIVITE') &&
+        (!l.contentieux || l.contentieux === 'CONFIRME')
+          ? prochainAvancement(c, l.statut, l.carriere ?? {})
+          : null;
+      if (av && av.prochain <= aujourdhui) ajouter('AVANCEMENT_DU', l.id);
       for (const v of l.manques?.aVerifier ?? [])
         ajouter(v.startsWith('REGLE:') ? v : 'VALEUR_HORS_LISTE', l.id);
     }
@@ -1479,7 +1655,10 @@ export class RecensementService {
       MATRICULE_DOUBLE: 'Même matricule pour plusieurs agents',
       TELEPHONE_PARTAGE: `Même téléphone pour ${c.telephonePartage} agents ou plus`,
       AGE_MINIMUM: `Moins de ${c.ageMinimum} ans (date de naissance à vérifier)`,
-      AGE_RETRAITE: `Âge de la retraite atteint et encore en activité (âge de sa catégorie, sinon ${c.ageRetraite} ans)`,
+      AGE_RETRAITE: c.ageRetraite
+        ? `Âge de la retraite atteint et encore en activité (âge de sa catégorie, sinon ${c.ageRetraite} ans)`
+        : 'Âge de la retraite de sa catégorie atteint et encore en activité',
+      AVANCEMENT_DU: `Promotion (fonctionnaire, tous les ${duree(c.delaiPromotionMois)}) ou avancement (contractuel, tous les ${duree(c.delaiAvancementMois)}) dû`,
       VALEUR_HORS_LISTE: 'Valeur hors des listes de la fiche (à vérifier)',
       VOLONTAIRE_AGENT_ETAT:
         'Volontaire encore payé qui figure aussi comme fonctionnaire ou contractuel',

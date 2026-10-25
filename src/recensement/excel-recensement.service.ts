@@ -23,7 +23,7 @@ import {
   type FiltresAgents,
 } from './recensement.service';
 import { IndexNoms } from '../common/index-noms';
-import { estVide, lireValeur, valeurLisible } from './valeurs';
+import { estVide, formaterNom, lireValeur, valeurLisible } from './valeurs';
 
 const COL_NUMERO = 'N° DE LA FICHE';
 const COL_STATUT = "TYPE D'AGENT";
@@ -599,12 +599,21 @@ export class ExcelRecensementService {
         if (code === 'TELEPHONE_1' && estVide(donnees.TELEPHONE_2))
           donnees.TELEPHONE_2 = v;
       for (const x of m.composes) {
-        const brut = [l[x.nom], x.prenom ? l[x.prenom] : null]
-          .filter((v) => !estVide(v))
-          .join(' ');
+        // Nom et prénom en deux colonnes : on sait où finit le nom (« NOM Prénoms »)
+        const nomBrut = estVide(l[x.nom]) ? '' : enTexte(l[x.nom]);
+        const prenomBrut =
+          x.prenom && !estVide(l[x.prenom]) ? enTexte(l[x.prenom]) : '';
+        const brut =
+          x.champ.code === 'NOMS_PRENOMS' && nomBrut && prenomBrut
+            ? formaterNom(
+                `${nomBrut.toUpperCase()} ${prenomBrut.toLowerCase()}`,
+              )
+            : [nomBrut, prenomBrut].filter(Boolean).join(' ');
         const lu = lireValeur(x.champ, brut);
         if (!estVide(lu.valeur)) donnees[x.champ.code] = lu.valeur;
       }
+      if (typeof donnees.NOMS_PRENOMS === 'string')
+        donnees.NOMS_PRENOMS = formaterNom(donnees.NOMS_PRENOMS);
       const nom = enTexte(donnees.NOMS_PRENOMS).trim();
       if (!nom) {
         raison('Sans noms et prénoms', ligneTxt);
@@ -625,7 +634,10 @@ export class ExcelRecensementService {
       const numBrut = m.numero
         ? normaliser(l[m.numero]).replace(/\s/g, '')
         : '';
-      const num = /^(REC-?)?\d{1,6}$/.test(numBrut)
+      // Seul un n° de fiche du système (« REC-000123 ») compte : le « numéro de la fiche » d'une
+      // autre opération (enrôlement biométrique…) n'est qu'un numéro d'ordre, il désignerait la
+      // fiche d'une autre personne
+      const num = /^REC-?\d{1,6}$/.test(numBrut)
         ? numeroFiche(Number(numBrut.replace(/\D/g, '')))
         : null;
       const cle =

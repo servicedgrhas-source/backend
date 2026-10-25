@@ -1,7 +1,9 @@
 import {
   BadRequestException,
   Injectable,
+  Logger,
   NotFoundException,
+  type OnApplicationBootstrap,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { In, Repository } from 'typeorm';
@@ -15,7 +17,14 @@ import {
   SemainePresence,
 } from '../entities';
 import { RecensementService } from '../recensement/recensement.service';
+import { valeurLisible } from '../recensement/valeurs';
 import { EtablissementsService } from './etablissements.service';
+import {
+  bilanSemaine,
+  joursAttendus,
+  type Pointage,
+  retard,
+} from './presence-regles';
 
 /**
  * Suivi du personnel par les chefs de structure (DG, réunion de cadrage du 21/10/2026) :
@@ -33,8 +42,6 @@ export const STATUTS_PRESENCE: Record<string, string> = {
   ABSENT: 'Absent (non justifié)',
 };
 const JOURS = ['Lundi', 'Mardi', 'Mercredi', 'Jeudi', 'Vendredi', 'Samedi'];
-/** Sans horaire saisi : attendu du lundi au vendredi. */
-const JOURS_DEFAUT = [1, 2, 3, 4, 5];
 
 export const APPRECIATIONS = [
   '',
@@ -47,18 +54,18 @@ export const APPRECIATIONS = [
 /** Décisions proposées selon l'appréciation globale (le chef peut en écrire une autre). */
 export const DECISIONS: Record<string, string[]> = {
   'Très faible': [
-    'Formation urgente',
+    'Renforcement de capacités urgent',
     'Mise en observation avec accompagnement',
-    'Réaffectation avec formation',
+    'Réaffectation avec renforcement de capacités',
   ],
   Faible: [
-    'Formation continue recommandée',
+    'Renforcement de capacités recommandé',
     'Suivi régulier par un tuteur',
     'Plan d’amélioration personnalisé',
   ],
   Bon: [
     'Maintien au poste',
-    'Formation complémentaire encouragée',
+    'Renforcement de capacités encouragé',
     'Développement professionnel',
   ],
   'Très bon': [
@@ -73,17 +80,36 @@ export const DECISIONS: Record<string, string[]> = {
   ],
 };
 
-/** Appréciation de la note globale : 3,5 reste « bon », 4 et 4,5 « très bon », 5 « excellent ». */
+/**
+ * La moyenne de l'échelle de 1 à 5 (DG, 24/10/2026) : à 2,5, l'agent a la moyenne ; en dessous,
+ * il est dans la zone des faibles.
+ */
+export const MOYENNE = 2.5;
+
+/**
+ * Appréciation de la note globale : 2,5 (la moyenne) et 3,5 restent « bon », 4 et 4,5 « très bon »,
+ * 5 « excellent » ; 2 « faible », 1 et 1,5 « très faible ».
+ */
 export const appreciation = (globale: number) =>
-  APPRECIATIONS[Math.min(5, Math.max(1, Math.floor(globale)))];
+  APPRECIATIONS[
+    globale >= 5
+      ? 5
+      : globale >= 4
+        ? 4
+        : globale >= MOYENNE
+          ? 3
+          : globale >= 2
+            ? 2
+            : 1
+  ];
 
 /** Ce que dit l'écart entre les deux compétences (2 en professionnel et 4 en social ≠ l'inverse). */
 export function lecture(pro: number, social: number) {
-  if (pro >= 3 && social >= 3)
+  if (pro >= MOYENNE && social >= MOYENNE)
     return 'Compétent dans son métier et à l’aise avec les autres.';
-  if (pro >= 3)
+  if (pro >= MOYENNE)
     return 'Compétent dans son métier, mais relations difficiles avec son entourage.';
-  if (social >= 3)
+  if (social >= MOYENNE)
     return 'Bonnes relations avec son entourage, mais compétences professionnelles à renforcer.';
   return 'Compétences professionnelles et relations à renforcer.';
 }
@@ -97,6 +123,7 @@ const plusJours = (date: string, n: number) => {
   return iso(d);
 };
 const aujourdhui = () => iso(new Date(Date.now() + 3600_000)); // heure de Brazzaville (UTC+1)
+const anneeCivile = () => aujourdhui().slice(0, 4);
 const lundiDe = (date: string) => {
   const d = new Date(`${date}T00:00:00Z`);
   return plusJours(date, -((d.getUTCDay() + 6) % 7));
@@ -107,7 +134,9 @@ const texte = (v: unknown, n: number) =>
     : null;
 
 @Injectable()
-export class SuiviService {
+export class SuiviService implements OnApplicationBootstrap {
+  private readonly log = new Logger('Suivi');
+
   constructor(
     @InjectRepository(HoraireAgent)
     private readonly horaires: Repository<HoraireAgent>,
@@ -123,18 +152,33 @@ export class SuiviService {
     private readonly journal: JournalService,
   ) {}
 
+  /**
+   * Évaluations faites avant le passage à l'année civile (DG, 24/10/2026) : « 2026-2027 » devient
+   * l'année de leur date (« 2026 »), sauf si l'agent a déjà une évaluation cette année-là.
+   */
+  async onApplicationBootstrap() {
+    try {
+      const r = await this.evaluations.query<unknown[]>(
+        `UPDATE evaluation_agent e SET annee = to_char(e.date, 'YYYY')
+          WHERE e.annee ~ '^[0-9]{4}-[0-9]{4}$'
+            AND NOT EXISTS (SELECT 1 FROM evaluation_agent x
+                             WHERE x."agentId" = e."agentId" AND x.annee = to_char(e.date, 'YYYY'))
+          RETURNING e.id`,
+      );
+      const n = Array.isArray(r[0]) ? r[0].length : r.length;
+      if (n)
+        this.log.log(
+          `${n} évaluation(s) passée(s) de l’année scolaire à l’année civile`,
+        );
+    } catch (e) {
+      this.log.error(`Évaluations (année civile) : ${(e as Error).message}`);
+    }
+  }
+
   /* ------------------------------ Présence ------------------------------ */
 
   private lundi(date?: string) {
     return lundiDe(date && DATE.test(date) ? date : aujourdhui());
-  }
-
-  /** Jours attendus d'un agent (1 = lundi … 6 = samedi). */
-  private attendus(h: HoraireAgent | undefined) {
-    if (!h || !Object.keys(h.jours ?? {}).length) return JOURS_DEFAUT;
-    return Object.keys(h.jours)
-      .map(Number)
-      .filter((j) => j >= 1 && j <= 6);
   }
 
   /** Grille d'une semaine : agents en poste de la structure, jours attendus et pointages. */
@@ -146,6 +190,7 @@ export class SuiviService {
       (await this.etab.agentsDe([structureId])).get(structureId) ?? []
     ).filter((a) => a.enPoste);
     const ids = agents.map((a) => a.id);
+    const avant = dates.map((d) => plusJours(d, -7));
     const [horaires, saisies, validee] = await Promise.all([
       this.horaires.find({ where: { agentId: In(ids.length ? ids : [-1]) } }),
       this.presences.query<
@@ -154,30 +199,55 @@ export class SuiviService {
           date: string;
           statut: string;
           motif: string | null;
+          arrivee: string | null;
+          depart: string | null;
         }[]
       >(
-        `SELECT "agentId", to_char(date, 'YYYY-MM-DD') AS date, statut, motif FROM presence
+        // Avec la semaine d'avant : « deux semaines d'affilée sans travailler »
+        `SELECT "agentId", to_char(date, 'YYYY-MM-DD') AS date, statut, motif, arrivee, depart FROM presence
           WHERE "agentId" = ANY($1) AND date BETWEEN $2 AND $3`,
-        [ids, dates[0], dates[5]],
+        [ids, avant[0], dates[5]],
       ),
       this.semaines.findOne({ where: { structureId, lundi } }),
     ]);
     const hParAgent = new Map(horaires.map((h) => [h.agentId, h]));
     const auj = aujourdhui();
+    // Les alertes tombent en fin de semaine : semaine validée ou terminée
+    const finie = !!validee || dates[5] < auj;
     const lignes = agents.map((a) => {
       const h = hParAgent.get(a.id);
-      const jours = this.attendus(h);
+      const jours = joursAttendus(h?.jours);
+      const pts: Record<
+        string,
+        Pointage & { motif: string | null; retard: number | null }
+      > = {};
+      const precedents: Record<string, Pointage> = {};
+      for (const x of saisies) {
+        if (x.agentId !== a.id) continue;
+        if (x.date < dates[0]) precedents[x.date] = x;
+        else {
+          const jour = dates.indexOf(x.date) + 1;
+          pts[x.date] = {
+            statut: x.statut,
+            motif: x.motif,
+            arrivee: x.arrivee,
+            depart: x.depart,
+            retard: retard(h?.jours, jour, x.arrivee),
+          };
+        }
+      }
+      const bilan = bilanSemaine(h?.jours, dates, pts, {
+        dates: avant,
+        pointages: precedents,
+      });
       return {
         id: a.id,
         nomComplet: a.nomComplet,
         fonction: a.fonction,
         horaire: h?.jours ?? null,
         attendus: dates.map((_, i) => jours.includes(i + 1)),
-        saisies: Object.fromEntries(
-          saisies
-            .filter((x) => x.agentId === a.id)
-            .map((x) => [x.date, { statut: x.statut, motif: x.motif }]),
-        ),
+        saisies: pts,
+        bilan: { ...bilan, alertes: finie ? bilan.alertes : [] },
       };
     });
     // Cases attendues jusqu'à aujourd'hui encore vides
@@ -196,6 +266,8 @@ export class SuiviService {
       aujourdhui: auj,
       agents: lignes,
       manquantes,
+      finie,
+      alertes: lignes.reduce((n, l) => n + l.bilan.alertes.length, 0),
       validee: validee
         ? { par: validee.valideePar, le: validee.valideeLe }
         : null,
@@ -212,6 +284,8 @@ export class SuiviService {
       date: string;
       statut: string | null;
       motif?: string | null;
+      arrivee?: string | null;
+      depart?: string | null;
     }[],
   ) {
     await this.etab.structure(u, structureId);
@@ -221,7 +295,29 @@ export class SuiviService {
         (a) => a.id,
       ),
     );
+    const horaires = new Map(
+      (
+        await this.horaires.find({
+          where: { agentId: In([...agents].length ? [...agents] : [-1]) },
+        })
+      ).map((h) => [h.agentId, h.jours]),
+    );
     const auj = aujourdhui();
+    // Une semaine validée par le chef est close : plus aucun pointage n'y change
+    const lundis = [
+      ...new Set(
+        saisies
+          .filter((x) => DATE.test(x.date ?? ''))
+          .map((x) => lundiDe(x.date)),
+      ),
+    ];
+    const closes = lundis.length
+      ? await this.semaines.find({ where: { structureId, lundi: In(lundis) } })
+      : [];
+    if (closes.length)
+      throw new BadRequestException(
+        `Semaine du ${closes.map((s) => s.lundi.split('-').reverse().join('/')).join(', ')} déjà validée : elle n’est plus modifiable.`,
+      );
     let n = 0;
     for (const x of saisies.slice(0, 2000)) {
       if (!agents.has(Number(x.agentId)))
@@ -240,17 +336,37 @@ export class SuiviService {
       }
       if (!STATUTS_PRESENCE[x.statut])
         throw new BadRequestException('Statut de présence inconnu.');
+      // Heures d'arrivée et de départ : facultatives, seulement pour un agent venu
+      const absent = x.statut.startsWith('ABSENT');
+      const arrivee = !absent && x.arrivee ? x.arrivee : null;
+      const depart = !absent && x.depart ? x.depart : null;
+      if ((arrivee && !HEURE.test(arrivee)) || (depart && !HEURE.test(depart)))
+        throw new BadRequestException(
+          'Heure invalide : écrivez-la comme 07:30 (heures:minutes).',
+        );
+      if (arrivee && depart && depart <= arrivee)
+        throw new BadRequestException(
+          'L’heure de départ est avant l’heure d’arrivée.',
+        );
+      // Arrivé après l'heure prévue de ce jour : en retard
+      const jour = ((new Date(`${x.date}T00:00:00Z`).getUTCDay() + 6) % 7) + 1;
+      const enRetard =
+        x.statut === 'PRESENT' &&
+        (retard(horaires.get(Number(x.agentId)), jour, arrivee) ?? 0) > 0;
       await this.presences.query(
-        `INSERT INTO presence ("agentId", "structureId", date, statut, motif, "saisiPar", "saisiLe")
-         VALUES ($1, $2, $3, $4, $5, $6, now())
+        `INSERT INTO presence ("agentId", "structureId", date, statut, motif, arrivee, depart, "saisiPar", "saisiLe")
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, now())
          ON CONFLICT ("agentId", date) DO UPDATE SET statut = EXCLUDED.statut, motif = EXCLUDED.motif,
+           arrivee = EXCLUDED.arrivee, depart = EXCLUDED.depart,
            "structureId" = EXCLUDED."structureId", "saisiPar" = EXCLUDED."saisiPar", "saisiLe" = now()`,
         [
           Number(x.agentId),
           structureId,
           x.date,
-          x.statut,
+          enRetard ? 'RETARD' : x.statut,
           texte(x.motif, 200),
+          arrivee,
+          depart,
           u.nom,
         ],
       );
@@ -262,6 +378,10 @@ export class SuiviService {
   /** Le chef valide sa semaine : toutes les cases attendues jusqu'à aujourd'hui doivent être pointées. */
   async valider(u: UtilisateurConnecte, structureId: number, date?: string) {
     const g = await this.semaine(u, structureId, date);
+    if (g.validee)
+      throw new BadRequestException(
+        'Cette semaine est déjà validée : elle n’est plus modifiable.',
+      );
     if (g.manquantes)
       throw new BadRequestException(
         `${g.manquantes} journée(s) attendue(s) ne sont pas encore pointées : pointez-les avant de valider la semaine.`,
@@ -275,7 +395,14 @@ export class SuiviService {
       lundi: g.lundi,
       agents: g.agents.length,
     });
-    return { valide: true };
+    // Les alertes de fin de semaine, tout de suite visibles par le chef
+    const apres = await this.semaine(u, structureId, g.lundi);
+    return {
+      valide: true,
+      alertes: apres.agents
+        .filter((a) => a.bilan.alertes.length)
+        .map((a) => ({ agent: a.nomComplet, alertes: a.bilan.alertes })),
+    };
   }
 
   /** Jours et heures attendus d'un agent ; vide : du lundi au vendredi. */
@@ -407,6 +534,10 @@ export class SuiviService {
         GROUP BY 1, 2, 3 ORDER BY 4 DESC LIMIT 20`,
       [du, au, structures.map((s) => s.id)],
     );
+    const alertes = await this.alertesPeriode(
+      validees,
+      dues.length ? dues : lundis,
+    );
     const tot = lignes.reduce(
       (t, l) => ({
         pointages: t.pointages + l.pointages,
@@ -428,13 +559,96 @@ export class SuiviService {
       ),
       sansPointage: lignes.filter((l) => l.semainesNonValidees.length).length,
       absents,
+      alertes,
     };
+  }
+
+  /**
+   * Alertes de fin de semaine de la période (semaines validées par les chefs) : absent plus de la
+   * moitié des jours, moins de la moitié des heures, deux semaines d'affilée sans travailler.
+   */
+  private async alertesPeriode(
+    validees: { structureId: number; lundi: string }[],
+    lundis: string[],
+  ) {
+    const semaines = validees.filter((v) => lundis.includes(v.lundi));
+    if (!semaines.length) return [];
+    const structures = [...new Set(semaines.map((v) => v.structureId))];
+    const parStructure = await this.etab.agentsDe(structures);
+    const ids = [...parStructure.values()].flat().map((a) => a.id);
+    if (!ids.length) return [];
+    const debut = plusJours([...lundis].sort()[0], -7);
+    const fin = plusJours([...lundis].sort().at(-1)!, 5);
+    const [horaires, pts, noms] = await Promise.all([
+      this.horaires.find({ where: { agentId: In(ids) } }),
+      this.presences.query<
+        {
+          agentId: number;
+          date: string;
+          statut: string;
+          arrivee: string | null;
+          depart: string | null;
+        }[]
+      >(
+        `SELECT "agentId", to_char(date, 'YYYY-MM-DD') AS date, statut, arrivee, depart FROM presence
+          WHERE "agentId" = ANY($1) AND date BETWEEN $2 AND $3`,
+        [ids, debut, fin],
+      ),
+      this.presences.query<
+        { id: number; nomComplet: string; structure: string }[]
+      >(
+        `SELECT a.id, a."nomComplet", s.nom AS structure FROM agent_recense a JOIN structure s ON s.id = a."structureId" WHERE a.id = ANY($1)`,
+        [ids],
+      ),
+    ]);
+    const h = new Map(horaires.map((x) => [x.agentId, x.jours]));
+    const nom = new Map(noms.map((x) => [x.id, x]));
+    const parAgent = new Map<number, Record<string, Pointage>>();
+    for (const p of pts) {
+      const m = parAgent.get(p.agentId) ?? {};
+      m[p.date] = p;
+      parAgent.set(p.agentId, m);
+    }
+    const res: {
+      agentId: number;
+      nomComplet: string;
+      structure: string;
+      lundi: string;
+      alertes: { code: string; texte: string }[];
+    }[] = [];
+    for (const v of semaines)
+      for (const a of (parStructure.get(v.structureId) ?? []).filter(
+        (x) => x.enPoste,
+      )) {
+        const dates = JOURS.map((_, i) => plusJours(v.lundi, i));
+        const avant = dates.map((d) => plusJours(d, -7));
+        const tout = parAgent.get(a.id) ?? {};
+        const b = bilanSemaine(h.get(a.id), dates, tout, {
+          dates: avant,
+          pointages: tout,
+        });
+        if (b.alertes.length)
+          res.push({
+            agentId: a.id,
+            nomComplet: a.nomComplet,
+            structure: nom.get(a.id)?.structure ?? '',
+            lundi: v.lundi,
+            alertes: b.alertes,
+          });
+      }
+    return res
+      .sort(
+        (x, y) =>
+          y.lundi.localeCompare(x.lundi) || y.alertes.length - x.alertes.length,
+      )
+      .slice(0, 300);
   }
 
   /* ------------------------------ Évaluation ------------------------------ */
 
+  /** Année évaluée (« 2026 ») : l'évaluation est annuelle, la DGRHAS en fixe la période. */
   annee(a?: string) {
-    return a && /^\d{4}-\d{4}$/.test(a) ? a : this.params.get('ANNEE_SCOLAIRE');
+    return a && /^\d{4}$/.test(a) ? a : anneeCivile();
   }
 
   private presenter(e: EvaluationAgent) {
@@ -458,7 +672,10 @@ export class SuiviService {
     };
   }
 
-  /** Évaluation d'une année (une par agent et par année : la refaire la remplace). */
+  /**
+   * Évaluation d'une année (une par agent et par année). Enregistrée, c'est un brouillon qui se
+   * reprend ; validée (`valider`), elle est close et ne se modifie plus.
+   */
   async evaluer(
     u: UtilisateurConnecte,
     agentId: number,
@@ -470,9 +687,18 @@ export class SuiviService {
       decision?: string | null;
       commentaireProfessionnel?: string | null;
       commentaireSocial?: string | null;
+      valider?: boolean;
     },
   ) {
     const a = await this.rec.trouver(u, agentId);
+    const annee = this.annee(dto.annee);
+    const existante = await this.evaluations.findOne({
+      where: { agentId, annee },
+    });
+    if (existante?.valideeLe)
+      throw new BadRequestException(
+        `L’évaluation ${annee} est validée : elle n’est plus modifiable.`,
+      );
     const pro = Number(dto.competenceProfessionnelle);
     const social = Number(dto.competenceSociale);
     for (const [n, l] of [
@@ -483,12 +709,9 @@ export class SuiviService {
         throw new BadRequestException(
           `Notez la compétence ${l} de 1 (très faible) à 5 (excellent).`,
         );
-    const annee = this.annee(dto.annee);
     const date = dto.date && DATE.test(dto.date) ? dto.date : aujourdhui();
     const globale = (pro + social) / 2;
-    const e =
-      (await this.evaluations.findOne({ where: { agentId, annee } })) ??
-      this.evaluations.create({ agentId, annee });
+    const e = existante ?? this.evaluations.create({ agentId, annee });
     Object.assign(e, {
       date,
       competenceProfessionnelle: pro,
@@ -500,16 +723,55 @@ export class SuiviService {
       commentaireSocial: texte(dto.commentaireSocial, 1000),
       structureId: a.structureId,
       evaluateur: u.nom,
+      valideeLe: dto.valider ? new Date() : null,
+      valideePar: dto.valider ? u.nom : null,
     });
     const r = await this.evaluations.save(e);
     await this.journal.log(
       u,
-      'PERSONNEL_EVALUATION',
+      dto.valider ? 'PERSONNEL_EVALUATION_VALIDEE' : 'PERSONNEL_EVALUATION',
       'agent_recense',
       agentId,
       { annee, professionnelle: pro, sociale: social, globale },
     );
     return this.presenter(r);
+  }
+
+  /**
+   * Fiche d'évaluation à imprimer et à signer (DG, 24/10/2026) : l'agent, les deux notes avec ce
+   * qui les justifie, la globale, la lecture et la décision proposée.
+   */
+  async ficheEvaluation(u: UtilisateurConnecte, agentId: number, id: string) {
+    const a = await this.rec.trouver(u, agentId);
+    const e = await this.evaluations.findOne({ where: { id, agentId } });
+    if (!e) throw new NotFoundException('Évaluation introuvable');
+    const c = this.rec.config.get();
+    const structure = e.structureId
+      ? ((
+          await this.evaluations.query<{ nom: string }[]>(
+            `SELECT nom FROM structure WHERE id = $1`,
+            [e.structureId],
+          )
+        )[0]?.nom ?? null)
+      : null;
+    const d = a.donnees ?? {};
+    const lib = (k: string) => {
+      const ch = c.champs.find((x) => x.code === k);
+      return ch ? valeurLisible(ch, d[k]) || null : null;
+    };
+    return {
+      agent: {
+        nomComplet: a.nomComplet,
+        numeroFiche: a.numeroFiche,
+        matricule: a.matricule,
+        statut: c.statuts.find((x) => x.code === a.statut)?.libelle ?? a.statut,
+        grade: lib('GRADE'),
+        fonction: lib('FONCTION'),
+        lieuService: structure ?? lib('LIEU_SERVICE'),
+      },
+      evaluation: this.presenter(e),
+      lieu: this.params.get('LIEU_SIGNATURE'),
+    };
   }
 
   async supprimerEvaluation(
@@ -520,6 +782,10 @@ export class SuiviService {
     await this.rec.trouver(u, agentId);
     const e = await this.evaluations.findOne({ where: { id, agentId } });
     if (!e) throw new NotFoundException('Évaluation introuvable');
+    if (e.valideeLe)
+      throw new BadRequestException(
+        `L’évaluation ${e.annee} est validée : elle ne se retire plus.`,
+      );
     await this.evaluations.delete(e.id);
     await this.journal.log(
       u,
@@ -563,10 +829,12 @@ export class SuiviService {
       ajouter('a."nomNormalise" LIKE $X', `%${m}%`);
     const base = `FROM agent_recense a LEFT JOIN evaluation_agent e ON e."agentId" = a.id AND e.annee = $1
                   LEFT JOIN structure s ON s.id = a."structureId" WHERE ${conds.join(' AND ')}`;
+    const V = 'e."valideeLe" IS NOT NULL';
     const [stats] = await this.evaluations.query<
       {
         total: number;
         evalues: number;
+        brouillons: number;
         moyennePro: number | null;
         moyenneSociale: number | null;
         tf: number;
@@ -576,29 +844,35 @@ export class SuiviService {
         ex: number;
         relations: number;
         metier: number;
+        aSuivre: number;
       }[]
     >(
-      `SELECT count(*)::int AS total, count(e.id)::int AS evalues,
-              round(avg(e."competenceProfessionnelle")::numeric, 1)::float AS "moyennePro",
-              round(avg(e."competenceSociale")::numeric, 1)::float AS "moyenneSociale",
-              count(*) FILTER (WHERE e.appreciation = 'Très faible')::int AS tf,
-              count(*) FILTER (WHERE e.appreciation = 'Faible')::int AS f,
-              count(*) FILTER (WHERE e.appreciation = 'Bon')::int AS b,
-              count(*) FILTER (WHERE e.appreciation = 'Très bon')::int AS tb,
-              count(*) FILTER (WHERE e.appreciation = 'Excellent')::int AS ex,
-              count(*) FILTER (WHERE e."competenceProfessionnelle" >= 3 AND e."competenceSociale" < 3)::int AS relations,
-              count(*) FILTER (WHERE e."competenceProfessionnelle" < 3 AND e."competenceSociale" >= 3)::int AS metier
+      // Seules les évaluations validées comptent ; les brouillons sont comptés à part
+      `SELECT count(*)::int AS total, count(e."valideeLe")::int AS evalues,
+              (count(e.id) - count(e."valideeLe"))::int AS brouillons,
+              round((avg(e."competenceProfessionnelle") FILTER (WHERE ${V}))::numeric, 1)::float AS "moyennePro",
+              round((avg(e."competenceSociale") FILTER (WHERE ${V}))::numeric, 1)::float AS "moyenneSociale",
+              count(*) FILTER (WHERE ${V} AND e.appreciation = 'Très faible')::int AS tf,
+              count(*) FILTER (WHERE ${V} AND e.appreciation = 'Faible')::int AS f,
+              count(*) FILTER (WHERE ${V} AND e.appreciation = 'Bon')::int AS b,
+              count(*) FILTER (WHERE ${V} AND e.appreciation = 'Très bon')::int AS tb,
+              count(*) FILTER (WHERE ${V} AND e.appreciation = 'Excellent')::int AS ex,
+              count(*) FILTER (WHERE ${V} AND e."competenceProfessionnelle" >= ${MOYENNE} AND e."competenceSociale" < ${MOYENNE})::int AS relations,
+              count(*) FILTER (WHERE ${V} AND e."competenceProfessionnelle" < ${MOYENNE} AND e."competenceSociale" >= ${MOYENNE})::int AS metier,
+              count(*) FILTER (WHERE ${V} AND e.globale < ${MOYENNE})::int AS "aSuivre"
          ${base}`,
       params,
     );
     const filtreEtat =
       f.etat === 'NON_EVALUE'
         ? ' AND e.id IS NULL'
-        : f.etat === 'EVALUE'
-          ? ' AND e.id IS NOT NULL'
-          : f.etat === 'A_SUIVRE'
-            ? ' AND e.globale < 3'
-            : '';
+        : f.etat === 'BROUILLON'
+          ? ` AND e.id IS NOT NULL AND NOT (${V})`
+          : f.etat === 'EVALUE'
+            ? ` AND ${V}`
+            : f.etat === 'A_SUIVRE'
+              ? ` AND ${V} AND e.globale < ${MOYENNE}`
+              : '';
     const page = Math.max(1, f.page ?? 1);
     const lignes = await this.evaluations.query<
       {
@@ -617,11 +891,13 @@ export class SuiviService {
         date: string | null;
         commentaireProfessionnel: string | null;
         commentaireSocial: string | null;
+        valideeLe: Date | null;
+        valideePar: string | null;
       }[]
     >(
       `SELECT a.id, a."nomComplet", a.statut, a.donnees->>'FONCTION' AS fonction, s.nom AS structure,
               e.id AS "evaluationId", e."competenceProfessionnelle", e."competenceSociale", e.globale, e.appreciation, e.decision, e.evaluateur,
-              to_char(e.date, 'YYYY-MM-DD') AS date, e."commentaireProfessionnel", e."commentaireSocial"
+              to_char(e.date, 'YYYY-MM-DD') AS date, e."commentaireProfessionnel", e."commentaireSocial", e."valideeLe", e."valideePar"
          ${base}${filtreEtat} ORDER BY e.globale ASC NULLS FIRST, a."nomComplet" LIMIT 50 OFFSET ${(page - 1) * 50}`,
       params,
     );

@@ -133,6 +133,15 @@ export class RecensementController {
     return this.rec.liste(u, filtres(q));
   }
 
+  /** Bottin imprimable : toute la liste filtrée, par ordre alphabétique. */
+  @Get('bottin')
+  bottin(
+    @Utilisateur() u: UtilisateurConnecte,
+    @Query() q: Record<string, string | undefined>,
+  ) {
+    return this.rec.bottin(u, filtres(q));
+  }
+
   @Get('agents/:id')
   fiche(
     @Utilisateur() u: UtilisateurConnecte,
@@ -323,13 +332,21 @@ export class RecensementController {
     @Utilisateur() u: UtilisateurConnecte,
     @Param('id', ParseIntPipe) id: number,
     @Body('type') type: string,
+    @Body('ligne') ligne?: string,
     @UploadedFile() fichier?: Express.Multer.File,
   ) {
     if (!fichier)
       throw new BadRequestException(
         'Choisissez un scan en PDF, JPG ou PNG (15 Mo au plus).',
       );
-    return this.rec.ajouterPiece(u, id, type, fichier);
+    const n = Number(ligne);
+    return this.rec.ajouterPiece(
+      u,
+      id,
+      type,
+      fichier,
+      Number.isInteger(n) && n >= 1 && n <= 50 ? n : null,
+    );
   }
 
   @Get('agents/:id/pieces/:piece')

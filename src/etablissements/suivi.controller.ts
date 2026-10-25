@@ -122,6 +122,15 @@ export class SuiviController {
     return this.service.evaluationsAgent(u, id);
   }
 
+  @Get('evaluations/agents/:id/fiche/:ev')
+  ficheEvaluation(
+    @Utilisateur() u: UtilisateurConnecte,
+    @Param('id', ParseIntPipe) id: number,
+    @Param('ev') ev: string,
+  ) {
+    return this.service.ficheEvaluation(u, id, ev);
+  }
+
   @Post('evaluations/agents/:id')
   evaluer(
     @Utilisateur() u: UtilisateurConnecte,

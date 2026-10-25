@@ -779,8 +779,29 @@ export class NotesService {
       where.lotPublicationId = l?.id ?? -1;
     }
     const notes = await this.notes.find({ where, order: { creeLe: 'DESC' } });
-    for (const n of notes) await this.suivreAnnee(n);
+    await Promise.all(notes.map((n) => this.suivreAnnee(n)));
     const lots = new Map((await this.lots.find()).map((l) => [l.id, l]));
+    // Notes d'affectation en préparation : les lignes prêtes de tous les lots, calculées une
+    // seule fois (et non une fois par note), puis comptées par lot et par type de note
+    const pretesParNote = new Map<string, number>();
+    // (seulement les lots qui ont une note en préparation)
+    const lotsEnPreparation = [
+      ...new Set(
+        notes
+          .filter((n) => !n.contenu && n.module === 'AFFECTATION')
+          .map((n) => n.lotPublicationId)
+          .filter((x): x is number => !!x),
+      ),
+    ];
+    if (lotsEnPreparation.length)
+      for (const x of await this.affSvc.listeAffectations({
+        statut: 'A_TRAITER',
+        lotsIds: lotsEnPreparation,
+      }))
+        if (!x.derive.bloquants.length) {
+          const k = `${x.agent.lotPublicationId}|${x.typeNote}`;
+          pretesParNote.set(k, (pretesParNote.get(k) ?? 0) + 1);
+        }
     const res: unknown[] = [];
     for (const n of notes) {
       const lot = n.lotPublicationId ? lots.get(n.lotPublicationId) : null;
@@ -790,8 +811,7 @@ export class NotesService {
         : n.module === 'ENROLEMENT'
           ? (await this.lignesEnrolement(n)).prets.length
           : n.module === 'AFFECTATION'
-            ? (await this.lignesAffectation(lotNumero!, n.typeNote)).prets
-                .length
+            ? (pretesParNote.get(`${n.lotPublicationId}|${n.typeNote}`) ?? 0)
             : (
                 await this.mutSvc.eligiblesPourNote(
                   n.motif as MotifMutation,

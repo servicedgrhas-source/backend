@@ -1264,6 +1264,11 @@ export class PieceRecensement {
   @Column() fichier: string;
   @Column({ type: 'varchar' }) mime: string;
   @Column({ type: 'int' }) taille: number;
+  /**
+   * Ligne du tableau que la pièce concerne (1 = le premier enfant) : l'acte de naissance déposé
+   * devant un enfant reste le sien (DG, 24/10/2026). Vide : pièce de l'agent.
+   */
+  @Column({ type: 'int', nullable: true }) ligne: number | null;
   @Column({ type: 'varchar', nullable: true }) ajoutePar: string | null;
   @CreateDateColumn() creeLe: Date;
 }
@@ -1381,6 +1386,9 @@ export class Presence {
   /** PRESENT, RETARD, ABSENT_JUSTIFIE, ABSENT. */
   @Column() statut: string;
   @Column({ type: 'varchar', nullable: true }) motif: string | null;
+  /** Heures d'arrivée et de départ (« 07:45 ») : facultatives ; elles donnent le retard et les heures faites. */
+  @Column({ type: 'varchar', nullable: true }) arrivee: string | null;
+  @Column({ type: 'varchar', nullable: true }) depart: string | null;
   @Column({ type: 'varchar', nullable: true }) saisiPar: string | null;
   @UpdateDateColumn() saisiLe: Date;
 }
@@ -1406,7 +1414,7 @@ export class SemainePresence {
 export class EvaluationAgent {
   @PrimaryGeneratedColumn('uuid') id: string;
   @Column({ type: 'int' }) agentId: number;
-  /** Année scolaire évaluée. */
+  /** Année évaluée (« 2026 ») : une évaluation par an (DG, 24/10/2026) ; avant, l'année scolaire. */
   @Column() annee: string;
   @Column({ type: 'date' }) date: string;
   @Column({ type: 'int' }) competenceProfessionnelle: number;
@@ -1419,8 +1427,39 @@ export class EvaluationAgent {
   @Column({ type: 'text', nullable: true }) commentaireSocial: string | null;
   @Column({ type: 'int', nullable: true }) structureId: number | null;
   @Column({ type: 'varchar', nullable: true }) evaluateur: string | null;
+  /** Validée : l'évaluation est close et ne se modifie plus (avant, c'est un brouillon). */
+  @Column({ type: 'timestamptz', nullable: true }) valideeLe: Date | null;
+  @Column({ type: 'varchar', nullable: true }) valideePar: string | null;
   @CreateDateColumn() creeLe: Date;
   @UpdateDateColumn() modifieLe: Date;
+}
+
+/**
+ * Emploi du temps d'un collège ou d'un lycée pour une année scolaire (DG, 24/10/2026), généré à
+ * partir des classes ouvertes, des quotas horaires et des enseignants de l'école : qui fait quelle
+ * matière dans quelle classe, à quel créneau. Il se regénère quand les classes ou les enseignants
+ * changent.
+ */
+@Entity('emploi_du_temps')
+@Index(['structureId', 'anneeScolaire'], { unique: true })
+export class EmploiDuTemps {
+  @PrimaryGeneratedColumn('uuid') id: string;
+  @Column({ type: 'int' }) structureId: number;
+  @Column() anneeScolaire: string;
+  /** Jours de cours (1 = lundi … 6 = samedi). */
+  @Column({ type: 'jsonb' }) jours: number[];
+  /** Créneaux de la journée : [{ debut: « 07:30 », fin: « 08:25 » }]. */
+  @Column({ type: 'jsonb' }) creneaux: { debut: string; fin: string }[];
+  /** Séances : classe, matière, enseignant (vide : à pourvoir), jour et créneau. */
+  @Column({ type: 'jsonb' }) seances: Record<string, unknown>[];
+  /** Heures sans enseignant ou sans créneau, avec la raison. */
+  @Column({ type: 'jsonb' }) nonPlaces: Record<string, unknown>[];
+  /** Charge de chaque enseignant (heures, classes). */
+  @Column({ type: 'jsonb' }) charges: Record<string, unknown>[];
+  @Column({ type: 'int' }) heuresTotal: number;
+  @Column({ type: 'int' }) heuresPlacees: number;
+  @Column({ type: 'varchar', nullable: true }) generePar: string | null;
+  @UpdateDateColumn() genereLe: Date;
 }
 
 export const ENTITES = [
@@ -1475,4 +1514,5 @@ export const ENTITES = [
   Presence,
   SemainePresence,
   EvaluationAgent,
+  EmploiDuTemps,
 ];

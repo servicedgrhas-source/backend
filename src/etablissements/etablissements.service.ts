@@ -40,7 +40,11 @@ const HORS_POSTE_POSITION = [
   'RETRAITE',
   'DECEDE',
 ];
-const HORS_POSTE_ACTIVITE = ['RETRAITE', 'SUSPENDU'];
+/**
+ * En activité mais pas à son poste (DG, 24/10/2026) : en stage ou en formation (l'instituteur à
+ * l'ENS), suspendu, absent de son poste ; il ne compte pas parmi les enseignants existants.
+ */
+const HORS_POSTE_ACTIVITE = ['RETRAITE', 'SUSPENDU', 'STAGE', 'ABSENT'];
 
 export interface AgentEcole {
   id: number;
@@ -64,6 +68,25 @@ export interface LigneBesoin {
 }
 
 const arrondi = (n: number) => Math.round(n * 10) / 10;
+
+/**
+ * Nom court d'un niveau pour nommer ses classes (DG, 24/10/2026) : le niveau reste écrit en
+ * toutes lettres (« Troisième »), la classe en chiffres (« 3ème 1 ») ; « 2nde C 1 », « Tle D 2 »
+ * au lycée, « CM2 1 » au primaire.
+ */
+export function nomCourtNiveau(code: string, libelle: string) {
+  const c = /^(\d)\s*E?ME$/i.exec(code.trim());
+  if (c) return c[1] === '1' ? '1ère' : `${c[1]}ème`;
+  const l = libelle.replace(/\s+/g, ' ').trim();
+  const lycee = l
+    .replace(/^seconde\b/i, '2nde')
+    .replace(/^premi[eè]re\b/i, '1ère')
+    .replace(/^terminale\b/i, 'Tle');
+  if (lycee !== l) return lycee;
+  // « Cours Préparatoire 1 » : son code (« CP1 ») est le nom en usage
+  if (l.length > 12 && /^[A-Z]{1,4}\d?$/i.test(code.trim())) return code.trim();
+  return l;
+}
 const etat = (ecart: number): LigneBesoin['etat'] =>
   ecart <= -0.5 ? 'DEFICIT' : ecart >= 1 ? 'PLETHORE' : 'EQUILIBRE';
 const texte = (v: unknown, n = 120) =>
@@ -96,6 +119,90 @@ export class EtablissementsService {
 
   annee(a?: string) {
     return a && /^\d{4}-\d{4}$/.test(a) ? a : this.params.get('ANNEE_SCOLAIRE');
+  }
+
+  /* ------------------------------ Structures administratives ------------------------------ */
+
+  /**
+   * Structures du ministère hors écoles (DG, 24/10/2026), du cabinet aux services et des DDEPPSA aux
+   * inspections, avec leur personnel et leurs écoles ; l'écran les range en arbre (chaque structure
+   * dans celle qui est au-dessus).
+   */
+  async arbreStructures(u: UtilisateurConnecte) {
+    const p = await this.rec.perimetre(u);
+    const conds = [`s.type <> 'ETABLISSEMENT'`, 's.actif'];
+    const params: unknown[] = [];
+    if ('departementId' in p) {
+      params.push(p.departementId);
+      conds.push(`s."departementId" = $${params.length}`);
+    }
+    if ('structures' in p) {
+      params.push(p.structures);
+      conds.push(`s.id = ANY($${params.length})`);
+    }
+    return this.structures.query<
+      {
+        id: number;
+        nom: string;
+        sigle: string;
+        type: string;
+        parentId: number | null;
+        departementId: number | null;
+        ordre: number;
+        agents: number;
+        ecoles: number;
+      }[]
+    >(
+      `SELECT s.id, s.nom, s.sigle, s.type, s."parentId", s."departementId", s.ordre,
+              (SELECT count(*)::int FROM agent_recense a WHERE a."structureId" = s.id
+                 AND coalesce(a.contentieux->>'etat', 'CONFIRME') = 'CONFIRME') AS agents,
+              (SELECT count(*)::int FROM structure e WHERE e."parentId" = s.id AND e.type = 'ETABLISSEMENT' AND e.actif) AS ecoles
+         FROM structure s WHERE ${conds.join(' AND ')}
+        ORDER BY s.ordre, s.nom`,
+      params,
+    );
+  }
+
+  /** Une structure administrative : où elle se trouve, son responsable et son personnel. */
+  async personnelStructure(u: UtilisateurConnecte, id: number) {
+    const s = await this.structure(u, id);
+    const chemin: { id: number; nom: string; sigle: string }[] = [];
+    for (let x = s.parentId, i = 0; x && i < 10; i++) {
+      const parent = await this.structures.findOne({ where: { id: x } });
+      if (!parent) break;
+      chemin.unshift({ id: parent.id, nom: parent.nom, sigle: parent.sigle });
+      x = parent.parentId;
+    }
+    const [agents, responsable, dessous] = await Promise.all([
+      this.agentsDe([id]),
+      s.responsableId
+        ? this.structures.query<{ id: number; nomComplet: string }[]>(
+            `SELECT id, "nomComplet" FROM agent_recense WHERE id = $1`,
+            [s.responsableId],
+          )
+        : Promise.resolve([]),
+      this.structures.query<
+        { id: number; nom: string; sigle: string; type: string }[]
+      >(
+        `SELECT id, nom, sigle, type FROM structure WHERE "parentId" = $1 AND actif ORDER BY ordre, nom`,
+        [id],
+      ),
+    ]);
+    return {
+      structure: {
+        id: s.id,
+        nom: s.nom,
+        sigle: s.sigle,
+        type: s.type,
+        departementId: s.departementId,
+        posteResponsable: posteResponsable(s),
+        responsable: responsable[0] ?? null,
+        responsableInterim: s.responsableInterim,
+      },
+      chemin,
+      dessous,
+      agents: agents.get(id) ?? [],
+    };
   }
 
   /* ------------------------------ Accès ------------------------------ */
@@ -268,7 +375,7 @@ export class EtablissementsService {
   }
 
   /** Programmes (heures par niveau et matière) et libellés des matières d'un cycle. */
-  private async programmes(cycle: string) {
+  async programmes(cycle: string) {
     const [prog, mat] = await Promise.all([
       this.refs.find({
         where: { type: 'PROGRAMME', parent: cycle, actif: true },
@@ -295,7 +402,7 @@ export class EtablissementsService {
   }
 
   /** Matière enseignée d'après la spécialité écrite dans la fiche (même nom, accents et casse mis à part). */
-  private matiereDe(specialite: string | null, matieres: Map<string, string>) {
+  matiereDe(specialite: string | null, matieres: Map<string, string>) {
     const sp = normaliser(specialite).replace(/[^A-Z0-9]+/g, '');
     if (!sp) return null;
     for (const [code, lib] of matieres) {
@@ -544,9 +651,55 @@ export class EtablissementsService {
       else x.plethore = arrondi(x.plethore + e.ecart);
       parDepartement.set(k, x);
     }
+    // Par cycle (DG, 24/10/2026) : « au primaire on a tel besoin, au collège tel besoin… »
+    const parCycle = new Map<
+      string,
+      {
+        cycle: string;
+        ecoles: number;
+        classes: number;
+        besoin: number;
+        enPlace: number;
+        deficit: number;
+        plethore: number;
+      }
+    >();
+    for (const e of parEcole) {
+      const k = e.cycle ?? '—';
+      const x = parCycle.get(k) ?? {
+        cycle: k,
+        ecoles: 0,
+        classes: 0,
+        besoin: 0,
+        enPlace: 0,
+        deficit: 0,
+        plethore: 0,
+      };
+      x.ecoles++;
+      x.classes += e.classes;
+      x.besoin = arrondi(x.besoin + e.besoin);
+      x.enPlace += e.enPlace;
+      if (e.ecart < 0) x.deficit = arrondi(x.deficit - e.ecart);
+      else x.plethore = arrondi(x.plethore + e.ecart);
+      parCycle.set(k, x);
+    }
+    const ORDRE = [
+      'PRESCOLAIRE',
+      'PRIMAIRE',
+      'COLLEGE',
+      'LYCEE',
+      'ALPHABETISATION',
+    ];
     return {
       annee,
       heuresEnseignant: Number(this.params.get('HEURES_ENSEIGNANT')) || 20,
+      cycles: [...parCycle.values()]
+        .map((x) => ({ ...x, ecart: arrondi(x.enPlace - x.besoin) }))
+        .sort(
+          (a, b) =>
+            ((ORDRE.indexOf(a.cycle) + 99) % 99) -
+            ((ORDRE.indexOf(b.cycle) + 99) % 99),
+        ),
       ecoles: parEcole.sort((a, b) => a.ecart - b.ecart),
       departements: [...parDepartement.values()].sort(
         (a, b) => b.deficit - a.deficit,
@@ -666,7 +819,9 @@ export class EtablissementsService {
       );
     const nom = texte(dto.nom, 40);
     if (!nom)
-      throw new BadRequestException('Donnez un nom à la classe (ex. 6e 1).');
+      throw new BadRequestException(
+        'Donnez un nom à la classe (ex. 6ème 1, ou 6ème 1A avec deux vagues).',
+      );
     const annee = this.annee(texte(dto.anneeScolaire, 9) ?? undefined);
     const x = id
       ? await this.classes.findOne({ where: { id, structureId } })
@@ -711,6 +866,8 @@ export class EtablissementsService {
       niveau?: string;
       nombre?: number;
       prefixe?: string;
+      /** Deux vagues (matin, après-midi) : « 6ème 1A », « 6ème 1B ». */
+      vague?: string;
       reprendre?: boolean;
       anneeScolaire?: string;
     },
@@ -756,9 +913,13 @@ export class EtablissementsService {
         throw new BadRequestException(
           'Niveau inconnu pour le cycle de l’école.',
         );
-      const prefixe = texte(dto.prefixe, 30) ?? ref.libelle;
+      const prefixe =
+        texte(dto.prefixe, 30) ?? nomCourtNiveau(ref.code, ref.libelle);
+      const vague = /^[A-Z]$/i.test(dto.vague?.trim() ?? '')
+        ? dto.vague!.trim().toUpperCase()
+        : '';
       for (let i = 1, k = 0; k < n; i++) {
-        const nom = `${prefixe} ${i}`;
+        const nom = `${prefixe} ${i}${vague}`;
         if (noms.has(nom)) continue;
         noms.add(nom);
         nouvelles.push(

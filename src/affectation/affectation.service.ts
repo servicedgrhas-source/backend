@@ -35,6 +35,8 @@ import {
 
 export interface FiltreAffectations {
   lot?: number;
+  /** Plusieurs lots à la fois (identifiants des lots de publication). */
+  lotsIds?: number[];
   typeNote?: string;
   departementId?: number;
   statut?: string;
@@ -92,42 +94,41 @@ export class AffectationService {
   /* ------------------------------- Lots ------------------------------- */
 
   async listeLots() {
-    const lots = await this.lots.find({ order: { numero: 'ASC' } });
-    const paquets = new Map(
-      (await this.lots.manager.getRepository(PaquetReception).find()).map(
-        (p) => [p.id, p],
-      ),
-    );
-    const stats = await this.affectations.query<
-      { lot: number; statut: string; n: number }[]
-    >(`
-      SELECT f."lotPublicationId" AS lot, f.statut, count(*)::int AS n
-      FROM affectation f GROUP BY 1, 2`);
-    const agents = await this.agents.query<
-      { lot: number; type: string; n: number }[]
-    >(`
-      SELECT "lotPublicationId" AS lot, "typeTexte" AS type, count(*)::int AS n
-      FROM agent WHERE "lotPublicationId" IS NOT NULL GROUP BY 1, 2`);
-    // Répartition de chaque lot par quota (la FP mélange les quotas dans un lot)
-    const parQuota = await this.agents.query<
-      { lot: number; quota: string; n: number }[]
-    >(`
-      SELECT "lotPublicationId" AS lot,
-        CASE WHEN feuille = 'QUOTA_AUTRES' THEN 'Autres'
-             ELSE coalesce(quota::text, 'sans quota') END AS quota,
-        count(*)::int AS n
-      FROM agent WHERE "lotPublicationId" IS NOT NULL
-      GROUP BY 1, 2`);
-    // Détail des « pas encore affectés » : où en est chaque personne
-    const notesOuvertes = await this.agents.query<
-      { lot: number; type: string; statut: string }[]
-    >(`
-      SELECT "lotPublicationId" AS lot, "typeNote" AS type, statut
-      FROM note_service
-      WHERE module = 'AFFECTATION' AND statut IN ('BROUILLON', 'SOUMISE')`);
-    const enCours = await this.enrichir(
-      await this.requete({ statut: 'A_TRAITER' }).getMany(),
-    );
+    // Lectures indépendantes : en parallèle (et non l'une après l'autre)
+    const [
+      lots,
+      paquetsListe,
+      stats,
+      agents,
+      parQuota,
+      notesOuvertes,
+      aTraiter,
+    ] = await Promise.all([
+      this.lots.find({ order: { numero: 'ASC' } }),
+      this.lots.manager.getRepository(PaquetReception).find(),
+      this.affectations.query<{ lot: number; statut: string; n: number }[]>(`
+        SELECT f."lotPublicationId" AS lot, f.statut, count(*)::int AS n
+        FROM affectation f GROUP BY 1, 2`),
+      this.agents.query<{ lot: number; type: string; n: number }[]>(`
+        SELECT "lotPublicationId" AS lot, "typeTexte" AS type, count(*)::int AS n
+        FROM agent WHERE "lotPublicationId" IS NOT NULL GROUP BY 1, 2`),
+      // Répartition de chaque lot par quota (la FP mélange les quotas dans un lot)
+      this.agents.query<{ lot: number; quota: string; n: number }[]>(`
+        SELECT "lotPublicationId" AS lot,
+          CASE WHEN feuille = 'QUOTA_AUTRES' THEN 'Autres'
+               ELSE coalesce(quota::text, 'sans quota') END AS quota,
+          count(*)::int AS n
+        FROM agent WHERE "lotPublicationId" IS NOT NULL
+        GROUP BY 1, 2`),
+      // Détail des « pas encore affectés » : où en est chaque personne
+      this.agents.query<{ lot: number; type: string; statut: string }[]>(`
+        SELECT "lotPublicationId" AS lot, "typeNote" AS type, statut
+        FROM note_service
+        WHERE module = 'AFFECTATION' AND statut IN ('BROUILLON', 'SOUMISE')`),
+      this.requete({ statut: 'A_TRAITER' }).getMany(),
+    ]);
+    const paquets = new Map(paquetsListe.map((p) => [p.id, p]));
+    const enCours = await this.enrichir(aTraiter);
     const detail = new Map<
       number,
       {
@@ -466,6 +467,10 @@ export class AffectationService {
       .leftJoinAndSelect('a.departement', 'ad')
       .leftJoinAndSelect('f.departement', 'd');
     if (f.lot) q.andWhere('l.numero = :lot', { lot: f.lot });
+    if (f.lotsIds)
+      q.andWhere('a.lotPublicationId IN (:...lotsIds)', {
+        lotsIds: f.lotsIds.length ? f.lotsIds : [-1],
+      });
     if (f.typeNote) q.andWhere('f.typeNote = :t', { t: f.typeNote });
     if (f.departementId)
       q.andWhere('f.departementId = :d', { d: f.departementId });

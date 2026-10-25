@@ -298,6 +298,30 @@ describe('Mutations', () => {
     expect(specialiteStat('Arts-Plastiques')).toBe('DESSIN');
   });
 
+  it('mutation interne : on reste dans le département', () => {
+    const base = {
+      motif: 'RAISONS_SOCIALES',
+      typePrestation: 'MUTATION_DEPARTEMENT',
+      departementOrigineId: 9,
+      typeAgent: 'FINALISTE' as const,
+      grade: 'Inst',
+      cycle: 'PRIMAIRE',
+    };
+    expect(anomaliesMutation({ ...base, departementSolliciteId: 9 })).toEqual(
+      [],
+    );
+    expect(
+      anomaliesMutation({ ...base, departementSolliciteId: 2 })[0],
+    ).toMatch(/vers un autre département/);
+    expect(
+      anomaliesMutation({
+        ...base,
+        typePrestation: 'MUTATION_SOCIALE',
+        departementSolliciteId: 9,
+      }),
+    ).toContain("Département sollicité identique au département d'origine");
+  });
+
   it('ancienneté minimale de 5 ans', () => {
     const base = {
       motif: 'ANCIENNETE',

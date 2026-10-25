@@ -1,11 +1,14 @@
 import { Logger, ValidationPipe } from '@nestjs/common';
 import { HttpAdapterHost, NestFactory } from '@nestjs/core';
 import type { NestExpressApplication } from '@nestjs/platform-express';
+import compression from 'compression';
 import helmet from 'helmet';
 import { types } from 'pg';
 import { AmorcageService } from './amorcage/amorcage.service';
 import { AppModule } from './app.module';
 import { ErreursBaseFilter } from './common/erreurs-base.filter';
+import { ErreursEnvoiFilter } from './common/erreurs-envoi.filter';
+import { FichiersLusInterceptor } from './common/fichiers-lus';
 
 // Les colonnes DATE restent des chaînes « AAAA-MM-JJ » : sans cela, le pilote
 // les convertit en minuit heure locale et elles reculent d'un jour en UTC.
@@ -18,11 +21,17 @@ async function bootstrap() {
   app.set('trust proxy', Number(process.env.TRUST_PROXY ?? 1));
   app.setGlobalPrefix('api');
   app.use(helmet());
+  // Réponses compressées (gzip) : le JSON pèse environ dix fois moins sur le réseau. Seuls les
+  // types qui s'y prêtent le sont (pas les PDF ni les images), et pas les très petites réponses.
+  app.use(compression({ threshold: 1024 }));
   // X-Jeton : nouveau jeton après changement de son propre code ou mot de passe
   app.enableCors({ origin: originesAutorisees(), exposedHeaders: ['X-Jeton'] });
   app.useGlobalPipes(new ValidationPipe({ whitelist: true, transform: true }));
+  app.useGlobalInterceptors(new FichiersLusInterceptor());
+  const adaptateur = app.get(HttpAdapterHost).httpAdapter;
   app.useGlobalFilters(
-    new ErreursBaseFilter(app.get(HttpAdapterHost).httpAdapter),
+    new ErreursBaseFilter(adaptateur),
+    new ErreursEnvoiFilter(adaptateur),
   );
   const port = Number(process.env.PORT ?? 4000);
   // Tables à jour (migrations) et valeurs par défaut créées, puis configuration d'amorçage

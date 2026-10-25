@@ -82,6 +82,13 @@ export class DemandesService {
     fichiers: { libelle: string; f: Express.Multer.File }[],
   ) {
     const a = await this.rec.trouver(u, agentId);
+    // Agent ajouté au recensement : pas de demande avant son acceptation dans la base
+    if (a.contentieux && a.contentieux.etat !== 'CONFIRME')
+      throw new BadRequestException(
+        a.contentieux.etat === 'REJETE'
+          ? 'Cet agent a été rejeté par le DG lors du recensement : il ne peut pas déposer de demande.'
+          : 'Cet agent a été ajouté au recensement et n’est pas encore accepté dans la base (contrôle, puis décision du DG) : il ne peut pas encore déposer de demande.',
+      );
     const types = await this.types();
     const type = types.find((t) => t.code === dto.typePrestation);
     if (!type)

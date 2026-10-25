@@ -29,6 +29,36 @@ import type { Readable } from 'node:stream';
 export type DossierStockage =
   'pieces' | 'justificatifs' | 'notes-signees' | 'recensement';
 
+/** Fichiers envoyés en même temps au stockage : plus vite qu'un à un, sans saturer le lien. */
+export const ENVOIS_SIMULTANES = 4;
+
+/**
+ * Applique `f` à chaque élément, au plus `n` à la fois ; les résultats gardent l'ordre
+ * des éléments, et un échec n'arrête pas les autres.
+ */
+export async function parallele<T, R>(
+  elements: T[],
+  n: number,
+  f: (x: T, i: number) => Promise<R>,
+): Promise<PromiseSettledResult<R>[]> {
+  const issues: PromiseSettledResult<R>[] = [];
+  let suivant = 0;
+  const ouvrier = async () => {
+    while (suivant < elements.length) {
+      const i = suivant++;
+      try {
+        issues[i] = { status: 'fulfilled', value: await f(elements[i], i) };
+      } catch (e: unknown) {
+        issues[i] = { status: 'rejected', reason: e };
+      }
+    }
+  };
+  await Promise.all(
+    Array.from({ length: Math.min(n, elements.length) }, () => ouvrier()),
+  );
+  return issues;
+}
+
 /** Nom neutre (uuid + extension) : jamais le nom d'origine, qui reste en base. */
 const NOM_SUR = /^[0-9a-f-]{36}\.[a-z0-9]{1,5}$/;
 
@@ -130,19 +160,23 @@ export class StockageService implements OnModuleInit {
     return nom;
   }
 
-  /** Garde plusieurs fichiers ; si l'un échoue, ceux déjà gardés sont retirés. */
+  /** Garde plusieurs fichiers (quelques-uns à la fois) ; si l'un échoue, ceux déjà gardés sont retirés. */
   async enregistrerTous(
     dossier: DossierStockage,
     fichiers: Express.Multer.File[],
   ) {
-    const faits: string[] = [];
-    try {
-      for (const f of fichiers) faits.push(await this.enregistrer(dossier, f));
-      return faits;
-    } catch (e) {
-      await Promise.all(faits.map((n) => this.supprimer(dossier, n)));
-      throw e;
-    }
+    const issues = await parallele(fichiers, ENVOIS_SIMULTANES, (f) =>
+      this.enregistrer(dossier, f),
+    );
+    const echec = issues.find((r) => r.status === 'rejected');
+    if (!echec)
+      return issues.map((r) => (r as PromiseFulfilledResult<string>).value);
+    await Promise.all(
+      issues.flatMap((r) =>
+        r.status === 'fulfilled' ? [this.supprimer(dossier, r.value)] : [],
+      ),
+    );
+    throw echec.reason;
   }
 
   /** Retire un fichier (sans erreur s'il n'existe plus). Les deux emplacements sont nettoyés. */

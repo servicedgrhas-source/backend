@@ -28,6 +28,8 @@ export interface StatutAgent {
 export interface Section {
   code: string;
   libelle: string;
+  /** Cases par ligne à l'écran (3 par défaut) : 5 pour « Formation » (un diplôme sur une ligne). */
+  colonnes?: number;
 }
 
 export type TypeChamp =
@@ -138,14 +140,25 @@ export interface RegleCoherence {
 
 export interface ConfigRecensement {
   version: 1;
+  /** Révision des valeurs par défaut : une configuration enregistrée plus ancienne est mise à jour. */
+  revision?: number;
   statuts: StatutAgent[];
   sections: Section[];
   champs: ChampFiche[];
   pieces: PieceExigee[];
   regles: RegleCoherence[];
   ageMinimum: number;
-  /** Âge à partir duquel un agent encore « en activité » est signalé. */
-  ageRetraite: number;
+  /**
+   * Âge de la retraite quand la catégorie de l'agent est inconnue. Vide (DG, 24/10/2026) : aucun âge
+   * n'est supposé, l'agent sans catégorie n'est pas signalé « retraite atteinte » (sa catégorie manque).
+   */
+  ageRetraite: number | null;
+  /**
+   * Délais de carrière (DG, 24/10/2026) : promotion du fonctionnaire tous les 2 ans, avancement du
+   * contractuel tous les 2 ans et 4 mois, à compter de la dernière promotion ou du dernier avancement.
+   */
+  delaiPromotionMois: number;
+  delaiAvancementMois: number;
   /** Même téléphone pour ce nombre d'agents ou plus : signalé. */
   telephonePartage: number;
   /**
@@ -158,6 +171,11 @@ export interface ConfigRecensement {
 /** Rubriques indispensables au système (recherche, doublons, périmètre). */
 export const CHAMPS_SYSTEME = ['NOMS_PRENOMS', 'DATE_NAISSANCE', 'DEPARTEMENT'];
 const CLE = 'RECENSEMENT_CONFIG';
+/**
+ * Révision des valeurs par défaut (2 : réunion du DG du 24/10/2026 ; 3 : en-têtes des bases de
+ * l'enrôlement biométrique 2022-2023 — « MATRICULE », « REF. TEXTE D'INTEGRATION »…).
+ */
+const REVISION = 4;
 
 /* ------------------------------ Valeurs par défaut ------------------------------ */
 
@@ -207,7 +225,9 @@ const col = (
 
 const DIPLOMES = [
   o('CEPE', 'CEPE'),
-  o('BEPC', 'BEPC / BET', 'BET', 'BEMG', 'BEMT', 'BEPC BET'),
+  // Même niveau, mais deux diplômes différents (DG, 24/10/2026) : on a l'un ou l'autre
+  o('BEPC', 'BEPC', 'BEMG'),
+  o('BET', 'BET', 'BEMT'),
   o(
     'BAC',
     'Baccalauréat',
@@ -230,13 +250,101 @@ const DIPLOMES = [
   o('DOCTORAT', 'Doctorat'),
 ];
 
+const CYCLES = [
+  o('PRESCOLAIRE', 'Préscolaire', 'PRESCO', 'PRESOLAIRE'),
+  o('PRIMAIRE', 'Primaire', 'PRIM'),
+  o('COLLEGE', 'Collège', 'CEG'),
+  o('LYCEE', 'Lycée', 'LYC'),
+  o('ADMINISTRATION', 'Administration', 'ADMINISTRATIF'),
+  o(
+    'ALPHABETISATION',
+    'Alphabétisation',
+    'ALPHA',
+    'ALPHAB',
+    'ALPHAB & RESCOL',
+    'Alphabétisation et rescolarisation',
+  ),
+];
+
+/** Nature du texte d'entrée : un fonctionnaire n'entre que par un arrêté ou un décret. */
+export const NATURES_TEXTE = [
+  o('ARRETE', 'Arrêté', 'ARRETE N', 'ARRETE NO'),
+  o('DECRET', 'Décret', 'DECRET N'),
+  o('NOTE_SERVICE', 'Note de service', 'NOTE', 'NOTE DE SERVICE N'),
+];
+
+/**
+ * Natures des changements de grade et d'échelon (fiche de gestion des carrières remise par le DG) :
+ * fonctionnaire — promotion (tous les 2 ans), reclassement, révision de la carrière administrative ;
+ * contractuel — avancement (tous les 2 ans et 4 mois), titularisation, révision de la situation
+ * administrative. L'intégration et l'engagement sont l'acte d'entrée, pas un changement.
+ */
+const NATURES_CARRIERE = [
+  o('PROMOTION', 'Promotion (fonctionnaire)', 'PROMOTION ORDINAIRE'),
+  o(
+    'AVANCEMENT',
+    'Avancement (contractuel)',
+    'AVANCEMENT D ECHELON',
+    'AVANCEMENT D’ECHELON',
+    'AVANCEMENT ORDINAIRE',
+  ),
+  o(
+    'EXCEPTIONNEL',
+    'Promotion ou avancement exceptionnel',
+    'PROMOTION EXCEPTIONNELLE',
+    'AVANCEMENT EXCEPTIONNEL',
+  ),
+  o('RECLASSEMENT', 'Reclassement'),
+  o('RCA', 'Révision de la carrière administrative', 'RCA'),
+  o('TITULARISATION', 'Titularisation'),
+  o('RSA', 'Révision de la situation administrative', 'RSA'),
+  o('REINTEGRATION', 'Réintégration'),
+];
+
+const COLONNES_PROMOTIONS = [
+  col('DATE', 'Date', 'DATE'),
+  col('TEXTE', 'Acte (arrêté n°… du…)'),
+  col('NATURE', 'Nature', 'LISTE', NATURES_CARRIERE),
+  col('GRADE', 'Grade'),
+  col('ECHELON', 'Échelon'),
+];
+
+const COLONNES_ENFANTS = [
+  col('NOM', 'Noms et prénoms'),
+  col('NAISSANCE', 'Date de naissance', 'DATE'),
+  col('PERE', 'Noms et prénoms du père'),
+  col('MERE', 'Noms et prénoms de la mère'),
+];
+
+const COLONNES_DIPLOMES = [
+  col('DIPLOME', 'Diplôme', 'LISTE', DIPLOMES),
+  col('SPECIALITE', 'Spécialité ou série'),
+  col('ECOLE', 'École ou établissement'),
+  col('ANNEE', 'Année d’obtention'),
+];
+
+const STATUTS_ACTIVITE = [
+  o('ACTIF', 'À son poste', 'ACTIF', 'EN SERVICE', 'EN POSTE'),
+  o(
+    'STAGE',
+    'En stage ou en formation',
+    'STAGE',
+    'EN STAGE',
+    'FORMATION',
+    'EN FORMATION',
+  ),
+  o('MISSION', 'En mission'),
+  o('ABSENT', 'Absent de son poste', 'ABSENT', 'ABANDON DE POSTE'),
+  o('SUSPENDU', 'Suspendu'),
+];
+
 function champsDefaut(): ChampFiche[] {
   return [
     // Identité
     c('IDENTITE', 'NOMS_PRENOMS', 'Noms et prénoms', 'TEXTE', TOUS, {
       entetes: ['NOMS ET PRENOMS', 'NOM ET PRENOMS', 'NOMS PRENOMS'],
       exemple: 'MOUKOKO Jean Pierre',
-      aide: 'Nom en majuscules, puis les prénoms.',
+      aide: 'Le NOM tout en majuscules, puis les Prénoms (majuscule au début) : on voit ainsi où finit le nom.',
     }),
     c('IDENTITE', 'DATE_NAISSANCE', 'Date de naissance', 'DATE', TOUS, {
       entetes: ['DATE DE NAISSANCE', 'NE LE'],
@@ -278,20 +386,36 @@ function champsDefaut(): ChampFiche[] {
       aide: 'Un acte de naissance est exigé pour chaque enfant.',
       exemple: '2',
     }),
+    c(
+      'FAMILLE',
+      'NOM_PERE',
+      'Noms et prénoms du père de l’agent',
+      'TEXTE',
+      TOUS,
+      {
+        entetes: ['NOMS ET PRENOMS DU PERE', 'NOM DE PERE', 'NOM DU PERE'],
+      },
+    ),
+    c(
+      'FAMILLE',
+      'NOM_MERE',
+      'Noms et prénoms de la mère de l’agent',
+      'TEXTE',
+      TOUS,
+      {
+        entetes: [
+          'NOMS ET PRENOMS DE LA MERE',
+          'NOM DE MERE',
+          'NOM DE LA MERE',
+        ],
+      },
+    ),
     c('FAMILLE', 'ENFANTS', 'Enfants (une ligne chacun)', 'TABLEAU', [], {
       entetes: ['NOMS ET PRENOMS DES ENFANTS', 'ENFANTS'],
-      colonnes: [
-        col('NOM', 'Noms et prénoms'),
-        col('NAISSANCE', 'Date de naissance', 'DATE'),
-      ],
-      aide: 'Dans Excel : les enfants séparés par « ; », le nom et la date par « | ».',
-      exemple: 'MOUKOKO Grâce | 04/06/2015 ; MOUKOKO Paul | 21/01/2019',
-    }),
-    c('FAMILLE', 'NOM_PERE', 'Noms et prénoms du père', 'TEXTE', TOUS, {
-      entetes: ['NOMS ET PRENOMS DU PERE', 'NOM DE PERE', 'NOM DU PERE'],
-    }),
-    c('FAMILLE', 'NOM_MERE', 'Noms et prénoms de la mère', 'TEXTE', TOUS, {
-      entetes: ['NOMS ET PRENOMS DE LA MERE', 'NOM DE MERE', 'NOM DE LA MERE'],
+      colonnes: COLONNES_ENFANTS,
+      aide: 'Pour chaque enfant : son père et sa mère (ils peuvent changer d’un enfant à l’autre). Son acte de naissance se dépose sur sa ligne (bouton « Déposer l’acte »), sans bloquer la fiche. Dans Excel : les enfants séparés par « ; », les cases par « | ».',
+      exemple:
+        'MOUKOKO Grâce | 04/06/2015 | MOUKOKO Jean Pierre | NGOMA Alice ; MOUKOKO Paul | 21/01/2019 | MOUKOKO Jean Pierre | NGOMA Alice',
     }),
     // Contacts
     c('CONTACTS', 'TELEPHONE_1', 'Téléphone 1', 'TELEPHONE', [], {
@@ -309,6 +433,7 @@ function champsDefaut(): ChampFiche[] {
     }),
     // Carrière
     c('CARRIERE', 'MATRICULE_SOLDE', 'Matricule solde', 'TEXTE', AGENTS_ETAT, {
+      entetes: ['MATRICULE SOLDE', 'MATRICULE', 'MLE'],
       aide: 'Relevé sur le bulletin de solde (fonctionnaires, contractuels).',
       exemple: '179407Z',
     }),
@@ -333,6 +458,19 @@ function champsDefaut(): ChampFiche[] {
     ),
     c(
       'CARRIERE',
+      'NATURE_TEXTE_RECRUTEMENT',
+      'Nature du texte de recrutement',
+      'LISTE',
+      [],
+      {
+        options: NATURES_TEXTE,
+        autreValeur: true,
+        aide: 'Un fonctionnaire n’entre que par un arrêté ou un décret d’intégration. Rempli tout seul d’après le texte s’il commence par « Arrêté », « Décret » ou « Note ».',
+        exemple: 'Arrêté',
+      },
+    ),
+    c(
+      'CARRIERE',
       'TEXTE_RECRUTEMENT',
       'Texte de recrutement ou d’affectation (référence)',
       'TEXTE',
@@ -341,10 +479,13 @@ function champsDefaut(): ChampFiche[] {
         entetes: [
           "TEXTE DE RECRUTEMENT OU D'AFFECTATION",
           "TEXTE D'INTEGRATION",
+          "REF. TEXTE D'INTEGRATION",
+          "REFERENCE DU TEXTE D'INTEGRATION",
           'TEXTE DE RECRUTEMENT',
         ],
-        aide: 'Note, contrat ou arrêté : sa référence ; le scan va dans les pièces.',
-        exemple: 'Note n° 1006/MEPPSA-CAB du 29/09/2026',
+        aide: 'Sa référence complète, telle qu’elle est signée ; le scan va dans les pièces.',
+        exemple:
+          'Arrêté n° 21996/MFPTSS/DGFP du 31/12/2025 ou Note de service n° 220/MEPPSA-CAB-DGRHAS-DRSC-SR du 15/10/2026',
       },
     ),
     c('CARRIERE', 'GRADE', 'Grade actuel', 'TEXTE', AGENTS_ETAT, {
@@ -356,9 +497,22 @@ function champsDefaut(): ChampFiche[] {
     }),
     c('CARRIERE', 'ECHELLE', 'Échelle', 'TEXTE', AGENTS_ETAT, { exemple: '1' }),
     c('CARRIERE', 'ECHELON', 'Échelon', 'TEXTE', AGENTS_ETAT, { exemple: '3' }),
-    c('CARRIERE', 'DATE_GRADE', 'Date du grade actuel', 'DATE', AGENTS_ETAT, {
-      entetes: ['DATE DU GRADE ACTUEL', 'DATE DE GRADE'],
-    }),
+    c(
+      'CARRIERE',
+      'DATE_GRADE',
+      'Date de la dernière promotion ou du dernier avancement',
+      'DATE',
+      AGENTS_ETAT,
+      {
+        entetes: [
+          'DATE DU GRADE ACTUEL',
+          'DATE DE GRADE',
+          'DATE DE DERNIERE PROMOTION',
+          'DATE DU DERNIER AVANCEMENT',
+        ],
+        aide: 'Fonctionnaire : dernière promotion (tous les 2 ans) ; contractuel : dernier avancement (tous les 2 ans et 4 mois). Le prochain en est calculé.',
+      },
+    ),
     c('CARRIERE', 'FONCTION', 'Fonction / profession', 'TEXTE', [], {
       referentiel: 'POSTE',
       entetes: ['FONCTION/PROFESSION', 'PROFESSION', 'FONCTION'],
@@ -367,30 +521,18 @@ function champsDefaut(): ChampFiche[] {
     c(
       'CARRIERE',
       'PROMOTIONS',
-      'Autres promotions ou avancements (une ligne chacun)',
+      'Grade et échelon successifs (une ligne chacun)',
       'TABLEAU',
       ['FONCTIONNAIRE'],
       {
-        entetes: ['AUTRES PROMOTIONS OU AVANCEMENTS'],
-        colonnes: [
-          col('DATE', 'Date', 'DATE'),
-          col('TEXTE', 'Texte (arrêté n°… du…)'),
-          col('NATURE', 'Nature', 'LISTE', [
-            o('PROMOTION', 'Promotion'),
-            o(
-              'AVANCEMENT',
-              'Avancement d’échelon',
-              'AVANCEMENT',
-              'AVANCEMENT D ECHELON',
-            ),
-            o('RECLASSEMENT', 'Reclassement'),
-            o('TITULARISATION', 'Titularisation'),
-            o('INTEGRATION', 'Intégration'),
-          ]),
+        entetes: [
+          'GRADE ET ECHELON SUCCESSIFS',
+          'AUTRES PROMOTIONS OU AVANCEMENTS',
         ],
-        aide: 'Une ligne par texte : sa date et sa référence. Dans Excel, tout sur la ligne de l’agent : les textes séparés par « ; », les cases par « | ».',
+        colonnes: COLONNES_PROMOTIONS,
+        aide: 'Après l’intégration ou l’engagement, chaque changement de grade ou d’échelon : sa date, son acte, sa nature. Fonctionnaire : promotion, reclassement, révision de la carrière administrative ; contractuel : avancement, titularisation, révision de la situation administrative. Dans Excel, tout sur la ligne de l’agent : les lignes séparées par « ; », les cases par « | ».',
         exemple:
-          '12/05/2018 | Arrêté n° 1234 du 12/05/2018 | Avancement ; 03/02/2022 | Arrêté n° 5678 du 03/02/2022 | Promotion',
+          '12/05/2018 | Arrêté n° 1234 du 12/05/2018 | Promotion | Instituteur | 3 ; 03/02/2022 | Arrêté n° 5678 du 03/02/2022 | Reclassement | Instituteur principal | 1',
       },
     ),
     // Formation
@@ -409,47 +551,47 @@ function champsDefaut(): ChampFiche[] {
     ),
     c('FORMATION', 'SPECIALITE', 'Spécialité', 'TEXTE', TOUS, {
       referentiel: 'MATIERE',
-      aide: 'Enseignant : ce qu’il enseigne. Administratif : sa spécialité.',
+      aide: 'CFEEN : primaire ou préscolaire. Collège et lycée : la matière enseignée. Administratif : sa spécialité.',
       exemple: 'Mathématiques',
     }),
-    c(
-      'FORMATION',
-      'AUTRES_DIPLOMES',
-      'Autres diplômes',
-      'LISTE_MULTIPLE',
-      TOUS,
-      {
-        entetes: ['AUTRES DIPLOMES (OUI/NON)', 'AUTRES DIPLOMES'],
-        options: DIPLOMES,
-        autreValeur: true,
-        aide: 'Tous les diplômes obtenus, du CEPE au doctorat. Dans Excel, séparez-les par « ; ».',
-        exemple: 'CEPE ; BEPC / BET ; Baccalauréat',
-      },
-    ),
+    c('FORMATION', 'CYCLE', 'Cycle', 'LISTE', VOL_COM, {
+      options: CYCLES,
+      exemple: 'Primaire',
+    }),
     c('FORMATION', 'ECOLE_FORMATION', 'École de formation', 'TEXTE', VOL_COM, {
       exemple: 'ENI de Brazzaville',
+      aide: 'L’école qui a délivré le diplôme professionnel actuel.',
     }),
     c(
       'FORMATION',
       'PROMOTION_FORMATION',
-      'Promotion / date de fin de formation',
+      'Année d’obtention',
       'TEXTE',
       VOL_COM,
       {
-        exemple: '2020-2021',
+        entetes: [
+          'PROMOTION / DATE DE FIN DE FORMATION',
+          'DATE DE FIN DE FORMATION',
+          "ANNEE D'OBTENTION",
+        ],
+        aide: 'Année d’obtention du diplôme professionnel actuel (fin de formation).',
+        exemple: '2021',
       },
     ),
-    c('FORMATION', 'CYCLE', 'Cycle', 'LISTE', VOL_COM, {
-      options: [
-        o('PRESCOLAIRE', 'Préscolaire', 'PRESCO'),
-        o('PRIMAIRE', 'Primaire', 'PRIM'),
-        o('COLLEGE', 'Collège', 'CEG'),
-        o('LYCEE', 'Lycée', 'LYC'),
-        o('ADMINISTRATION', 'Administration', 'ADMINISTRATIF'),
-        o('ALPHABETISATION', 'Alphabétisation', 'ALPHA'),
-      ],
-      exemple: 'Primaire',
-    }),
+    c(
+      'FORMATION',
+      'AUTRES_DIPLOMES',
+      'Autres diplômes (une ligne chacun)',
+      'TABLEAU',
+      TOUS,
+      {
+        entetes: ['AUTRES DIPLOMES (OUI/NON)', 'AUTRES DIPLOMES'],
+        colonnes: COLONNES_DIPLOMES,
+        aide: 'Tous les autres diplômes, du CEPE au doctorat, avec l’école et l’année s’ils sont connus (facultatifs). Dans Excel : les diplômes séparés par « ; », les cases par « | ».',
+        exemple:
+          'CEPE | | | 2008 ; BEPC | | | 2012 ; Baccalauréat | Série A4 | Lycée Savorgnan de Brazza | 2015',
+      },
+    ),
     // Poste
     c(
       'POSTE',
@@ -480,9 +622,21 @@ function champsDefaut(): ChampFiche[] {
     c('POSTE', 'PRESENCE_POSTE', 'Présence au poste', 'LISTE', TOUS, {
       entetes: ['PRESENCE AU POSTE', 'PRESENCE AUPOSTE'],
       options: [o('OUI', 'Oui', 'PRESENT'), o('NON', 'Non', 'ABSENT')],
-      aide: 'Attestation de présence au poste à joindre.',
+      aide: 'Oui : donnez la référence de l’attestation de présence au poste.',
       exemple: 'Oui',
     }),
+    c(
+      'POSTE',
+      'REFERENCE_PRESENCE',
+      'Attestation de présence au poste (n° et date)',
+      'TEXTE',
+      [],
+      {
+        si: { champ: 'PRESENCE_POSTE', valeurs: ['OUI'] },
+        aide: 'Elle peut être délivrée à tout moment ; son scan va dans les pièces.',
+        exemple: 'N° 045/DDEPPSA-NIARI du 02/10/2026',
+      },
+    ),
     c(
       'POSTE',
       'AFFECTATIONS_SUCCESSIVES',
@@ -509,7 +663,12 @@ function champsDefaut(): ChampFiche[] {
       TOUS,
       {
         referentiel: 'LOCALITE',
-        entetes: ['VILLE/DISTRICT/ARRONDISSEMENT', 'VILLE'],
+        entetes: [
+          'VILLE/DISTRICT/ARRONDISSEMENT',
+          'VILLE',
+          'DISTRICT/ARRONDISSEMENT',
+          'DISTRICT',
+        ],
         exemple: 'Dolisie',
       },
     ),
@@ -522,6 +681,11 @@ function champsDefaut(): ChampFiche[] {
     }),
     c('RATTACHEMENT', 'INSPECTION', 'Inspection', 'TEXTE', TOUS, {
       referentiel: 'INSPECTION',
+      entetes: [
+        'CIRCONSCRIPTION/INSPECTION DEPARTEMENTALE',
+        'CIRCONSCRIPTION',
+        'INSPECTION DEPARTEMENTALE',
+      ],
       exemple: 'Inspection primaire de Dolisie 1',
     }),
     // Situation
@@ -545,13 +709,10 @@ function champsDefaut(): ChampFiche[] {
     }),
     c('SITUATION', 'STATUT_ACTIVITE', 'Statut d’activité', 'LISTE', TOUS, {
       entetes: ["STATUT D'ACTIVITE"],
-      options: [
-        o('ACTIF', 'Actif'),
-        o('EN_CONGE', 'En congé', 'EN GONGE'),
-        o('SUSPENDU', 'Suspendu'),
-        o('RETRAITE', 'Retraité'),
-      ],
-      exemple: 'Actif',
+      options: STATUTS_ACTIVITE,
+      autreValeur: true,
+      aide: 'Le détail de ce que fait l’agent. La position est sa situation administrative ; un instituteur admis à l’ENS est « en activité » (position) mais « en stage ou en formation » (statut d’activité).',
+      exemple: 'À son poste',
     }),
   ];
 }
@@ -574,6 +735,7 @@ const pe = (
 export function configDefaut(): ConfigRecensement {
   return {
     version: 1,
+    revision: REVISION,
     statuts: [
       {
         code: 'FONCTIONNAIRE',
@@ -605,7 +767,7 @@ export function configDefaut(): ConfigRecensement {
       { code: 'FAMILLE', libelle: 'Situation de famille' },
       { code: 'CONTACTS', libelle: 'Contacts' },
       { code: 'CARRIERE', libelle: 'Statut et carrière' },
-      { code: 'FORMATION', libelle: 'Formation et diplômes' },
+      { code: 'FORMATION', libelle: 'Formation et diplômes', colonnes: 5 },
       { code: 'POSTE', libelle: 'Poste et affectations' },
       { code: 'RATTACHEMENT', libelle: 'Rattachement' },
       { code: 'SITUATION', libelle: 'Position et activité' },
@@ -685,16 +847,147 @@ export function configDefaut(): ConfigRecensement {
       },
       {
         code: 'RETRAITE_ENCORE_ACTIF',
-        libelle: 'Retraité ou décédé encore noté « actif »',
+        libelle: 'Retraité ou décédé encore noté « à son poste »',
         si: { champ: 'POSITION', valeurs: ['RETRAITE', 'DECEDE'] },
-        alors: { champ: 'STATUT_ACTIVITE', valeurs: ['RETRAITE', 'SUSPENDU'] },
+        alors: { champ: 'STATUT_ACTIVITE', valeurs: ['ABSENT', 'SUSPENDU'] },
         actif: true,
       },
     ],
     ageMinimum: 18,
-    ageRetraite: 60,
+    ageRetraite: null,
+    delaiPromotionMois: 24,
+    delaiAvancementMois: 28,
     telephonePartage: 3,
     contentieuxHorsBase: true,
+  };
+}
+
+/** Place la rubrique « code » juste après « apres » (ou avant « avant »), si elles existent. */
+function placer(
+  champs: ChampFiche[],
+  code: string,
+  ou: { apres?: string; avant?: string },
+) {
+  const x = champs.find((c) => c.code === code);
+  const repere = ou.apres ?? ou.avant;
+  if (!x || !repere || !champs.some((c) => c.code === repere)) return champs;
+  const reste = champs.filter((c) => c !== x);
+  const i = reste.findIndex((c) => c.code === repere);
+  reste.splice(ou.apres ? i + 1 : i, 0, x);
+  return reste;
+}
+
+/**
+ * Configuration enregistrée avant une révision des valeurs par défaut : elle reçoit les nouvelles
+ * rubriques et les rubriques revues (libellé, cases, valeurs, aide), en gardant ce que le DG a réglé
+ * (rubrique obligatoire ou non, active ou non, en-têtes reconnus).
+ */
+export function mettreAJour(
+  c: ConfigRecensement,
+  depuis: number,
+): ConfigRecensement {
+  if (depuis >= REVISION) return { ...c, revision: REVISION };
+  const defaut = configDefaut();
+  // Révisions 3 et 4 : chaque rubrique reçoit les en-têtes reconnus par défaut et les autres
+  // écritures de ses valeurs (« PRESOLAIRE »…) ; ceux du DG sont gardés
+  if (depuis >= 2)
+    return {
+      ...c,
+      revision: REVISION,
+      champs: c.champs.map((x) => {
+        const d = defaut.champs.find((y) => y.code === x.code);
+        return d
+          ? {
+              ...x,
+              entetes: [...new Set([...(x.entetes ?? []), ...d.entetes])],
+              options: x.options.map((o) => {
+                const od = d.options.find((y) => y.code === o.code);
+                return od
+                  ? {
+                      ...o,
+                      synonymes: [
+                        ...new Set([...o.synonymes, ...od.synonymes]),
+                      ],
+                    }
+                  : o;
+              }),
+            }
+          : x;
+      }),
+    };
+  const parCode = new Map(defaut.champs.map((x) => [x.code, x]));
+  // Révision 2 (DG, 24/10/2026)
+  const revues = [
+    'NOMS_PRENOMS',
+    'NOM_PERE',
+    'NOM_MERE',
+    'ENFANTS',
+    'DIPLOME_PRO',
+    'TEXTE_RECRUTEMENT',
+    'DATE_GRADE',
+    'PROMOTIONS',
+    'SPECIALITE',
+    'ECOLE_FORMATION',
+    'PROMOTION_FORMATION',
+    'AUTRES_DIPLOMES',
+    'PRESENCE_POSTE',
+    'STATUT_ACTIVITE',
+  ];
+  let champs = c.champs.map((x): ChampFiche => {
+    const d = parCode.get(x.code);
+    if (!d || !revues.includes(x.code)) return x;
+    return {
+      ...x,
+      libelle: d.libelle,
+      type: d.type,
+      colonnes: d.colonnes,
+      options: d.options,
+      autreValeur: d.autreValeur,
+      aide: d.aide,
+      exemple: d.exemple,
+      entetes: [...new Set([...(x.entetes ?? []), ...d.entetes])],
+    };
+  });
+  for (const [code, ou] of [
+    ['NATURE_TEXTE_RECRUTEMENT', { avant: 'TEXTE_RECRUTEMENT' }],
+    ['REFERENCE_PRESENCE', { apres: 'PRESENCE_POSTE' }],
+  ] as const)
+    if (!champs.some((x) => x.code === code)) {
+      champs.push(parCode.get(code)!);
+      champs = placer(champs, code, ou);
+    }
+  // Parents de l'agent avant ses enfants ; le diplôme actuel sur une ligne (diplôme, spécialité,
+  // cycle, école, année), puis les autres diplômes
+  champs = placer(champs, 'ENFANTS', { apres: 'NOM_MERE' });
+  for (const [code, apres] of [
+    ['SPECIALITE', 'DIPLOME_PRO'],
+    ['CYCLE', 'SPECIALITE'],
+    ['ECOLE_FORMATION', 'CYCLE'],
+    ['PROMOTION_FORMATION', 'ECOLE_FORMATION'],
+    ['AUTRES_DIPLOMES', 'PROMOTION_FORMATION'],
+  ])
+    champs = placer(champs, code, { apres });
+  const regleDefaut = new Map(defaut.regles.map((r) => [r.code, r]));
+  return {
+    ...c,
+    revision: REVISION,
+    champs,
+    sections: c.sections.map((x) =>
+      x.code === 'FORMATION' && !x.colonnes ? { ...x, colonnes: 5 } : x,
+    ),
+    regles: c.regles.map((r) =>
+      r.code === 'RETRAITE_ENCORE_ACTIF'
+        ? {
+            ...r,
+            libelle: regleDefaut.get(r.code)!.libelle,
+            alors: regleDefaut.get(r.code)!.alors,
+          }
+        : r,
+    ),
+    // L'âge de 60 ans supposé pour une catégorie inconnue est retiré (DG, 24/10/2026)
+    ageRetraite: c.ageRetraite === 60 ? null : c.ageRetraite,
+    delaiPromotionMois: c.delaiPromotionMois ?? defaut.delaiPromotionMois,
+    delaiAvancementMois: c.delaiAvancementMois ?? defaut.delaiAvancementMois,
   };
 }
 
@@ -712,12 +1005,13 @@ export class ConfigRecensementService {
     let c: ConfigRecensement = configDefaut();
     try {
       const brut = this.params.get(CLE);
-      if (brut)
-        c = {
-          ...c,
-          ...(JSON.parse(brut) as Partial<ConfigRecensement>),
-          version: 1,
-        };
+      if (brut) {
+        const enregistree = JSON.parse(brut) as Partial<ConfigRecensement>;
+        c = mettreAJour(
+          { ...c, ...enregistree, version: 1 },
+          enregistree.revision ?? 1,
+        );
+      }
     } catch {
       c = configDefaut();
     }
@@ -851,7 +1145,14 @@ export function valider(brut: unknown): ConfigRecensement {
 
   const sections = tableau('sections').map((x, i): Section => {
     const lib = texte(x?.libelle, `Section n° ${i + 1}`, 80);
-    return { code: code(x?.code || lib, `Section « ${lib} »`), libelle: lib };
+    const colonnes = Number(x?.colonnes);
+    return {
+      code: code(x?.code || lib, `Section « ${lib} »`),
+      libelle: lib,
+      ...(Number.isInteger(colonnes) && colonnes >= 1 && colonnes <= 6
+        ? { colonnes }
+        : {}),
+    };
   });
   if (!sections.length)
     throw new BadRequestException('Il faut au moins une section.');
@@ -1024,13 +1325,32 @@ export function valider(brut: unknown): ConfigRecensement {
 
   return {
     version: 1,
+    revision: REVISION,
     statuts,
     sections,
     champs,
     pieces,
     regles,
     ageMinimum: entier(b.ageMinimum, 'Âge minimum', 14, 40),
-    ageRetraite: entier(b.ageRetraite, 'Âge de la retraite', 45, 75),
+    // Vide : aucun âge supposé quand la catégorie de l'agent est inconnue
+    ageRetraite:
+      b.ageRetraite === null ||
+      b.ageRetraite === undefined ||
+      b.ageRetraite === ''
+        ? null
+        : entier(b.ageRetraite, 'Âge de la retraite', 45, 75),
+    delaiPromotionMois: entier(
+      b.delaiPromotionMois ?? 24,
+      'Délai de promotion (mois)',
+      6,
+      120,
+    ),
+    delaiAvancementMois: entier(
+      b.delaiAvancementMois ?? 28,
+      'Délai d’avancement (mois)',
+      6,
+      120,
+    ),
     telephonePartage: entier(b.telephonePartage, 'Téléphone partagé', 2, 50),
     contentieuxHorsBase: b.contentieuxHorsBase !== false,
   };
