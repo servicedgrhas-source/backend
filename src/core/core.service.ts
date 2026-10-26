@@ -23,6 +23,7 @@ const PARAMETRES_ENTIERS: Record<string, [number, number, string]> = {
   TAILLE_LOT_COMMISSION: [1, 1000, 'un nombre de dossiers entre 1 et 1000'],
   POINT_INDICIAIRE: [1, 100000, 'un montant en FCFA (nombre entier)'],
   HEURES_ENSEIGNANT: [1, 40, 'un nombre d’heures entre 1 et 40'],
+  HEURES_ENSEIGNANT_LYCEE: [1, 40, 'un nombre d’heures entre 1 et 40'],
 };
 
 export const PARAMETRES_DEFAUT: Record<string, [string, string]> = {
@@ -69,7 +70,11 @@ export const PARAMETRES_DEFAUT: Record<string, [string, string]> = {
   ],
   HEURES_ENSEIGNANT: [
     '20',
-    'Heures de cours par semaine d’un enseignant du collège et du lycée : les heures des classes divisées par ce nombre donnent les enseignants nécessaires',
+    'Heures de cours par semaine d’un enseignant du collège : les heures des classes divisées par ce nombre donnent les enseignants nécessaires',
+  ],
+  HEURES_ENSEIGNANT_LYCEE: [
+    '15',
+    'Heures de cours par semaine d’un enseignant du lycée : les heures des classes divisées par ce nombre donnent les enseignants nécessaires',
   ],
   MENTION_BOURSE_ENROLEMENT: [
     "Les intéressés percevront une bourse mensuelle conformément au protocole d'accord du 16 octobre 2023, passé entre le Gouvernement de la République et la Coordination des Diplômés des Ecoles Professionnelles de l'Enseignement, assistée par les syndicats des enseignants et l'Association des Parents d'Elèves et Etudiants du Congo (APEEC).",

@@ -8,7 +8,11 @@ import { codeDepartement } from '../common/referentiels';
 import { cleCompacte, enTexte } from '../common/texte';
 import { JournalService } from '../core/core.service';
 import { Departement, Structure } from '../entities';
-import { CYCLES_STRUCTURE, TYPES_LOCALITE } from './catalogue';
+import {
+  CYCLES_STRUCTURE,
+  nomPropreInspection,
+  TYPES_LOCALITE,
+} from './catalogue';
 
 /**
  * Import des établissements et des inspections (DG, 23/10/2026) : chaque école appartient à une
@@ -189,6 +193,10 @@ export class ImportStructuresService {
       if (s.type === 'INSPECTION') {
         inspections.set(`${s.departementId}|${cleNom(s)}`, s);
         inspections.set(`${s.departementId}|${cleCompacte(s.sigle)}`, s);
+        // Retrouvée aussi sans son préfixe (« Boko-Songho 10 » pour « IEPA Boko-Songho 10 »)
+        const propre = nomPropreInspection(s.sigle);
+        if (propre)
+          inspections.set(`${s.departementId}|${cleCompacte(propre)}`, s);
       }
       if (s.type === 'ETABLISSEMENT')
         ecoles.set(`${s.departementId}|${s.parentId}|${cleNom(s)}`, s);
@@ -268,7 +276,12 @@ export class ImportStructuresService {
         if (!cycle) r.sansCycle++;
         let insp: Structure | undefined;
         if (nomInsp) {
-          insp = inspections.get(`${dep.id}|${cleCompacte(nomInsp)}`);
+          const propre = nomPropreInspection(nomInsp);
+          insp =
+            inspections.get(`${dep.id}|${cleCompacte(nomInsp)}`) ??
+            (propre
+              ? inspections.get(`${dep.id}|${cleCompacte(propre)}`)
+              : undefined);
           if (!insp) {
             insp = nouvelle({
               type: 'INSPECTION',

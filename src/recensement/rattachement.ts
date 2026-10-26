@@ -33,7 +33,7 @@ const VIDES = new Set([
   'AU',
 ]);
 const MOTS_TYPE =
-  /\b(LYCEE|CEG|COLLEGE|EP|ECOLE|PRIMAIRE|PUBLIQUE|CEP|PRESCOLAIRE|MATERNELLE|JARDIN|ENFANTS|CENTRE|ALPHABETISATION|INSPECTION|IEP|ENSEIGNEMENT|GENERAL|TECHNIQUE|PROFESSIONNEL|SECONDAIRE|DEPARTEMENTALE|CIRCONSCRIPTION|SCOLAIRE|ETABLISSEMENT)\b/g;
+  /\b(LYCEE|CEG|COLLEGE|EP|ECOLE|PRIMAIRE|PUBLIQUE|CEP|PRESCOLAIRE|MATERNELLE|JARDIN|ENFANTS|CENTRE|ALPHABETISATION|INSPECTION|IEP|IEPA|IP|IDP|ICEG|ICGE|ENSEIGNEMENT|GENERAL|TECHNIQUE|PROFESSIONNEL|SECONDAIRE|DEPARTEMENTALE|CIRCONSCRIPTION|SCOLAIRE|ETABLISSEMENT)\b/g;
 const NATURE_CYCLE: Record<string, Nature> = {
   LYCEE: 'LYC',
   COLLEGE: 'COL',
@@ -50,7 +50,10 @@ const texte = (s: unknown) =>
 /** Nature du lieu écrit : direction départementale, inspection, lycée, CEG, école… */
 function nature(n: string): Nature | null {
   if (/DISPOSITION|DDEPPSA|DIRECTION DEPARTEMENTALE/.test(n)) return 'DD';
-  if (/^(INSPECTION|IEP\b|CIRCONSCRIPTION)/.test(n)) return 'INS';
+  if (
+    /^(INSPECTION|IEPA?\b|ID?P\b|ICEG\b|ICGE\b|ILZ\b|CIRCONSCRIPTION)/.test(n)
+  )
+    return 'INS';
   if (/\bLYCEE\b/.test(n)) return 'LYC';
   if (/\b(CEG|COLLEGE)\b/.test(n)) return 'COL';
   if (/\b(CEP|PRESCOLAIRE|MATERNELLE|JARDIN)\b/.test(n)) return 'PRE';
@@ -70,8 +73,11 @@ function coeur(n: string) {
 
 /** Cycle qu'indique le texte d'une inspection (« Inspection primaire de… »). */
 function cycleIndique(n: string) {
-  if (/PRESCOLAIRE/.test(n)) return 'PRESCOLAIRE';
-  if (/PRIMAIRE/.test(n)) return 'PRIMAIRE';
+  if (/PRESCOLAIRE|\bID?P\b/.test(n)) return 'PRESCOLAIRE';
+  if (/PRIMAIRE|\bIEPA?\b/.test(n)) return 'PRIMAIRE';
+  // Préfixes des inspections (DG, 26/10/2026) : ICEG pour les collèges, ILZ pour les lycées
+  if (/\bIC[EG]{2}\b/.test(n)) return 'COLLEGE';
+  if (/\bILZ\b/.test(n)) return 'LYCEE';
   if (/ALPHABETISATION/.test(n)) return 'ALPHABETISATION';
   return null;
 }

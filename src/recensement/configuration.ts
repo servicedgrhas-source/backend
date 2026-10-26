@@ -175,7 +175,7 @@ const CLE = 'RECENSEMENT_CONFIG';
  * Révision des valeurs par défaut (2 : réunion du DG du 24/10/2026 ; 3 : en-têtes des bases de
  * l'enrôlement biométrique 2022-2023 — « MATRICULE », « REF. TEXTE D'INTEGRATION »…).
  */
-const REVISION = 4;
+const REVISION = 5;
 
 /* ------------------------------ Valeurs par défaut ------------------------------ */
 
@@ -605,6 +605,24 @@ function champsDefaut(): ChampFiche[] {
         exemple: 'École primaire de Mfilou',
       },
     ),
+    // Ce que l'agent fait dans sa structure (DG, 26/10/2026) ; « Fonction / profession » est sa qualification
+    c(
+      'POSTE',
+      'FONCTION_STRUCTURE',
+      'Fonction dans la structure',
+      'TEXTE',
+      [],
+      {
+        entetes: [
+          'FONCTION DANS LA STRUCTURE',
+          'FONCTION OCCUPEE',
+          'POSTE OCCUPE',
+          'EMPLOI OCCUPE',
+        ],
+        aide: 'Ce que l’agent fait dans sa structure : chef de bureau, secrétaire, comptable, surveillant général… Sa qualification (instituteur, professeur…) est dans « Fonction / profession ».',
+        exemple: 'Chef du bureau des mutations',
+      },
+    ),
     c(
       'POSTE',
       'NOTE_AFFECTATION',
@@ -863,6 +881,17 @@ export function configDefaut(): ConfigRecensement {
 }
 
 /** Place la rubrique « code » juste après « apres » (ou avant « avant »), si elles existent. */
+/** Rubriques par défaut absentes d'une configuration enregistrée, placées après celle qui les précède. */
+function ajouterManquantes(champs: ChampFiche[], defaut: ChampFiche[]) {
+  let l = [...champs];
+  defaut.forEach((d, i) => {
+    if (l.some((x) => x.code === d.code)) return;
+    l.push(d);
+    if (i > 0) l = placer(l, d.code, { apres: defaut[i - 1].code });
+  });
+  return l;
+}
+
 function placer(
   champs: ChampFiche[],
   code: string,
@@ -894,7 +923,8 @@ export function mettreAJour(
     return {
       ...c,
       revision: REVISION,
-      champs: c.champs.map((x) => {
+      // Révision 5 : les rubriques ajoutées depuis (« Fonction dans la structure ») viennent à leur place
+      champs: ajouterManquantes(c.champs, defaut.champs).map((x) => {
         const d = defaut.champs.find((y) => y.code === x.code);
         return d
           ? {

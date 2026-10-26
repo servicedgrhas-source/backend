@@ -30,7 +30,9 @@ import {
   STRUCTURES_DGRHAS,
   TYPES_LOCALITE,
   NIVEAU_FIN_CIRCUIT,
+  parPreseance,
   posteResponsable,
+  prefixerInspection,
   TYPES_STRUCTURE,
 } from './catalogue';
 import { joursDepuis, SQL_AUJOURDHUI, sqlJourLocal } from '../common/jours';
@@ -311,14 +313,13 @@ export class CircuitService implements OnModuleInit {
   /** Toutes les structures, avec leur niveau, le poste de responsable et qui l'occupe. */
   async listeStructures() {
     const [liste, responsables] = await Promise.all([
-      this.structures.find({
-        order: { ordre: 'ASC', type: 'ASC', sigle: 'ASC' },
-      }),
+      this.structures.find(),
       this.structures.query<{ id: number; nom: string }[]>(
         `SELECT a.id, a."nomComplet" AS nom FROM agent_recense a WHERE a.id IN (SELECT "responsableId" FROM structure WHERE "responsableId" IS NOT NULL)`,
       ),
     ]);
     const noms = new Map(responsables.map((r) => [r.id, r.nom]));
+    liste.sort(parPreseance);
     // Seulement ce que lisent l'organigramme et les listes de choix (3 000 structures et plus)
     return liste.map((s) => ({
       id: s.id,
@@ -449,36 +450,44 @@ export class CircuitService implements OnModuleInit {
             type: s.type,
             departementId: s.departementId ?? IsNull(),
           },
-      order: { ordre: 'ASC', type: 'ASC', sigle: 'ASC' },
     });
-    return tous;
+    return tous.sort(parPreseance);
   }
 
-  /** Monte ou descend une structure d'un rang parmi celles du même niveau. */
+  /**
+   * Monte ou descend une structure d'un rang parmi celles du même niveau (`sens`), ou la place à
+   * une position donnée (`position`, à partir de 0 : glisser-déposer).
+   */
   async deplacerStructure(
     u: UtilisateurConnecte,
     id: number,
-    sens: 'haut' | 'bas',
+    sens: 'haut' | 'bas' | null,
+    position: number | null = null,
   ) {
     const s = await this.structures.findOne({ where: { id } });
     if (!s) throw new NotFoundException('Structure introuvable');
     const freres = await this.freres(s);
     const i = freres.findIndex((x) => x.id === id);
-    const j = sens === 'haut' ? i - 1 : i + 1;
+    const j =
+      position !== null
+        ? Math.max(0, Math.min(freres.length - 1, position))
+        : sens === 'haut'
+          ? i - 1
+          : i + 1;
     if (j < 0 || j >= freres.length)
       throw new BadRequestException(
         sens === 'haut'
           ? 'Elle est déjà en premier.'
           : 'Elle est déjà en dernier.',
       );
-    [freres[i], freres[j]] = [freres[j], freres[i]];
+    freres.splice(j, 0, ...freres.splice(i, 1));
     // Rangs renumérotés 1, 2, 3… : l'ordre affiché reste stable
     for (const [k, x] of freres.entries())
       if (x.ordre !== k + 1)
         await this.structures.update(x.id, { ordre: k + 1 });
     await this.journal.log(u, 'STRUCTURE_DEPLACEE', 'structure', String(id), {
       sigle: s.sigle,
-      sens,
+      sens: sens ?? `position ${j + 1}`,
     });
     return { ok: true };
   }
@@ -531,6 +540,20 @@ export class CircuitService implements OnModuleInit {
     const parent = dto.parentId
       ? await this.structures.findOne({ where: { id: dto.parentId } })
       : null;
+    // Pas sous une structure qui dépend d'elle (la voie hiérarchique tournerait en rond)
+    if (id && parent)
+      for (let x: Structure | null = parent, k = 0; x && k < 20; k++) {
+        if (x.id === id)
+          throw new BadRequestException(
+            'Impossible : cette structure dépend déjà de celle que vous déplacez.',
+          );
+        x = x.parentId
+          ? await this.structures.findOne({ where: { id: x.parentId } })
+          : null;
+      }
+    const ancienne = id
+      ? await this.structures.findOneOrFail({ where: { id } })
+      : null;
     const valeurs = {
       type: dto.type,
       nom,
@@ -545,10 +568,18 @@ export class CircuitService implements OnModuleInit {
       localite: dto.localite?.replace(/\s+/g, ' ').trim() || null,
       actif: dto.actif ?? true,
     };
-    const s = id
+    // Rattachée ailleurs : à la fin des structures de son nouveau supérieur
+    const nouveauRang =
+      ancienne && ancienne.parentId !== valeurs.parentId
+        ? (await this.freres({ ...ancienne, ...valeurs }))
+            .filter((x) => x.id !== ancienne.id)
+            .reduce((m, x) => Math.max(m, x.ordre), 0) + 1
+        : null;
+    const s = ancienne
       ? await this.structures.save({
-          ...(await this.structures.findOneOrFail({ where: { id } })),
+          ...ancienne,
           ...valeurs,
+          ...(nouveauRang !== null ? { ordre: nouveauRang } : {}),
         })
       : await this.structures.save({
           ...valeurs,
@@ -567,6 +598,194 @@ export class CircuitService implements OnModuleInit {
       { type: s.type, sigle: s.sigle },
     );
     return s;
+  }
+
+  /**
+   * Préfixe du cycle devant le nom de chaque inspection (IEPA, ICEG, ILZ, IP). `essai` : la liste
+   * « avant → après », sans rien enregistrer. Ni le rattachement ni le personnel ne changent.
+   * L'alphabétisation et les inspections sans cycle attendent la décision du DG.
+   */
+  async prefixerInspections(u: UtilisateurConnecte, essai: boolean) {
+    const [inspections, departements] = await Promise.all([
+      this.structures.find({ where: { type: 'INSPECTION' } }),
+      this.deps.find(),
+    ]);
+    const dep = new Map(departements.map((d) => [d.id, d.nom]));
+    const changees: {
+      id: number;
+      departement: string | null;
+      cycle: string;
+      avant: string;
+      apres: string;
+      nomAvant: string;
+      nomApres: string;
+    }[] = [];
+    const aVerifier: {
+      id: number;
+      departement: string | null;
+      cycle: string;
+      sigle: string;
+      raison: string;
+    }[] = [];
+    let deja = 0;
+    let alphabetisation = 0;
+    let sansCycle = 0;
+    for (const s of inspections.sort(parPreseance)) {
+      if (!s.cycle) {
+        sansCycle++;
+        continue;
+      }
+      const r = prefixerInspection(s.sigle, s.cycle, s.nom);
+      if (!r) {
+        if (s.cycle === 'ALPHABETISATION') alphabetisation++;
+        continue;
+      }
+      const departement = s.departementId
+        ? (dep.get(s.departementId) ?? null)
+        : null;
+      if ('conflit' in r) {
+        aVerifier.push({
+          id: s.id,
+          departement,
+          cycle: s.cycle,
+          sigle: s.sigle,
+          raison: r.conflit,
+        });
+        continue;
+      }
+      if (r.sigle === s.sigle && r.nom === s.nom) {
+        deja++;
+        continue;
+      }
+      changees.push({
+        id: s.id,
+        departement,
+        cycle: s.cycle,
+        avant: s.sigle,
+        apres: r.sigle,
+        nomAvant: s.nom,
+        nomApres: r.nom,
+      });
+    }
+    if (!essai && changees.length) {
+      await this.structures.manager.transaction(async (m) => {
+        for (const c of changees)
+          await m.update(Structure, c.id, { sigle: c.apres, nom: c.nomApres });
+      });
+      await this.journal.log(u, 'INSPECTIONS_PREFIXEES', 'structure', null, {
+        inspections: changees.length,
+        exemples: changees.slice(0, 5).map((c) => `${c.avant} → ${c.apres}`),
+      });
+    }
+    return {
+      essai,
+      changees,
+      aVerifier,
+      deja,
+      enAttente: { alphabetisation, sansCycle },
+    };
+  }
+
+  /**
+   * Structures à compléter (DG, 26/10/2026) : ce qui manque à une structure pour que les calculs et
+   * le circuit des demandes marchent (cycle, inspection, département, structure supérieure, préfixe).
+   * Une liste par problème ; l'organigramme ouvre directement la fiche à corriger.
+   */
+  async structuresACompleter() {
+    const [liste, departements] = await Promise.all([
+      this.structures.find({ where: { actif: true } }),
+      this.deps.find(),
+    ]);
+    const dep = new Map(departements.map((d) => [d.id, d.nom]));
+    const parId = new Map(liste.map((s) => [s.id, s]));
+    const groupes: {
+      code: string;
+      libelle: string;
+      aide: string;
+      test: (s: Structure) => boolean;
+    }[] = [
+      {
+        code: 'INSPECTION_SANS_CYCLE',
+        libelle: 'Inspections sans cycle',
+        aide: 'Sans cycle, pas de préfixe (IEPA, ICEG, ILZ, IP) et les écoles ne savent pas à quel cycle elles appartiennent.',
+        test: (s) => s.type === 'INSPECTION' && !s.cycle,
+      },
+      {
+        code: 'ECOLE_SANS_CYCLE',
+        libelle: 'Écoles sans cycle',
+        aide: 'Sans cycle, le besoin en enseignants de l’école ne se calcule pas.',
+        test: (s) => s.type === 'ETABLISSEMENT' && !s.cycle,
+      },
+      {
+        code: 'ECOLE_SANS_INSPECTION',
+        libelle: 'Écoles sans inspection',
+        aide: 'Leurs demandes passent directement au DDEPPSA, sans l’avis de l’inspection.',
+        test: (s) => s.type === 'ETABLISSEMENT' && !s.parentId,
+      },
+      {
+        code: 'INSPECTION_SANS_DDEPPSA',
+        libelle: 'Inspections sans DDEPPSA',
+        aide: 'Leur circuit s’arrête : rattachez-les à la DDEPPSA de leur département.',
+        test: (s) => s.type === 'INSPECTION' && !s.parentId,
+      },
+      {
+        code: 'SANS_DEPARTEMENT',
+        libelle: 'Structures départementales sans département',
+        aide: 'Elles n’apparaissent dans aucun département (listes, statistiques, besoins).',
+        test: (s) =>
+          ['DDEPPSA', 'INSPECTION', 'ETABLISSEMENT'].includes(s.type) &&
+          !s.departementId,
+      },
+      {
+        code: 'SANS_SUPERIEURE',
+        libelle: 'Directions, services et bureaux sans structure supérieure',
+        aide: 'Une demande qui part de chez eux ne peut pas remonter.',
+        test: (s) =>
+          [
+            'DIRECTION_CENTRALE',
+            'SERVICE',
+            'BUREAU',
+            'DIRECTION_DGRHAS',
+            'SERVICE_DGRHAS',
+            'BUREAU_DGRHAS',
+          ].includes(s.type) && !s.parentId,
+      },
+      {
+        code: 'PREFIXE_A_VERIFIER',
+        libelle: 'Inspections dont le préfixe ne correspond pas au cycle',
+        aide: 'Leur nom porte le préfixe d’un autre cycle (par exemple IEP pour une inspection du préscolaire) : le cycle ou le nom est faux.',
+        test: (s) => {
+          const r =
+            s.type === 'INSPECTION'
+              ? prefixerInspection(s.sigle, s.cycle, s.nom)
+              : null;
+          return !!r && 'conflit' in r;
+        },
+      },
+    ];
+    liste.sort(parPreseance);
+    return groupes
+      .map((g) => {
+        const toutes = liste.filter(g.test);
+        return {
+          code: g.code,
+          libelle: g.libelle,
+          aide: g.aide,
+          total: toutes.length,
+          structures: toutes.slice(0, 300).map((s) => ({
+            id: s.id,
+            sigle: s.sigle,
+            type: s.type,
+            departement: s.departementId
+              ? (dep.get(s.departementId) ?? null)
+              : null,
+            superieure: s.parentId
+              ? (parId.get(s.parentId)?.sigle ?? null)
+              : null,
+          })),
+        };
+      })
+      .filter((g) => g.total > 0);
   }
 
   async supprimerStructure(u: UtilisateurConnecte, id: number) {
@@ -626,10 +845,6 @@ export class CircuitService implements OnModuleInit {
       !['LIEU_SERVICE', 'DDEPPSA', 'DGRHAS'].includes(dto.decision)
     )
       throw new BadRequestException('Niveau de décision invalide.');
-    if (dto.actif && !t.code.startsWith('MUTATION') && t.code !== 'PERMUTATION')
-      throw new BadRequestException(
-        'Pour l’instant, seules les demandes de mutation sont ouvertes.',
-      );
     if (dto.etapesInternes) {
       const connues = new Set(
         (

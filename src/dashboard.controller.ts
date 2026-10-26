@@ -111,6 +111,13 @@ export class DashboardController {
              'communautaires', count(*) FILTER (WHERE population = 'COMMUNAUTAIRE' AND statut = 'EN_POSTE'),
              'sansCategorie', count(*) FILTER (WHERE statut = 'EN_POSTE' AND categorie IS NULL),
              'sansDepartement', count(*) FILTER (WHERE statut = 'EN_POSTE' AND "departementId" IS NULL)) FROM volontaire) AS registre,
+          -- Structures à compléter (Administration › Organigramme) : cycle, inspection, supérieure
+          (SELECT json_build_object(
+             'sansCycle', count(*) FILTER (WHERE type IN ('INSPECTION', 'ETABLISSEMENT') AND cycle IS NULL),
+             'ecolesSansInspection', count(*) FILTER (WHERE type = 'ETABLISSEMENT' AND "parentId" IS NULL),
+             'sansSuperieure', count(*) FILTER (WHERE "parentId" IS NULL AND type IN
+               ('INSPECTION', 'DIRECTION_CENTRALE', 'SERVICE', 'BUREAU', 'DIRECTION_DGRHAS', 'SERVICE_DGRHAS', 'BUREAU_DGRHAS')))
+             FROM structure WHERE actif) AS structures,
           (SELECT coalesce(json_agg(x), '[]') FROM (
              SELECT population, statut, effectif, total FROM etat_bourse WHERE mois = to_char(now(), 'YYYY-MM')) x) AS "paiementsDuMois",
           (SELECT json_build_object('ecoles', count(DISTINCT "structureId"), 'classes', count(*)) FROM classe

@@ -7,7 +7,7 @@ import {
 import { InjectRepository } from '@nestjs/typeorm';
 import { In, Repository } from 'typeorm';
 import type { UtilisateurConnecte } from '../auth/auth';
-import { posteResponsable } from '../circuit/catalogue';
+import { parPreseance, posteResponsable } from '../circuit/catalogue';
 import { normaliser } from '../common/texte';
 import { JournalService, ParametresService } from '../core/core.service';
 import { Batiment, Classe, Referentiel, Salle, Structure } from '../entities';
@@ -50,7 +50,10 @@ export interface AgentEcole {
   id: number;
   nomComplet: string;
   statut: string;
+  /** Qualification (« Fonction / profession » de la fiche). */
   fonction: string | null;
+  /** Ce qu'il fait dans la structure (chef de bureau, secrétaire…). */
+  fonctionStructure: string | null;
   specialite: string | null;
   enseignant: boolean;
   enPoste: boolean;
@@ -117,6 +120,13 @@ export class EtablissementsService {
     private readonly journal: JournalService,
   ) {}
 
+  /** Heures de cours par semaine d'un enseignant : 20 h au collège, 15 h au lycée (paramètres). */
+  heuresEnseignant(cycle?: string | null) {
+    return cycle === 'LYCEE'
+      ? Number(this.params.get('HEURES_ENSEIGNANT_LYCEE')) || 15
+      : Number(this.params.get('HEURES_ENSEIGNANT')) || 20;
+  }
+
   annee(a?: string) {
     return a && /^\d{4}-\d{4}$/.test(a) ? a : this.params.get('ANNEE_SCOLAIRE');
   }
@@ -140,7 +150,8 @@ export class EtablissementsService {
       params.push(p.structures);
       conds.push(`s.id = ANY($${params.length})`);
     }
-    return this.structures.query<
+    // Même ordre que l'organigramme (rang du DG, préséance, sigle)
+    const lignes = await this.structures.query<
       {
         id: number;
         nom: string;
@@ -157,10 +168,10 @@ export class EtablissementsService {
               (SELECT count(*)::int FROM agent_recense a WHERE a."structureId" = s.id
                  AND coalesce(a.contentieux->>'etat', 'CONFIRME') = 'CONFIRME') AS agents,
               (SELECT count(*)::int FROM structure e WHERE e."parentId" = s.id AND e.type = 'ETABLISSEMENT' AND e.actif) AS ecoles
-         FROM structure s WHERE ${conds.join(' AND ')}
-        ORDER BY s.ordre, s.nom`,
+         FROM structure s WHERE ${conds.join(' AND ')}`,
       params,
     );
+    return lignes.sort(parPreseance);
   }
 
   /** Une structure administrative : où elle se trouve, son responsable et son personnel. */
@@ -182,9 +193,15 @@ export class EtablissementsService {
           )
         : Promise.resolve([]),
       this.structures.query<
-        { id: number; nom: string; sigle: string; type: string }[]
+        {
+          id: number;
+          nom: string;
+          sigle: string;
+          type: string;
+          ordre: number;
+        }[]
       >(
-        `SELECT id, nom, sigle, type FROM structure WHERE "parentId" = $1 AND actif ORDER BY ordre, nom`,
+        `SELECT id, nom, sigle, type, ordre FROM structure WHERE "parentId" = $1 AND actif`,
         [id],
       ),
     ]);
@@ -200,8 +217,15 @@ export class EtablissementsService {
         responsableInterim: s.responsableInterim,
       },
       chemin,
-      dessous,
-      agents: agents.get(id) ?? [],
+      dessous: dessous.sort(parPreseance),
+      // Le responsable en poste : sa fonction est celle de la structure (chef de service, inspecteur…)
+      agents: (agents.get(id) ?? []).map((a) => ({
+        ...a,
+        fonctionStructure:
+          a.id === s.responsableId
+            ? `${posteResponsable(s)}${s.responsableInterim ? ' (intérim)' : ''}`
+            : a.fonctionStructure,
+      })),
     };
   }
 
@@ -341,12 +365,14 @@ export class EtablissementsService {
         nomComplet: string;
         statut: string;
         fonction: string | null;
+        fonctionStructure: string | null;
         specialite: string | null;
         position: string | null;
         activite: string | null;
       }[]
     >(
       `SELECT id, "structureId", "nomComplet", statut, donnees->>'FONCTION' AS fonction,
+              donnees->>'FONCTION_STRUCTURE' AS "fonctionStructure",
               donnees->>'SPECIALITE' AS specialite, donnees->>'POSITION' AS position,
               donnees->>'STATUT_ACTIVITE' AS activite
          FROM agent_recense WHERE "structureId" = ANY($1) AND coalesce(contentieux->>'etat', 'CONFIRME') = 'CONFIRME' ORDER BY "nomComplet"`,
@@ -360,6 +386,7 @@ export class EtablissementsService {
         nomComplet: l.nomComplet,
         statut: l.statut,
         fonction: l.fonction,
+        fonctionStructure: l.fonctionStructure,
         specialite: l.specialite,
         // Volontaires et communautaires sans fonction écrite : ce sont des enseignants
         enseignant:
@@ -423,7 +450,7 @@ export class EtablissementsService {
     agents: AgentEcole[],
     prog?: Awaited<ReturnType<EtablissementsService['programmes']>>,
   ) {
-    const H = Number(this.params.get('HEURES_ENSEIGNANT')) || 20;
+    const H = this.heuresEnseignant(s.cycle);
     const enseignants = agents.filter((a) => a.enseignant && a.enPoste);
     const base = {
       heuresEnseignant: H,
@@ -692,7 +719,8 @@ export class EtablissementsService {
     ];
     return {
       annee,
-      heuresEnseignant: Number(this.params.get('HEURES_ENSEIGNANT')) || 20,
+      heuresEnseignant: this.heuresEnseignant('COLLEGE'),
+      heuresLycee: this.heuresEnseignant('LYCEE'),
       cycles: [...parCycle.values()]
         .map((x) => ({ ...x, ecart: arrondi(x.enPlace - x.besoin) }))
         .sort(

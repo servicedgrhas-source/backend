@@ -17,6 +17,9 @@ import {
   lireValeur,
   prochainAvancement,
   valeurLisible,
+  echellesDe,
+  promotionsAttendues,
+  trouverEchelle,
 } from './valeurs';
 
 /**
@@ -682,23 +685,46 @@ export class CarriereService {
       .find(
         (e) => ('ECHELON' in e.nouveau || 'GRADE' in e.nouveau) && e.dateEffet,
       );
-    const av = prochainAvancement(this.rec.config.get(), a.statut, {
-      ...d,
-      DATE_GRADE:
-        [texte(d.DATE_GRADE), dernier?.dateEffet]
-          .filter((x): x is string => !!x)
-          .sort()
-          .at(-1) ?? null,
-    });
-    const echelle = texte(d.ECHELLE)
-      ? await this.refs.findOne({
-          where: { type: 'ECHELLE', code: cleCompacte(d.ECHELLE) },
-        })
-      : null;
-    const duree = Number(echelle?.donnees?.dureeEchelonMois) || null;
-    const nombre = Number(echelle?.donnees?.nombreEchelons) || null;
+    // Échelles de la grille (Administration › Référentiels › Échelles)
+    const echelles = echellesDe(
+      await this.refs.find({ where: { type: 'ECHELLE', actif: true } }),
+    );
+    const conf = this.rec.config.get();
+    const av = prochainAvancement(
+      conf,
+      a.statut,
+      {
+        ...d,
+        DATE_GRADE:
+          [texte(d.DATE_GRADE), dernier?.dateEffet]
+            .filter((x): x is string => !!x)
+            .sort()
+            .at(-1) ?? null,
+      },
+      echelles,
+    );
+    const ech = trouverEchelle(echelles, d.ECHELLE);
+    const duree = ech?.dureeEchelonMois ?? null;
+    const nombre = ech?.nombreEchelons ?? null;
     const echelon = Number(texte(d.ECHELON)) || null;
-    const dernierEchelon = !!nombre && !!echelon && echelon >= nombre;
+    const dernierEchelon = !!av?.fin;
+    // Promotions (ou avancements) attendues depuis la dernière, échelon par échelon, en respectant
+    // l'échelle de l'agent (durée d'un échelon, dernier échelon, échelle suivante)
+    const attendues = av
+      ? promotionsAttendues({
+          depuis: av.depuis,
+          delaiMois:
+            av.nature === 'PROMOTION'
+              ? conf.delaiPromotionMois
+              : conf.delaiAvancementMois,
+          dureeEchelle: av.nature === 'PROMOTION',
+          echelon,
+          echelle: ech,
+          echelles,
+          aujourdhui: new Date().toISOString().slice(0, 10),
+        })
+      : [];
+    const echelle = ech;
     return {
       valeurs,
       // Fonctionnaire : « date de dernière promotion » ; contractuel : « date du dernier avancement »
@@ -720,6 +746,7 @@ export class CarriereService {
           }
         : null,
       prochainEchelon: av && !dernierEchelon ? av.prochain : null,
+      attendues,
       dernierEchelon,
     };
   }

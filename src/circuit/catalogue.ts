@@ -1296,6 +1296,46 @@ const RESPONSABLE_CYCLE: Record<string, string> = {
   ALPHABETISATION: 'Responsable de centre',
 };
 
+/**
+ * Ordre de préséance des niveaux, quand le DG n'a pas rangé les structures (flèches ou glisser) :
+ * le cabinet, l'inspection générale (au-dessus des directions), les directions générales, puis les
+ * directions centrales, les services, les bureaux ; côté départements, DDEPPSA, inspections, écoles.
+ */
+const PRESEANCE: Record<string, number> = {
+  MINISTERE: 0,
+  CABINET: 1,
+  INSPECTION_GENERALE: 2,
+  DIRECTION_GENERALE: 3,
+  DGRHAS: 3,
+  DIRECTION_CENTRALE: 4,
+  DIRECTION_DGRHAS: 4,
+  SERVICE: 5,
+  SERVICE_DGRHAS: 5,
+  BUREAU: 6,
+  BUREAU_DGRHAS: 6,
+  DDEPPSA: 7,
+  INSPECTION: 8,
+  ETABLISSEMENT: 9,
+};
+const sigles = new Intl.Collator('fr', { numeric: true, sensitivity: 'base' });
+
+/**
+ * Ordre d'affichage des structures d'un même niveau, le même partout (organigramme, structures
+ * administratives) : le rang donné par le DG, puis la préséance du niveau, puis le sigle
+ * (« Boko-Songho 2 » avant « Boko-Songho 10 »).
+ */
+export function parPreseance(
+  a: { ordre: number; type: string; sigle: string; nom: string },
+  b: { ordre: number; type: string; sigle: string; nom: string },
+) {
+  return (
+    a.ordre - b.ordre ||
+    (PRESEANCE[a.type] ?? 10) - (PRESEANCE[b.type] ?? 10) ||
+    sigles.compare(a.sigle || a.nom, b.sigle || b.nom) ||
+    sigles.compare(a.nom, b.nom)
+  );
+}
+
 /** Poste du responsable d'une structure (le proviseur d'un lycée, le chef d'un service…). */
 export function posteResponsable(s: { type: string; cycle?: string | null }) {
   if (s.type === 'ETABLISSEMENT' && s.cycle && RESPONSABLE_CYCLE[s.cycle])
@@ -1305,6 +1345,88 @@ export function posteResponsable(s: { type: string; cycle?: string | null }) {
 
 /** Une demande ne remonte pas au-delà du niveau des directions générales. */
 export const NIVEAU_FIN_CIRCUIT = 2;
+
+/**
+ * Préfixe du nom d'une inspection selon son cycle (DG, 26/10/2026) : IEPA (enseignement primaire et
+ * alphabétisation), ICEG (collèges), ILZ (lycées, par zone), IP (préscolaire). Les autres écritures
+ * reconnues pour le même cycle sont remplacées ; celles d'un autre cycle sont signalées.
+ */
+export const PREFIXES_INSPECTION: Record<
+  string,
+  { prefixe: string; variantes: string[] }
+> = {
+  PRIMAIRE: { prefixe: 'IEPA', variantes: ['IEPA', 'IEP'] },
+  COLLEGE: { prefixe: 'ICEG', variantes: ['ICEG', 'ICGE'] },
+  LYCEE: { prefixe: 'ILZ', variantes: ['ILZ'] },
+  PRESCOLAIRE: { prefixe: 'IP', variantes: ['IP', 'IDP'] },
+};
+const TOUTES_VARIANTES = Object.values(PREFIXES_INSPECTION).flatMap(
+  (p) => p.variantes,
+);
+
+/** « INSPECTION DE NGOYO » → « NGOYO » ; « Inspection Ewo » → « Ewo ». */
+const sansMotInspection = (t: string) =>
+  t
+    .replace(/\s+/g, ' ')
+    .trim()
+    .replace(/^inspection\s+(?:(?:de\s+la|de|du|des|d['’])\s*)?/i, '');
+
+/**
+ * Nom propre d'une inspection, sans « Inspection de » ni préfixe de cycle (« IEPA Boko-Songho 10 »
+ * et « Boko-Songho 10 » donnent le même) ; null s'il ne reste qu'un numéro (« ILZ 8 »).
+ */
+export function nomPropreInspection(t: string) {
+  const reste = sansMotInspection(t).replace(
+    new RegExp(`^(${TOUTES_VARIANTES.join('|')})\\b\\s*`, 'i'),
+    '',
+  );
+  return /[A-Za-z]/.test(reste) ? reste : null;
+}
+
+/**
+ * Sigle et nom d'une inspection avec le préfixe de son cycle : « Boko-Songho 10 » (primaire) →
+ * « IEPA Boko-Songho 10 ». Le nom complet suit le sigle quand il n'en était que la reprise
+ * (« Inspection Boko-Songho 10 ») ; une ancienne écriture du préfixe y est corrigée (« Inspection
+ * ICGE… ») ; un nom plus parlant (« Inspection des CEG de Pointe-Noire 2 ») est gardé. Sans règle
+ * pour ce cycle : null ; préfixe d'un autre cycle : `conflit` (le cycle ou le nom est à vérifier).
+ */
+export function prefixerInspection(
+  sigle: string,
+  cycle: string | null,
+  nom: string = `Inspection ${sigle}`,
+): { sigle: string; nom: string } | { conflit: string } | null {
+  const regle = PREFIXES_INSPECTION[cycle ?? ''];
+  if (!regle) return null;
+  // « INSPECTION DE NGOYO », « Inspection Ewo » : le mot « inspection » n'est pas répété dans le sigle
+  let reste = sansMotInspection(sigle);
+  const premier = /^([A-Za-z]+)\b\s*/.exec(reste);
+  const mot = premier?.[1].toUpperCase() ?? '';
+  if (TOUTES_VARIANTES.includes(mot)) {
+    if (!regle.variantes.includes(mot))
+      return {
+        conflit: `« ${mot} » est le préfixe d’un autre cycle`,
+      };
+    reste = reste.slice(premier![0].length);
+  }
+  const nouveau = `${regle.prefixe} ${reste}`.trim().slice(0, 80);
+  const compact = (t: string) =>
+    t
+      .normalize('NFD')
+      .replace(/[̀-ͯ]/g, '')
+      .toUpperCase()
+      .replace(/[^A-Z0-9]/g, '');
+  const n = nom.replace(/\s+/g, ' ').trim();
+  // Déjà le bon nom (aux majuscules près) : on n'y touche pas
+  if (compact(n) === compact(`Inspection ${nouveau}`))
+    return { sigle: nouveau, nom: n };
+  if ([compact(`Inspection ${sigle}`), compact(sigle)].includes(compact(n)))
+    return { sigle: nouveau, nom: `Inspection ${nouveau}` };
+  const variante = new RegExp(
+    `^(inspection\\s+)(${regle.variantes.join('|')})\\b`,
+    'i',
+  );
+  return { sigle: nouveau, nom: n.replace(variante, `$1${regle.prefixe}`) };
+}
 
 /** Cycle d'une inspection ou d'une école (une inspection par cycle dans chaque département). */
 export const CYCLES_STRUCTURE: Record<string, string> = {

@@ -38,6 +38,7 @@ import {
   deduire,
   estVide,
   evaluer,
+  echellesDe,
   formaterNom,
   lireValeur,
   prochainAvancement,
@@ -1537,7 +1538,8 @@ export class RecensementService {
       `SELECT a.id, a."nomNormalise", to_char(a."dateNaissance", 'YYYY-MM-DD') AS "dateNaissance", a.matricule, a.telephone,
               a.donnees->>'POSITION' AS position, a.donnees->>'CATEGORIE' AS categorie, a.statut,
               jsonb_build_object('DATE_GRADE', a.donnees->'DATE_GRADE', 'PROMOTIONS', a.donnees->'PROMOTIONS',
-                                 'DATE_RECRUTEMENT', a.donnees->'DATE_RECRUTEMENT') AS carriere, a.manques, a."nomComplet", v.statut AS registre,
+                                 'DATE_RECRUTEMENT', a.donnees->'DATE_RECRUTEMENT',
+                                 'ECHELON', a.donnees->'ECHELON', 'ECHELLE', a.donnees->'ECHELLE') AS carriere, a.manques, a."nomComplet", v.statut AS registre,
               a.contentieux->>'etat' AS contentieux, a.distinctes
          FROM agent_recense a LEFT JOIN volontaire v ON v.id = a."volontaireId"
         WHERE ${fp.sql.replace('$X', '$1')}
@@ -1643,6 +1645,12 @@ export class RecensementService {
           ajouter('VOLONTAIRE_AGENT_ETAT', l.id);
     }
     const aujourdhui = jourIso();
+    // Échelles de la grille : durée d'un échelon et dernier échelon (Administration › Référentiels)
+    const echelles = echellesDe(
+      await this.agents.query(
+        `SELECT code, libelle, donnees FROM referentiel WHERE type = 'ECHELLE' AND actif`,
+      ),
+    );
     // Âge de la retraite de chaque catégorie (Administration › Référentiels › Catégories d'agents) ;
     // l'âge unique de la configuration sert quand la catégorie de l'agent est inconnue
     const ageCategorie = new Map(
@@ -1672,9 +1680,10 @@ export class RecensementService {
       const av =
         (!l.position || l.position === 'ACTIVITE') &&
         (!l.contentieux || l.contentieux === 'CONFIRME')
-          ? prochainAvancement(c, l.statut, l.carriere ?? {})
+          ? prochainAvancement(c, l.statut, l.carriere ?? {}, echelles)
           : null;
-      if (av && av.prochain <= aujourdhui) ajouter('AVANCEMENT_DU', l.id);
+      if (av && !av.fin && av.prochain <= aujourdhui)
+        ajouter('AVANCEMENT_DU', l.id);
       for (const v of l.manques?.aVerifier ?? [])
         ajouter(v.startsWith('REGLE:') ? v : 'VALEUR_HORS_LISTE', l.id);
     }

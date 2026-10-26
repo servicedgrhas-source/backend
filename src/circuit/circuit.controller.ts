@@ -206,13 +206,32 @@ export class CircuitController {
     );
   }
 
+  /** Structures auxquelles il manque quelque chose (cycle, inspection, département…). */
+  @Get('structures/a-completer')
+  aCompleter() {
+    return this.service.structuresACompleter();
+  }
+
+  /** Préfixe du cycle devant le nom des inspections (IEPA, ICEG, ILZ, IP) : essai d'abord. */
+  @Roles('DG')
+  @Post('structures/inspections/prefixes')
+  prefixerInspections(
+    @Utilisateur() u: UtilisateurConnecte,
+    @Query('essai') essai: string | undefined,
+  ) {
+    return this.service.prefixerInspections(u, essai !== '0');
+  }
+
   @Roles('DG')
   @Post('structures/:id/deplacer')
   deplacer(
     @Utilisateur() u: UtilisateurConnecte,
     @Param('id', ParseIntPipe) id: number,
-    @Body() body: { sens: 'haut' | 'bas' },
+    @Body() body: { sens?: 'haut' | 'bas'; position?: number },
   ) {
+    // Glisser-déposer : position parmi les structures du même niveau (à partir de 0)
+    if (Number.isInteger(body?.position) && body.position! >= 0)
+      return this.service.deplacerStructure(u, id, null, body.position);
     if (body?.sens !== 'haut' && body?.sens !== 'bas')
       throw new BadRequestException('Sens attendu : haut ou bas');
     return this.service.deplacerStructure(u, id, body.sens);

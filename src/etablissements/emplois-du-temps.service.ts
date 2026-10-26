@@ -31,7 +31,7 @@ export class EmploisDuTempsService {
     private readonly journal: JournalService,
   ) {}
 
-  private reglages() {
+  private reglages(cycle?: string | null) {
     const jours = this.params
       .get('EDT_JOURS')
       .split(/[,; ]+/)
@@ -41,7 +41,7 @@ export class EmploisDuTempsService {
     return {
       jours: jours.length ? [...new Set(jours)].sort() : [1, 2, 3, 4, 5],
       creneaux,
-      heuresEnseignant: Number(this.params.get('HEURES_ENSEIGNANT')) || 20,
+      heuresEnseignant: this.etab.heuresEnseignant(cycle),
     };
   }
 
@@ -56,7 +56,7 @@ export class EmploisDuTempsService {
       structure: { id: s.id, nom: s.nom, cycle: s.cycle },
       annee: a,
       parMatiere: PAR_MATIERE.includes(s.cycle ?? ''),
-      reglages: this.reglages(),
+      reglages: this.reglages(s.cycle),
       emploi: e,
     };
   }
@@ -71,7 +71,7 @@ export class EmploisDuTempsService {
           : 'Indiquez d’abord le cycle de l’école dans l’organigramme (collège ou lycée).',
       );
     const a = this.etab.annee(annee);
-    const r = this.reglages();
+    const r = this.reglages(s.cycle);
     if (!r.creneaux.length)
       throw new BadRequestException(
         'Aucun créneau de cours dans les paramètres (Administration › Paramètres › créneaux des emplois du temps).',

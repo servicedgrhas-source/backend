@@ -184,7 +184,7 @@ describe('Configuration enregistrée avant la réunion du 24/10', () => {
     );
     expect(promo.obligatoirePour).toEqual([]);
     expect(m.ageRetraite).toBeNull();
-    expect(m.revision).toBe(4);
+    expect(m.revision).toBe(5);
   });
 });
 

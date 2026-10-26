@@ -464,7 +464,8 @@ export const libelleStatut = (statuts: StatutAgent[], code: string) =>
   statuts.find((s) => s.code === code)?.libelle ?? code;
 
 const ISO = /^\d{4}-\d{2}-\d{2}$/;
-const ajouterMois = (date: string, mois: number) => {
+/** Date ISO + n mois (fin de mois respectée). */
+export const ajouterMoisDate = (date: string, mois: number) => {
   const d = new Date(`${date}T00:00:00Z`);
   const jour = d.getUTCDate();
   d.setUTCDate(1);
@@ -477,6 +478,96 @@ const ajouterMois = (date: string, mois: number) => {
   return d.toISOString().slice(0, 10);
 };
 
+/**
+ * Une échelle de la grille (Administration › Référentiels › Échelles) : son nombre d'échelons, la
+ * durée d'un échelon, et l'échelle où l'on passe après le dernier échelon (sinon : on s'arrête).
+ */
+export interface EchelleGrille {
+  code: string;
+  libelle: string;
+  nombreEchelons: number | null;
+  dureeEchelonMois: number | null;
+  echelleSuivante: string | null;
+}
+
+/** L'échelle écrite dans la fiche (« 2 », « Échelle 2 », « ECHELLE 2 ») parmi celles de la grille. */
+export function trouverEchelle(echelles: EchelleGrille[], valeur: unknown) {
+  const k = cleCompacte(valeur);
+  if (!k) return null;
+  const chiffres = k.replace(/\D/g, '');
+  return (
+    echelles.find(
+      (e) => cleCompacte(e.code) === k || cleCompacte(e.libelle) === k,
+    ) ??
+    (chiffres
+      ? (echelles.find((e) => e.code.replace(/\D/g, '') === chiffres) ?? null)
+      : null)
+  );
+}
+
+/** Lit les échelles du référentiel (valeurs `donnees` de chaque ligne ECHELLE). */
+export function echellesDe(
+  lignes: {
+    code: string;
+    libelle: string;
+    donnees: Record<string, unknown> | null;
+  }[],
+): EchelleGrille[] {
+  return lignes.map((r) => ({
+    code: r.code,
+    libelle: r.libelle,
+    nombreEchelons: Number(r.donnees?.nombreEchelons) || null,
+    dureeEchelonMois: Number(r.donnees?.dureeEchelonMois) || null,
+    echelleSuivante: enTexte(r.donnees?.echelleSuivante) || null,
+  }));
+}
+
+/**
+ * Promotions (ou avancements) attendues depuis la dernière : à chaque fois l'échelon suivant, après la
+ * durée d'un échelon de l'échelle (sinon le délai général) ; après le dernier échelon, le 1er échelon
+ * de l'échelle suivante si elle est réglée, sinon on s'arrête. Jusqu'à aujourd'hui, plus la prochaine.
+ */
+export function promotionsAttendues(o: {
+  depuis: string;
+  delaiMois: number;
+  /** La durée d'un échelon de l'échelle compte (fonctionnaires) ; sinon le délai général seul. */
+  dureeEchelle: boolean;
+  echelon: number | null;
+  echelle: EchelleGrille | null;
+  echelles: EchelleGrille[];
+  aujourdhui: string;
+}) {
+  const res: {
+    date: string;
+    echelon: number | null;
+    echelle: string | null;
+  }[] = [];
+  let e = o.echelon;
+  let ech = o.echelle;
+  let date = o.depuis;
+  for (let k = 0; k < 40; k++) {
+    let changement: string | null = null;
+    // Le temps passé dans l'échelon actuel : la durée de l'échelle où l'on est encore
+    const mois = (o.dureeEchelle ? ech?.dureeEchelonMois : null) || o.delaiMois;
+    if (e !== null) {
+      e++;
+      if (ech?.nombreEchelons && e > ech.nombreEchelons) {
+        const suivante = ech.echelleSuivante
+          ? (trouverEchelle(o.echelles, ech.echelleSuivante) ?? null)
+          : null;
+        if (!suivante || suivante.code === ech.code) break;
+        ech = suivante;
+        e = 1;
+        changement = suivante.libelle;
+      }
+    }
+    date = ajouterMoisDate(date, mois);
+    res.push({ date, echelon: e, echelle: changement });
+    if (date > o.aujourdhui) break;
+  }
+  return res;
+}
+
 export interface Avancement {
   /** « promotion » (fonctionnaire) ou « avancement » (contractuel). */
   nature: 'PROMOTION' | 'AVANCEMENT';
@@ -486,6 +577,8 @@ export interface Avancement {
   origine: 'DERNIER' | 'ENTREE';
   /** Date à laquelle le prochain est dû. */
   prochain: string;
+  /** Dernier échelon de sa dernière échelle atteint : plus de promotion d'échelon attendue. */
+  fin?: boolean;
 }
 
 /**
@@ -498,6 +591,8 @@ export function prochainAvancement(
   c: Pick<ConfigRecensement, 'delaiPromotionMois' | 'delaiAvancementMois'>,
   statut: string,
   donnees: Record<string, unknown>,
+  /** Échelles de la grille : durée d'un échelon et dernier échelon (sinon, délais généraux). */
+  echelles: EchelleGrille[] = [],
 ): Avancement | null {
   // Fiche de gestion de la carrière administrative (DG) : après sa titularisation ou la révision
   // de sa situation administrative, le contractuel est géré comme un fonctionnaire
@@ -536,11 +631,22 @@ export function prochainAvancement(
   const entree = enTexte(donnees.DATE_RECRUTEMENT);
   const depuis = dernier ?? (ISO.test(entree) ? entree : null);
   if (!depuis) return null;
+  // Échelle de l'agent : la durée de son échelon (fonctionnaires), et rien après le dernier échelon
+  const [suivant] = promotionsAttendues({
+    depuis,
+    delaiMois: mois,
+    dureeEchelle: nature === 'PROMOTION',
+    echelon: Number(enTexte(donnees.ECHELON)) || null,
+    echelle: trouverEchelle(echelles, donnees.ECHELLE),
+    echelles,
+    aujourdhui: depuis,
+  });
   return {
     nature,
     depuis,
     origine: dernier ? 'DERNIER' : 'ENTREE',
-    prochain: ajouterMois(depuis, mois),
+    prochain: suivant?.date ?? ajouterMoisDate(depuis, mois),
+    ...(suivant ? {} : { fin: true }),
   };
 }
 
