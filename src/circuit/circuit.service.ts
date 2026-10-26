@@ -506,6 +506,7 @@ export class CircuitService implements OnModuleInit {
           'DIRECTION_CENTRALE',
           'DIRECTION_GENERALE',
           'INSPECTION_GENERALE',
+          'ORGANISME_TUTELLE',
           'CABINET',
         ]),
       },

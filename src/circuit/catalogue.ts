@@ -1215,6 +1215,13 @@ export const TYPES_STRUCTURE: Record<
     responsable: 'Inspecteur général',
     perimetre: 'CENTRAL',
   },
+  ORGANISME_TUTELLE: {
+    libelle: 'Organisme sous tutelle',
+    externe: true,
+    niveau: 2,
+    responsable: 'Directeur général',
+    perimetre: 'CENTRAL',
+  },
   DGRHAS: {
     libelle: 'Direction générale (DGRHAS)',
     externe: false,
@@ -1307,6 +1314,7 @@ const PRESEANCE: Record<string, number> = {
   INSPECTION_GENERALE: 2,
   DIRECTION_GENERALE: 3,
   DGRHAS: 3,
+  ORGANISME_TUTELLE: 3,
   DIRECTION_CENTRALE: 4,
   DIRECTION_DGRHAS: 4,
   SERVICE: 5,
