@@ -42,6 +42,7 @@ import {
   lireValeur,
   prochainAvancement,
 } from './valeurs';
+import { createHash } from 'crypto';
 import { IndexNoms } from '../common/index-noms';
 import { IndexStructures } from './rattachement';
 
@@ -118,6 +119,9 @@ const STATUTS_ETAT = ['FONCTIONNAIRE', 'CONTRACTUEL'];
 /** Fiche ajoutée au recensement qui attend encore le contrôle ou la décision du DG. */
 export const enAttente = (c: { etat: string } | null | undefined) =>
   c?.etat === 'EN_COURS' || c?.etat === 'CONTROLE';
+
+/** « Même personne probable » déjà calculé, par empreinte des fiches lues (voir `controles`). */
+const MEMES_PERSONNES = new Map<string, number[]>();
 
 @Injectable()
 export class RecensementService {
@@ -1536,7 +1540,8 @@ export class RecensementService {
                                  'DATE_RECRUTEMENT', a.donnees->'DATE_RECRUTEMENT') AS carriere, a.manques, a."nomComplet", v.statut AS registre,
               a.contentieux->>'etat' AS contentieux, a.distinctes
          FROM agent_recense a LEFT JOIN volontaire v ON v.id = a."volontaireId"
-        WHERE ${fp.sql.replace('$X', '$1')}`,
+        WHERE ${fp.sql.replace('$X', '$1')}
+        ORDER BY a.id`,
       fp.params,
     );
     const ids = new Map<string, Set<number>>();
@@ -1564,25 +1569,48 @@ export class RecensementService {
       'DOUBLON',
     );
     groupes((l) => l.matricule, 2, 'MATRICULE_DOUBLE');
-    // Même personne probable sous deux fiches (deux bases : volontaire puis fonctionnaire, nom écrit autrement…)
-    const index = new IndexNoms<(typeof lignes)[number]>();
-    for (const l of lignes) {
-      for (const x of index.probables(l.nomComplet, l.dateNaissance))
-        if (
-          !(l.distinctes ?? []).includes(x.id) &&
-          !(x.distinctes ?? []).includes(l.id) &&
-          // Même nom écrit pareil et même date : déjà « DOUBLON »
-          !(
-            x.nomNormalise === l.nomNormalise &&
-            x.dateNaissance &&
-            x.dateNaissance === l.dateNaissance
+    // Même personne probable sous deux fiches (deux bases : volontaire puis fonctionnaire, nom écrit autrement…).
+    // C'est le calcul le plus long : il est gardé tant que les noms, dates et fiches déclarées
+    // différentes sont les mêmes (empreinte exacte de ce qu'il lit)
+    const empreinte = createHash('sha1');
+    for (const l of lignes)
+      empreinte.update(
+        JSON.stringify([
+          l.id,
+          l.nomComplet,
+          l.nomNormalise,
+          l.dateNaissance,
+          l.distinctes ?? [],
+        ]),
+      );
+    const cle = empreinte.digest('hex');
+    let memes = MEMES_PERSONNES.get(cle);
+    if (!memes) {
+      memes = [];
+      const index = new IndexNoms<(typeof lignes)[number]>();
+      for (const l of lignes) {
+        for (const x of index.probables(l.nomComplet, l.dateNaissance))
+          if (
+            !(l.distinctes ?? []).includes(x.id) &&
+            !(x.distinctes ?? []).includes(l.id) &&
+            // Même nom écrit pareil et même date : déjà « DOUBLON »
+            !(
+              x.nomNormalise === l.nomNormalise &&
+              x.dateNaissance &&
+              x.dateNaissance === l.dateNaissance
+            )
           )
-        ) {
-          ajouter('MEME_PERSONNE', l.id);
-          ajouter('MEME_PERSONNE', x.id);
-        }
-      index.ajouter(l.nomComplet, l.dateNaissance, l);
+            memes.push(l.id, x.id);
+        index.ajouter(l.nomComplet, l.dateNaissance, l);
+      }
+      MEMES_PERSONNES.delete(cle);
+      MEMES_PERSONNES.set(cle, memes);
+      // Quelques périmètres seulement (DGRHAS, une DDEPPSA, une école…)
+      const [ancienne] = MEMES_PERSONNES.keys();
+      if (MEMES_PERSONNES.size > 8 && ancienne)
+        MEMES_PERSONNES.delete(ancienne);
     }
+    for (const id of memes) ajouter('MEME_PERSONNE', id);
     for (const l of lignes) {
       if (l.contentieux === 'EN_COURS') ajouter('CONTENTIEUX', l.id);
       if (l.contentieux === 'CONTROLE') ajouter('CONTENTIEUX_DG', l.id);
@@ -1680,30 +1708,34 @@ export class RecensementService {
     const fp = this.filtrePerimetre(p);
     const w = fp.sql.replace('$X', '$1');
     const q = <T>(sql: string) => this.agents.query<T[]>(sql, fp.params);
-    const [totaux] = await q<{
-      total: number;
-      complets: number;
-      taux: number | null;
-    }>(
-      `SELECT count(*)::int AS total, count(*) FILTER (WHERE complet)::int AS complets, round(avg(taux))::int AS taux FROM agent_recense a WHERE ${w}`,
-    );
-    const parStatut = await q<{ statut: string; n: number; complets: number }>(
-      `SELECT statut, count(*)::int AS n, count(*) FILTER (WHERE complet)::int AS complets FROM agent_recense a WHERE ${w} GROUP BY 1 ORDER BY 2 DESC`,
-    );
-    const parDepartement = await q<{
-      departementId: number | null;
-      n: number;
-      complets: number;
-    }>(
-      `SELECT "departementId", count(*)::int AS n, count(*) FILTER (WHERE complet)::int AS complets FROM agent_recense a WHERE ${w} GROUP BY 1 ORDER BY 2 DESC`,
-    );
-    const champs = await q<{ code: string; n: number }>(
-      `SELECT x AS code, count(*)::int AS n FROM agent_recense a, jsonb_array_elements_text(coalesce(a.manques->'champs','[]'::jsonb)) x WHERE ${w} GROUP BY 1 ORDER BY 2 DESC`,
-    );
-    const pieces = await q<{ code: string; n: number; total: number }>(
-      `SELECT x->>'code' AS code, count(*)::int AS n, sum((x->>'manque')::int)::int AS total FROM agent_recense a, jsonb_array_elements(coalesce(a.manques->'pieces','[]'::jsonb)) x WHERE ${w} GROUP BY 1 ORDER BY 2 DESC`,
-    );
-    const ctl = await this.controles(u);
+    // Les comptes sont indépendants : lancés ensemble
+    const [[totaux], parStatut, parDepartement, champs, pieces, ctl] =
+      await Promise.all([
+        q<{
+          total: number;
+          complets: number;
+          taux: number | null;
+        }>(
+          `SELECT count(*)::int AS total, count(*) FILTER (WHERE complet)::int AS complets, round(avg(taux))::int AS taux FROM agent_recense a WHERE ${w}`,
+        ),
+        q<{ statut: string; n: number; complets: number }>(
+          `SELECT statut, count(*)::int AS n, count(*) FILTER (WHERE complet)::int AS complets FROM agent_recense a WHERE ${w} GROUP BY 1 ORDER BY 2 DESC`,
+        ),
+        q<{
+          departementId: number | null;
+          n: number;
+          complets: number;
+        }>(
+          `SELECT "departementId", count(*)::int AS n, count(*) FILTER (WHERE complet)::int AS complets FROM agent_recense a WHERE ${w} GROUP BY 1 ORDER BY 2 DESC`,
+        ),
+        q<{ code: string; n: number }>(
+          `SELECT x AS code, count(*)::int AS n FROM agent_recense a, jsonb_array_elements_text(coalesce(a.manques->'champs','[]'::jsonb)) x WHERE ${w} GROUP BY 1 ORDER BY 2 DESC`,
+        ),
+        q<{ code: string; n: number; total: number }>(
+          `SELECT x->>'code' AS code, count(*)::int AS n, sum((x->>'manque')::int)::int AS total FROM agent_recense a, jsonb_array_elements(coalesce(a.manques->'pieces','[]'::jsonb)) x WHERE ${w} GROUP BY 1 ORDER BY 2 DESC`,
+        ),
+        this.controles(u),
+      ]);
     return {
       total: totaux.total,
       complets: totaux.complets,
