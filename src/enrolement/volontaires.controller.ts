@@ -101,7 +101,13 @@ export class VolontairesController {
   ) {
     return this.volontaires.liste({
       population,
-      vague: vague === undefined || vague === '' ? undefined : Number(vague),
+      // « aucune » : les volontaires dont la vague n'est pas reconnue
+      vague:
+        vague === undefined || vague === ''
+          ? undefined
+          : vague === 'aucune'
+            ? null
+            : Number(vague),
       recherche,
       statut: statut || undefined,
       departementId: entierOuRien(departement),

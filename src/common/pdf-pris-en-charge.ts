@@ -63,12 +63,21 @@ const MOIS: Record<string, number> = {
   OCT: 10,
   NOV: 11,
   DEC: 12,
+  // Mois écrits en entier (date d'édition : « 21 OCTOBRE 2026 »)
+  JANVIER: 1,
+  FEVRIER: 2,
+  AVRIL: 4,
+  JUILLET: 7,
+  SEPTEMBRE: 9,
+  OCTOBRE: 10,
+  NOVEMBRE: 11,
+  DECEMBRE: 12,
 };
 
 /** « 08-JAN-89 », « 08/01/1989 » → « 1989-01-08 » (année à deux chiffres : 19xx sauf un âge de moins de 15 ans). */
 export function dateSolde(t: string, annee = new Date().getFullYear()) {
   const s = t.normalize('NFD').replace(/[̀-ͯ]/g, '').toUpperCase().trim();
-  const m = /^(\d{1,2})[-/. ]([A-Z]{3,5}|\d{1,2})[-/. ](\d{2}|\d{4})$/.exec(s);
+  const m = /^(\d{1,2})[-/. ]([A-Z]{3,9}|\d{1,2})[-/. ](\d{2}|\d{4})$/.exec(s);
   if (!m) return null;
   const j = Number(m[1]);
   const mois = /^\d+$/.test(m[2]) ? Number(m[2]) : MOIS[m[2]];
@@ -178,12 +187,26 @@ export async function lireListePriseEnCharge(contenu: Buffer): Promise<{
   lignes: LignePriseEnCharge[];
   pages: number;
   pagesSansTitres: number;
+  /** Date d'édition imprimée en tête (« EDITE LE MERCREDI 21 OCTOBRE 2026 ») : AAAA-MM-JJ. */
+  editeLe: string | null;
 }> {
   const pages = await morceauxParPage(contenu);
   const sortie: LignePriseEnCharge[] = [];
   let sansTitres = 0;
+  let editeLe: string | null = null;
   let cols: { col: Colonne; x: number }[] | null = null;
   pages.forEach((morceaux, p) => {
+    if (!editeLe)
+      for (const m of morceaux) {
+        const e =
+          /EDIT[EÉ]\s+LE\s+(?:[A-ZÉÈÛ]+\s+)?(\d{1,2}\s+[A-ZÉÈÛ]+\s+\d{4})/i.exec(
+            m.texte,
+          );
+        if (e) {
+          editeLe = dateSolde(e[1].replace(/\s+/g, '-'));
+          break;
+        }
+      }
     const titres = morceaux.filter((m) => /^PRENOMS?$/i.test(m.texte.trim()));
     if (titres.length) {
       const y = titres[0].y;
@@ -264,5 +287,10 @@ export async function lireListePriseEnCharge(contenu: Buffer): Promise<{
       });
     }
   });
-  return { lignes: sortie, pages: pages.length, pagesSansTitres: sansTitres };
+  return {
+    lignes: sortie,
+    pages: pages.length,
+    pagesSansTitres: sansTitres,
+    editeLe,
+  };
 }

@@ -711,7 +711,10 @@ export class CarriereService {
     const echelon = Number(texte(d.ECHELON)) || null;
     const dernierEchelon = !!av?.fin;
     // Promotions (ou avancements) attendues depuis la dernière, échelon par échelon, en respectant
-    // l'échelle de l'agent (durée d'un échelon, dernier échelon, échelle suivante)
+    // l'échelle de l'agent (durée d'un échelon, dernier échelon, échelle suivante). Seulement celles
+    // déjà échues : on évalue la situation jusqu'à aujourd'hui (DG, 26/10/2026 : « il ne peut pas
+    // être en 2026 », un échelon pas encore atteint n'est pas attendu)
+    const aujourdhui = new Date().toISOString().slice(0, 10);
     const attendues = av
       ? promotionsAttendues({
           depuis: av.depuis,
@@ -723,8 +726,8 @@ export class CarriereService {
           echelon,
           echelle: ech,
           echelles,
-          aujourdhui: new Date().toISOString().slice(0, 10),
-        })
+          aujourdhui,
+        }).filter((x) => x.date <= aujourdhui)
       : [];
     const echelle = ech;
     return {

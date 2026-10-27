@@ -347,6 +347,8 @@ export class BottinService {
     const rapport = {
       essai: o.essai,
       mois: o.mois,
+      // PDF de la Solde : sa date d'édition, pour vérifier le mois choisi
+      editeLe: pdf?.editeLe ?? null,
       lues: lues.length,
       enDoubleDansLeFichier: lues.length - uniques.size,
       nouvelles: uniques.size - remplacees.length,

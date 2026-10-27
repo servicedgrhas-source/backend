@@ -29,7 +29,8 @@ import { ConfigEnrolementService } from './configuration';
 
 export interface FiltresVolontaires {
   population?: string;
-  vague?: number;
+  /** Numéro de vague ; null : vague inconnue (non reconnue ou vide). */
+  vague?: number | null;
   recherche?: string;
   statut?: string;
   departementId?: number;
@@ -171,7 +172,8 @@ export class VolontairesService implements OnModuleInit {
         },
       );
     q.andWhere('v.population = :p', { p: populationDe(f.population) });
-    if (f.vague !== undefined)
+    if (f.vague === null) q.andWhere('v.vagueNumero IS NULL');
+    else if (f.vague !== undefined && Number.isFinite(f.vague))
       q.andWhere('v.vagueNumero = :vg', { vg: f.vague });
     if (f.statut) q.andWhere('v.statut = :s', { s: f.statut });
     if (f.departementId)
