@@ -708,4 +708,51 @@ export function deduire(
     if (code && nature.options.some((o) => o.code === code))
       donnees.NATURE_TEXTE_RECRUTEMENT = code;
   }
+  const ref = completerReference(donnees);
+  if (ref) donnees.TEXTE_RECRUTEMENT = ref;
+}
+
+/**
+ * Référence complète du texte d'entrée, telle qu'elle est signée (DG, 26/10/2026) :
+ * « Arrêté n° 6805 du 17/10/2022 ». S'ils manquent, le système ajoute la nature du texte
+ * (celle choisie ; sinon d'après la catégorie : I → décret, II et III → arrêté) et la date
+ * de signature (la date de recrutement / d'intégration de la fiche). Rien n'est changé si la
+ * référence est vide, ou déjà complète.
+ */
+export function completerReference(
+  donnees: Record<string, unknown>,
+): string | null {
+  const ref = enTexte(donnees.TEXTE_RECRUTEMENT).replace(/\s+/g, ' ').trim();
+  if (!ref) return null;
+  let r = ref;
+  const t = normaliser(ref);
+  if (!/^(ARRETE|DECRET|NOTE|CONTRAT|DECISION|LETTRE)/.test(t)) {
+    const choisie = enTexte(donnees.NATURE_TEXTE_RECRUTEMENT);
+    const cat = normaliser(donnees.CATEGORIE).replace(/^CAT(EGORIE)?\s*/, '');
+    const nature =
+      choisie === 'ARRETE'
+        ? 'Arrêté'
+        : choisie === 'DECRET'
+          ? 'Décret'
+          : choisie === 'NOTE_SERVICE'
+            ? 'Note de service'
+            : /^(I|1)$/.test(cat)
+              ? 'Décret'
+              : /^(II|III|2|3)$/.test(cat)
+                ? 'Arrêté'
+                : null;
+    if (nature) r = `${nature} ${/^N\s*[°O]/i.test(ref) ? ref : `n° ${ref}`}`;
+  }
+  const date = lireDate(donnees.DATE_RECRUTEMENT);
+  const datee =
+    /\bDU\s+\d/.test(normaliser(r)) ||
+    /\d{1,2}[/.-]\d{1,2}[/.-]\d{2,4}/.test(r) ||
+    /(JANVIER|FEVRIER|MARS|AVRIL|MAI|JUIN|JUILLET|AOUT|SEPTEMBRE|OCTOBRE|NOVEMBRE|DECEMBRE)\s+\d{4}/.test(
+      normaliser(r),
+    );
+  if (date && !datee) {
+    const [a, m, j] = date.split('-');
+    r = `${r} du ${j}/${m}/${a}`;
+  }
+  return r === ref ? null : r;
 }

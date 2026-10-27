@@ -978,18 +978,10 @@ export class VolontairesService implements OnModuleInit {
           })),
         );
       }
-      await this.journal.log(u, 'VOLONTAIRES_IMPORTES', 'volontaire', null, {
-        fichier: nomFichier,
-        feuille: f.nom,
-        type: o.type,
-        population,
-        ajoutes: nouveaux.length,
-      });
-      await this.lier();
     }
     // Les listes détaillées sont limitées (le nombre exact reste donné)
     const court = (t: string[]) => ({ n: t.length, exemples: t.slice(0, 30) });
-    return {
+    const sortie = {
       ...rapport,
       dejaDansRegistre: court(rapport.dejaDansRegistre),
       doublonsDansFichier: court(rapport.doublonsDansFichier),
@@ -1003,6 +995,47 @@ export class VolontairesService implements OnModuleInit {
       telephonesPartages: court(rapport.telephonesPartages),
       essai: o.essai,
     };
+    // Import pour de bon : le rapport complet est gardé au journal, pour le revoir plus tard
+    // (DG, 26/10/2026 : après l'import, les mêmes messages que pendant l'essai)
+    if (!o.essai) {
+      await this.journal.log(u, 'VOLONTAIRES_IMPORTES', 'volontaire', null, {
+        fichier: nomFichier,
+        feuille: f.nom,
+        type: o.type,
+        population,
+        ajoutes: nouveaux.length,
+        rapport: sortie,
+      });
+      if (nouveaux.length) await this.lier();
+    }
+    return sortie;
+  }
+
+  /** Le rapport du dernier import (pour de bon) de cette population : revu après coup. */
+  async dernierImport(population: string) {
+    const [j] = await this.volontaires.manager.query<
+      {
+        date: Date;
+        utilisateurNom: string | null;
+        details: Record<string, unknown>;
+      }[]
+    >(
+      `SELECT date, "utilisateurNom", details FROM journal
+       WHERE action = 'VOLONTAIRES_IMPORTES' AND details->>'population' = $1
+         AND details ? 'rapport'
+       ORDER BY date DESC LIMIT 1`,
+      [population],
+    );
+    return j
+      ? {
+          date: j.date,
+          par: j.utilisateurNom,
+          fichier: j.details.fichier,
+          feuille: j.details.feuille,
+          type: j.details.type,
+          rapport: j.details.rapport,
+        }
+      : null;
   }
 
   /**

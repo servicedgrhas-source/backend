@@ -77,6 +77,15 @@ export class VolontairesController {
 
   /* ------------------------------ Registre ------------------------------ */
 
+  /** Le rapport du dernier import de liste, gardé pour le revoir après coup. */
+  @Roles(...ROLES_TRAITEMENT)
+  @Get('volontaires/dernier-import')
+  dernierImport(@Query('population') population?: string) {
+    return this.volontaires.dernierImport(
+      population === 'COMMUNAUTAIRE' ? 'COMMUNAUTAIRE' : 'VOLONTAIRE',
+    );
+  }
+
   @Roles(...ROLES_TRAITEMENT)
   @Get('volontaires')
   liste(
@@ -254,8 +263,10 @@ export class VolontairesController {
     @Query('essai') essai: string | undefined,
     @UploadedFile() fichier?: Express.Multer.File,
   ) {
-    if (!fichier || !/\.xlsx$/i.test(fichier.originalname))
-      throw new BadRequestException('Choisissez un fichier Excel (.xlsx).');
+    if (!fichier || !/\.(xlsx|pdf)$/i.test(fichier.originalname))
+      throw new BadRequestException(
+        'Choisissez un fichier Excel (.xlsx) ou le PDF « Liste des agents pris en charge » de la Solde.',
+      );
     return this.bottin.importer(u, fichier.buffer, fichier.originalname, {
       mois,
       essai: essai !== '0',

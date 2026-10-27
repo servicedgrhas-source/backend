@@ -302,8 +302,10 @@ export class CircuitController {
   alertes(
     @Utilisateur() u: UtilisateurConnecte,
     @Query('avant') avant?: string,
+    @Query('du') du?: string,
+    @Query('au') au?: string,
   ) {
-    return this.service.mesAlertes(u, entier(avant));
+    return this.service.mesAlertes(u, entier(avant), { du, au });
   }
 
   /** Alertes lues : celles de la liste `ids`, ou toutes (`tout: true`). */

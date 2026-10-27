@@ -80,6 +80,22 @@ export class EtablissementsController {
     });
   }
 
+  /** Matière enseignée par un enseignant de l'école (rubrique « Spécialité » de sa fiche). */
+  @Put(':id/enseignants/:agent/matiere')
+  definirMatiere(
+    @Utilisateur() u: UtilisateurConnecte,
+    @Param('id', ParseIntPipe) id: number,
+    @Param('agent', ParseIntPipe) agent: number,
+    @Body() body: { matiere?: string | null },
+  ) {
+    return this.service.definirMatiere(
+      u,
+      id,
+      agent,
+      typeof body?.matiere === 'string' && body.matiere ? body.matiere : null,
+    );
+  }
+
   @Get(':id')
   fiche(
     @Utilisateur() u: UtilisateurConnecte,

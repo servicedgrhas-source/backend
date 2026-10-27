@@ -150,4 +150,32 @@ describe('Emploi du temps (DG, 24/10/2026)', () => {
     ).toBe(true);
     expect(r3.heuresPlacees).toBe(8);
   });
+
+  it('vague B : pas assez de créneaux l’après-midi pour le programme, le système le dit', () => {
+    const r4 = genererEmploiDuTemps({
+      classes: [{ id: 1, nom: '6ème 1B', niveau: '6EME', salleId: null }],
+      programme: new Map([
+        [
+          '6EME',
+          [
+            { matiere: 'FR', heures: 8 },
+            { matiere: 'MATH', heures: 10 },
+          ],
+        ],
+      ]),
+      libelles,
+      enseignants: [prof(100, 'FR'), prof(101, 'MATH')],
+      jours: [1, 2, 3, 4, 5, 6],
+      creneaux,
+      heuresEnseignant: 20,
+    });
+    // 3 créneaux l'après-midi × 5 jours (pas le samedi après-midi) = 15 pour 18 h
+    const manque = r4.nonPlaces.find(
+      (n) => n.matiereLibelle === 'Créneaux de la semaine',
+    );
+    expect(manque?.raison).toMatch(
+      /18 h de programme mais seulement 15 créneaux/,
+    );
+    expect(r4.heuresPlacees).toBe(15);
+  });
 });

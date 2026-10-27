@@ -8,6 +8,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { In, Repository } from 'typeorm';
 import type { UtilisateurConnecte } from '../auth/auth';
 import { parPreseance, posteResponsable } from '../circuit/catalogue';
+import { matiereEnseignant, reconnaitreMatiere } from './matieres';
 import { normaliser } from '../common/texte';
 import { JournalService, ParametresService } from '../core/core.service';
 import { Batiment, Classe, Referentiel, Salle, Structure } from '../entities';
@@ -55,6 +56,8 @@ export interface AgentEcole {
   /** Ce qu'il fait dans la structure (chef de bureau, secrétaire…). */
   fonctionStructure: string | null;
   specialite: string | null;
+  /** Diplôme professionnel (sert à reconnaître l'EPS sans spécialité écrite). */
+  diplome?: string | null;
   enseignant: boolean;
   enPoste: boolean;
 }
@@ -329,6 +332,9 @@ export class EtablissementsService {
             )
           : [],
       ]);
+    const matieresCycle = ['COLLEGE', 'LYCEE'].includes(s.cycle ?? '')
+      ? (await this.programmes(s.cycle!)).matieres
+      : null;
     return {
       structure: {
         id: s.id,
@@ -346,7 +352,15 @@ export class EtablissementsService {
       batiments,
       salles,
       classes,
-      agents: agents.get(id) ?? [],
+      agents: (agents.get(id) ?? []).map((a) => ({
+        ...a,
+        // Matière reconnue (collège, lycée) : celle qui compte pour les besoins et l'emploi du temps
+        matiere: matieresCycle ? this.matiereAgent(a, matieresCycle) : null,
+      })),
+      // Matières du cycle, pour choisir celle d'un enseignant depuis la page de l'école
+      matieres: matieresCycle
+        ? [...matieresCycle].map(([code, libelle]) => ({ code, libelle }))
+        : [],
       niveaux: await this.refs.find({
         where: { type: 'NIVEAU', parent: s.cycle ?? '', actif: true },
         order: { ordre: 'ASC', libelle: 'ASC' },
@@ -367,13 +381,15 @@ export class EtablissementsService {
         fonction: string | null;
         fonctionStructure: string | null;
         specialite: string | null;
+        diplome: string | null;
         position: string | null;
         activite: string | null;
       }[]
     >(
       `SELECT id, "structureId", "nomComplet", statut, donnees->>'FONCTION' AS fonction,
               donnees->>'FONCTION_STRUCTURE' AS "fonctionStructure",
-              donnees->>'SPECIALITE' AS specialite, donnees->>'POSITION' AS position,
+              donnees->>'SPECIALITE' AS specialite, donnees->>'DIPLOME_PRO' AS diplome,
+              donnees->>'POSITION' AS position,
               donnees->>'STATUT_ACTIVITE' AS activite
          FROM agent_recense WHERE "structureId" = ANY($1) AND coalesce(contentieux->>'etat', 'CONFIRME') = 'CONFIRME' ORDER BY "nomComplet"`,
       [ids],
@@ -388,6 +404,7 @@ export class EtablissementsService {
         fonction: l.fonction,
         fonctionStructure: l.fonctionStructure,
         specialite: l.specialite,
+        diplome: l.diplome,
         // Volontaires et communautaires sans fonction écrite : ce sont des enseignants
         enseignant:
           ENSEIGNANT.test(f) ||
@@ -428,19 +445,64 @@ export class EtablissementsService {
     };
   }
 
-  /** Matière enseignée d'après la spécialité écrite dans la fiche (même nom, accents et casse mis à part). */
+  /** Matière enseignée d'après la spécialité écrite dans la fiche, quelle que soit son écriture. */
   matiereDe(specialite: string | null, matieres: Map<string, string>) {
-    const sp = normaliser(specialite).replace(/[^A-Z0-9]+/g, '');
-    if (!sp) return null;
-    for (const [code, lib] of matieres) {
-      const l = normaliser(lib).replace(/[^A-Z0-9]+/g, '');
-      if (
-        l &&
-        (l === sp || (sp.length >= 4 && (l.startsWith(sp) || sp.startsWith(l))))
-      )
-        return code;
-    }
-    return null;
+    return reconnaitreMatiere(specialite, matieres);
+  }
+
+  /** Matière d'un enseignant : sa spécialité, sinon l'EPS d'après son diplôme ou sa fonction. */
+  matiereAgent(a: AgentEcole, matieres: Map<string, string>) {
+    return matiereEnseignant(a, matieres);
+  }
+
+  /**
+   * Matière enseignée par un enseignant de l'école, choisie depuis la page de l'école (DG, 26/10/2026 :
+   * les fiches venues de l'enrôlement n'ont presque jamais la spécialité). Elle va dans la rubrique
+   * « Spécialité » de sa fiche ; vide : la spécialité est effacée.
+   */
+  async definirMatiere(
+    u: UtilisateurConnecte,
+    structureId: number,
+    agentId: number,
+    code: string | null,
+  ) {
+    const s = await this.structure(u, structureId);
+    if (!['COLLEGE', 'LYCEE'].includes(s.cycle ?? ''))
+      throw new BadRequestException(
+        'La matière se choisit dans les collèges et les lycées (au primaire, un maître fait toutes les matières).',
+      );
+    const libelle = code
+      ? ((await this.programmes(s.cycle!)).matieres.get(code) ?? null)
+      : null;
+    if (code && !libelle)
+      throw new BadRequestException('Matière inconnue pour ce cycle.');
+    const [a] = await this.structures.query<{ id: number }[]>(
+      `SELECT id FROM agent_recense WHERE id = $1 AND "structureId" = $2`,
+      [agentId, structureId],
+    );
+    if (!a)
+      throw new NotFoundException(
+        'Cet agent n’est pas rattaché à cette école.',
+      );
+    await this.structures.query(
+      `UPDATE agent_recense
+          SET donnees = CASE WHEN $2::text IS NULL THEN donnees - 'SPECIALITE'
+                             ELSE jsonb_set(donnees, '{SPECIALITE}', to_jsonb($2::text)) END,
+              "modifiePar" = $3, "modifieLe" = now()
+        WHERE id = $1`,
+      [agentId, libelle, u.nom],
+    );
+    await this.journal.log(
+      u,
+      'ECOLE_MATIERE_ENSEIGNANT',
+      'agent_recense',
+      agentId,
+      {
+        structureId,
+        matiere: libelle,
+      },
+    );
+    return { ok: true, specialite: libelle };
   }
 
   /** Besoin en enseignants d'une école pour ses classes ouvertes. */
@@ -495,7 +557,7 @@ export class EtablissementsService {
     const enPlace = new Map<string, number>();
     let sansMatiere = 0;
     for (const a of enseignants) {
-      const m = this.matiereDe(a.specialite, p.matieres);
+      const m = this.matiereAgent(a, p.matieres);
       if (m) enPlace.set(m, (enPlace.get(m) ?? 0) + 1);
       else sansMatiere++;
     }

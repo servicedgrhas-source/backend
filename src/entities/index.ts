@@ -400,6 +400,12 @@ export class NoteService {
   @Column() typeNote: string;
   @Column({ type: 'varchar', nullable: true }) motif: string | null;
   @Column({ type: 'int', nullable: true }) lotPublicationId: number | null;
+  /**
+   * Notes d'affectation : autres lots réunis dans cette note (DG, 26/10/2026 : une seule note
+   * pour les lots 7 et 8 au lieu de deux). Mêmes type de note et colonnes ; le lot principal reste
+   * lotPublicationId.
+   */
+  @Column({ type: 'jsonb', default: () => "'[]'" }) lotsFusionnes: number[];
   /** Note d'enrôlement : campagne d'où viennent les volontaires. */
   @Column({ type: 'int', nullable: true }) campagneId: number | null;
   @Column() anneeScolaire: string;

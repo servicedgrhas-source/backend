@@ -9,8 +9,19 @@ import {
 } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 import type { Request } from 'express';
+import { ParametresService } from '../core/core.service';
 import type { Role } from '../entities';
+import {
+  decider,
+  droitsDe,
+  type Niveau,
+  validerDroits,
+  type ConfigDroits,
+} from './droits';
 import { SessionService } from './session.service';
+
+/** Paramètre où le DG range les droits par rubrique (Administration › Droits). */
+export const CLE_DROITS = 'DROITS_RUBRIQUES';
 
 export interface UtilisateurConnecte {
   id: string;
@@ -22,6 +33,8 @@ export interface UtilisateurConnecte {
   structureId?: number | null;
   /** A un code personnel (sinon, invitation à en créer un). */
   aCode?: boolean;
+  /** Rubriques réglées par le DG pour ce compte (rôle puis personne) : le menu en tient compte. */
+  droits?: Record<string, Niveau>;
 }
 
 const CLE_PUBLIC = 'public';
@@ -74,7 +87,17 @@ export class AuthGuard implements CanActivate {
   constructor(
     private readonly sessions: SessionService,
     private readonly reflector: Reflector,
+    private readonly params: ParametresService,
   ) {}
+
+  /** Réglages enregistrés (une valeur illisible vaut « aucun réglage »). */
+  private config(): ConfigDroits {
+    try {
+      return validerDroits(JSON.parse(this.params.get(CLE_DROITS) || '{}'));
+    } catch {
+      return { roles: {}, utilisateurs: {} };
+    }
+  }
 
   async canActivate(ctx: ExecutionContext): Promise<boolean> {
     const cibles = [ctx.getHandler(), ctx.getClass()];
@@ -89,6 +112,15 @@ export class AuthGuard implements CanActivate {
     if (!jeton) throw new UnauthorizedException('Authentification requise');
     // Le compte est relu en base : désactivation, rôle et sessions fermées valent tout de suite
     req.user = await this.sessions.profilDuJeton(jeton);
+    const droits = droitsDe(this.config(), req.user);
+    req.user.droits = droits;
+
+    // Droits par rubrique : lecture seule, rubrique fermée, ou rubrique ouverte en plus du rôle
+    const chemin = (req.path ?? '').replace(/^\/api(?=\/|$)/, '');
+    const d = decider(droits, chemin, req.method);
+    if (d.decision === 'refuse') throw new ForbiddenException(d.message);
+    // Un compte d'école ou d'inspection n'est jamais ouvert au-delà de ses routes
+    if (d.decision === 'permis' && req.user.role !== 'STRUCTURE') return true;
 
     const roles = this.reflector.getAllAndOverride<Role[]>(CLE_ROLES, cibles);
     // Comptes des structures (écoles, inspections…) : seulement les routes qui les citent

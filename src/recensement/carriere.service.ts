@@ -549,6 +549,8 @@ export class CarriereService {
       agent: {
         id: a.id,
         numeroFiche: a.numeroFiche,
+        /** Création de la fiche (date et heure), différente de la date d'édition (DG, 26/10/2026). */
+        creeLe: a.creeLe,
         nomComplet: a.nomComplet,
         dateNaissance: a.dateNaissance,
         lieuNaissance: lisible('LIEU_NAISSANCE'),

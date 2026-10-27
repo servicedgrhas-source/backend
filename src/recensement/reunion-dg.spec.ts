@@ -2,6 +2,7 @@ import { nomCourtNiveau } from '../etablissements/etablissements.service';
 import { configDefaut, mettreAJour } from './configuration';
 import { lieuCourt } from './carriere.service';
 import {
+  completerReference,
   deduire,
   evaluer,
   formaterNom,
@@ -234,5 +235,72 @@ describe('Noms des classes : le niveau en lettres, la classe en chiffres', () =>
     expect(nomCourtNiveau('1ERE', 'PREMIERE')).toBe('1ère');
     expect(nomCourtNiveau('CM2', 'Cours Moyen 2')).toBe('CM2');
     expect(nomCourtNiveau('P-1', 'P1')).toBe('P1');
+  });
+});
+
+describe('Référence complète du texte d’entrée (DG, 26/10/2026)', () => {
+  it('ajoute la date de signature quand elle manque', () => {
+    expect(
+      completerReference({
+        TEXTE_RECRUTEMENT: 'Arrêté n° 6805/MFPTSS',
+        DATE_RECRUTEMENT: '2022-10-17',
+      }),
+    ).toBe('Arrêté n° 6805/MFPTSS du 17/10/2022');
+  });
+  it('catégorie I : décret ; catégories II et III : arrêté', () => {
+    expect(
+      completerReference({
+        TEXTE_RECRUTEMENT: '1203',
+        CATEGORIE: 'I',
+        DATE_RECRUTEMENT: '2021-03-02',
+      }),
+    ).toBe('Décret n° 1203 du 02/03/2021');
+    expect(
+      completerReference({
+        TEXTE_RECRUTEMENT: 'N° 6805',
+        CATEGORIE: 'II',
+      }),
+    ).toBe('Arrêté N° 6805');
+  });
+  it('la nature choisie passe avant la catégorie', () => {
+    expect(
+      completerReference({
+        TEXTE_RECRUTEMENT: '220/MEPPSA',
+        NATURE_TEXTE_RECRUTEMENT: 'NOTE_SERVICE',
+        CATEGORIE: 'II',
+      }),
+    ).toBe('Note de service n° 220/MEPPSA');
+  });
+  it('ne touche pas une référence déjà complète ou vide', () => {
+    expect(
+      completerReference({
+        TEXTE_RECRUTEMENT: 'Arrêté n° 6805 du 25 Décembre 2025',
+        DATE_RECRUTEMENT: '2025-12-31',
+      }),
+    ).toBeNull();
+    expect(
+      completerReference({
+        TEXTE_RECRUTEMENT: 'Décret n° 12 du 01/02/2020',
+        DATE_RECRUTEMENT: '2020-02-01',
+      }),
+    ).toBeNull();
+    expect(completerReference({ DATE_RECRUTEMENT: '2020-02-01' })).toBeNull();
+  });
+  it('sans nature ni catégorie : seulement la date', () => {
+    expect(
+      completerReference({
+        TEXTE_RECRUTEMENT: '21996/MFPTSS/DGFP',
+        DATE_RECRUTEMENT: '2025-12-31',
+      }),
+    ).toBe('21996/MFPTSS/DGFP du 31/12/2025');
+  });
+  it('appliqué à l’enregistrement de toute fiche (deduire)', () => {
+    const d: Record<string, unknown> = {
+      TEXTE_RECRUTEMENT: '6805',
+      CATEGORIE: 'II',
+      DATE_RECRUTEMENT: '2022-10-17',
+    };
+    deduire(c, d);
+    expect(d.TEXTE_RECRUTEMENT).toBe('Arrêté n° 6805 du 17/10/2022');
   });
 });

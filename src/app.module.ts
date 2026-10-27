@@ -40,6 +40,7 @@ import {
 } from './core/core.service';
 import { DashboardController } from './dashboard.controller';
 import { MenuController } from './menu.controller';
+import { DroitsController } from './auth/droits.controller';
 import { ENTITES } from './entities';
 import { optionsBase } from './base-de-donnees';
 import { SessionService } from './auth/session.service';
@@ -111,6 +112,7 @@ import { ReferentielsService } from './referentiels/referentiels.service';
     MutationController,
     DashboardController,
     MenuController,
+    DroitsController,
     DossiersController,
     CircuitController,
     PortailController,

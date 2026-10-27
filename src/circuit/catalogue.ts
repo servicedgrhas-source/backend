@@ -1314,7 +1314,8 @@ const PRESEANCE: Record<string, number> = {
   INSPECTION_GENERALE: 2,
   DIRECTION_GENERALE: 3,
   DGRHAS: 3,
-  ORGANISME_TUTELLE: 3,
+  // Après les directions générales (DGRHAS comprise), à part (réunion DG du 26/10)
+  ORGANISME_TUTELLE: 3.5,
   DIRECTION_CENTRALE: 4,
   DIRECTION_DGRHAS: 4,
   SERVICE: 5,

@@ -84,6 +84,16 @@ export class SuiviController {
     );
   }
 
+  /** Les alertes de présence récentes (panneau « Alertes »). */
+  @Get('presence/alertes')
+  alertes(
+    @Utilisateur() u: UtilisateurConnecte,
+    @Query('du') du?: string,
+    @Query('au') au?: string,
+  ) {
+    return this.service.alertesPresence(u, { du, au });
+  }
+
   @Get('presence/rapport')
   rapport(
     @Utilisateur() u: UtilisateurConnecte,

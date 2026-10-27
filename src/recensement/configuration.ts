@@ -483,7 +483,7 @@ function champsDefaut(): ChampFiche[] {
           "REFERENCE DU TEXTE D'INTEGRATION",
           'TEXTE DE RECRUTEMENT',
         ],
-        aide: 'Sa référence complète, telle qu’elle est signée ; le scan va dans les pièces.',
+        aide: 'Sa référence complète, telle qu’elle est signée : « Arrêté n° … du … » (catégories II et III) ou « Décret n° … du … » (catégorie I). S’ils manquent, le système ajoute « Arrêté » ou « Décret » et la date de signature (date de recrutement / d’intégration). Le scan va dans les pièces.',
         exemple:
           'Arrêté n° 21996/MFPTSS/DGFP du 31/12/2025 ou Note de service n° 220/MEPPSA-CAB-DGRHAS-DRSC-SR du 15/10/2026',
       },

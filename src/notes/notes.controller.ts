@@ -180,6 +180,21 @@ export class NotesController {
     res.send(contenu);
   }
 
+  /** La note au format Word, modifiable (réunion DG du 26/10/2026). */
+  @Get(':id/word')
+  async word(@Param('id') id: string, @Res() res: Response) {
+    const { nom, contenu } = await this.service.word(id);
+    res.setHeader(
+      'Content-Type',
+      'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    );
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename*=UTF-8''${encodeURIComponent(nom)}`,
+    );
+    res.send(contenu);
+  }
+
   @Roles('DG')
   @Post(':id/rouvrir')
   rouvrir(@Utilisateur() u: UtilisateurConnecte, @Param('id') id: string) {
@@ -200,6 +215,27 @@ export class NotesController {
     @Body() dto: IntroductionDto,
   ) {
     return this.service.modifierIntroduction(u, id, dto.introduction);
+  }
+
+  /** Réunir dans cette note les notes d'autres lots (même type, encore à soumettre). */
+  @Roles(...ROLES_TRAITEMENT)
+  @Post(':id/fusionner')
+  fusionner(
+    @Utilisateur() u: UtilisateurConnecte,
+    @Param('id') id: string,
+    @Body() body: { avec: string[] },
+  ) {
+    return this.service.fusionner(
+      u,
+      id,
+      Array.isArray(body?.avec) ? body.avec.map(String) : [],
+    );
+  }
+
+  @Roles(...ROLES_TRAITEMENT)
+  @Post(':id/separer')
+  separer(@Utilisateur() u: UtilisateurConnecte, @Param('id') id: string) {
+    return this.service.separer(u, id);
   }
 
   @Roles(...ROLES_TRAITEMENT)

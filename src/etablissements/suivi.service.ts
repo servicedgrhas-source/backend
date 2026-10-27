@@ -564,6 +564,22 @@ export class SuiviService implements OnApplicationBootstrap {
   }
 
   /**
+   * Alertes de présence de la période (4 dernières semaines par défaut), pour le panneau « Alertes » :
+   * en premier, les agents restés deux semaines d'affilée sans travailler.
+   */
+  async alertesPresence(
+    u: UtilisateurConnecte,
+    periode: { du?: string; au?: string } = {},
+  ) {
+    const r = await this.rapport(u, periode);
+    const rang = (x: { alertes: { code: string }[] }) =>
+      x.alertes.some((a) => a.code === 'DEUX_SEMAINES') ? 0 : 1;
+    return [...r.alertes].sort(
+      (a, b) => rang(a) - rang(b) || b.lundi.localeCompare(a.lundi),
+    );
+  }
+
+  /**
    * Alertes de fin de semaine de la période (semaines validées par les chefs) : absent plus de la
    * moitié des jours, moins de la moitié des heures, deux semaines d'affilée sans travailler.
    */
@@ -612,6 +628,7 @@ export class SuiviService implements OnApplicationBootstrap {
     const res: {
       agentId: number;
       nomComplet: string;
+      structureId: number;
       structure: string;
       lundi: string;
       alertes: { code: string; texte: string }[];
@@ -631,6 +648,7 @@ export class SuiviService implements OnApplicationBootstrap {
           res.push({
             agentId: a.id,
             nomComplet: a.nomComplet,
+            structureId: v.structureId,
             structure: nom.get(a.id)?.structure ?? '',
             lundi: v.lundi,
             alertes: b.alertes,

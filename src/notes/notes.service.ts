@@ -40,6 +40,7 @@ import {
 import { MutationService } from '../mutation/mutation.service';
 import { AffectationsPersonnelService } from '../recensement/affectations-personnel.service';
 import { DIPLOMES_ENROLEMENT } from '../enrolement/enrolement.service';
+import { noteWord } from './note-word';
 
 export interface Colonne {
   cle: string;
@@ -249,9 +250,9 @@ export class NotesService {
   /* ======================== Notes d'affectation ======================== */
 
   /** Lignes éligibles : non exclues, sans blocage, pas encore dans une note validée. */
-  private async lignesAffectation(lotNumero: number, typeNote: string) {
+  private async lignesAffectation(lotsIds: number[], typeNote: string) {
     const liste = await this.affSvc.listeAffectations({
-      lot: lotNumero,
+      lotsIds,
       typeNote,
       statut: 'A_TRAITER',
     });
@@ -267,9 +268,12 @@ export class NotesService {
     const lot = await this.lots.findOne({
       where: { id: note.lotPublicationId! },
     });
+    const reunis = note.lotsFusionnes?.length
+      ? await this.lots.find({ where: { id: In(note.lotsFusionnes) } })
+      : [];
     const def = NOTES_AFFECTATION[note.typeNote as TypeNoteAffectation];
     const { prets, bloques } = await this.lignesAffectation(
-      lot!.numero,
+      [lot!.id, ...reunis.map((l) => l.id)],
       note.typeNote,
     );
     const deps = await this.deps.find({ order: { ordre: 'ASC' } });
@@ -370,7 +374,9 @@ export class NotesService {
         'La présente note de service prend effet à compter de la date de signature.',
       ],
       piedDePage: def.piedDePage.replaceAll('{annee}', annee),
-      repere: lot!.rang ? repereLot(lot!) : `${typeTexte}/Lot${lot!.numero}`,
+      repere: [lot!, ...reunis]
+        .map((l) => (l.rang ? repereLot(l) : `${typeTexte}/Lot${l.numero}`))
+        .join('+'),
       bloques: bloques.map((x) => ({
         id: x.id,
         nom: x.agent.nomComplet,
@@ -384,16 +390,17 @@ export class NotesService {
     if (!lot) throw new NotFoundException('Lot introuvable');
     const creees: NoteService[] = [];
     for (const type of TYPES_NOTE_AFFECTATION) {
-      const ouverte = await this.notes.findOne({
-        where: {
-          module: 'AFFECTATION',
-          lotPublicationId: lot.id,
-          typeNote: type,
-          statut: In(['BROUILLON', 'SOUMISE']),
-        },
-      });
+      const ouverte = await this.notes
+        .createQueryBuilder('n')
+        .where("n.module = 'AFFECTATION' AND n.typeNote = :type", { type })
+        .andWhere("n.statut IN ('BROUILLON', 'SOUMISE')")
+        .andWhere(
+          '(n.lotPublicationId = :lot OR n.lotsFusionnes @> to_jsonb(:lot::int))',
+          { lot: lot.id },
+        )
+        .getOne();
       if (ouverte) continue;
-      const { prets } = await this.lignesAffectation(lotNumero, type);
+      const { prets } = await this.lignesAffectation([lot.id], type);
       if (!prets.length) continue;
       const rang =
         (await this.notes.count({
@@ -763,22 +770,35 @@ export class NotesService {
 
   /* ============================ Commun =============================== */
 
-  private libelle(n: NoteService, lot?: LotPublication | null) {
+  private libelle(
+    n: NoteService,
+    lot?: LotPublication | null,
+    lots?: Map<number, LotPublication>,
+  ) {
+    const reunis = (n.lotsFusionnes ?? [])
+      .map((id) => lots?.get(id))
+      .filter((l): l is LotPublication => !!l)
+      .map((l) => ` + ${libelleLot(l)}`)
+      .join('');
     if (n.module === 'ENROLEMENT')
       return `Enrôlement – ${DIPLOMES_ENROLEMENT[n.typeNote]?.libelle ?? n.typeNote} – ${n.anneeScolaire}${n.rang > 1 ? ` (suite ${n.rang - 1})` : ''}`;
     if (n.module === 'AFFECTATION')
-      return `Affectation – ${NOTES_AFFECTATION[n.typeNote as TypeNoteAffectation]?.libelle ?? n.typeNote} – ${lot ? libelleLot(lot) : 'lot ?'}${n.rang > 1 ? ` (suite ${n.rang - 1})` : ''}`;
+      return `Affectation – ${NOTES_AFFECTATION[n.typeNote as TypeNoteAffectation]?.libelle ?? n.typeNote} – ${lot ? libelleLot(lot) : 'lot ?'}${reunis}${n.rang > 1 ? ` (suite ${n.rang - 1})` : ''}`;
     return `Mutation – ${MOTIFS[n.motif as MotifMutation]?.libelle} – ${LIBELLE_GROUPE[n.typeNote as GroupeMutation]}${n.rang > 1 ? ` (suite ${n.rang - 1})` : ''}`;
   }
 
   async liste(module?: string, lot?: number) {
     const where: Record<string, unknown> = {};
     if (module) where.module = module;
-    if (lot) {
-      const l = await this.lots.findOne({ where: { numero: lot } });
-      where.lotPublicationId = l?.id ?? -1;
-    }
-    const notes = await this.notes.find({ where, order: { creeLe: 'DESC' } });
+    const l = lot ? await this.lots.findOne({ where: { numero: lot } }) : null;
+    const notes = (
+      await this.notes.find({ where, order: { creeLe: 'DESC' } })
+    ).filter(
+      (n) =>
+        !lot ||
+        n.lotPublicationId === (l?.id ?? -1) ||
+        (n.lotsFusionnes ?? []).includes(l?.id ?? -1),
+    );
     await Promise.all(notes.map((n) => this.suivreAnnee(n)));
     const lots = new Map((await this.lots.find()).map((l) => [l.id, l]));
     // Notes d'affectation en préparation : les lignes prêtes de tous les lots, calculées une
@@ -789,7 +809,7 @@ export class NotesService {
       ...new Set(
         notes
           .filter((n) => !n.contenu && n.module === 'AFFECTATION')
-          .map((n) => n.lotPublicationId)
+          .flatMap((n) => [n.lotPublicationId, ...(n.lotsFusionnes ?? [])])
           .filter((x): x is number => !!x),
       ),
     ];
@@ -811,7 +831,10 @@ export class NotesService {
         : n.module === 'ENROLEMENT'
           ? (await this.lignesEnrolement(n)).prets.length
           : n.module === 'AFFECTATION'
-            ? (pretesParNote.get(`${n.lotPublicationId}|${n.typeNote}`) ?? 0)
+            ? [n.lotPublicationId, ...(n.lotsFusionnes ?? [])].reduce<number>(
+                (s, id) => s + (pretesParNote.get(`${id}|${n.typeNote}`) ?? 0),
+                0,
+              )
             : (
                 await this.mutSvc.eligiblesPourNote(
                   n.motif as MotifMutation,
@@ -823,7 +846,7 @@ export class NotesService {
         contenu: undefined,
         lotNumero,
         lotLibelle: lot ? libelleLot(lot) : null,
-        libelle: this.libelle(n, lot),
+        libelle: this.libelle(n, lot, lots),
         total,
       });
     }
@@ -860,12 +883,20 @@ export class NotesService {
       contenu.piedDePage = `${OBJET_MUTATION[motif]}/${GROUPE_COURT[n.typeNote as GroupeMutation]}/${n.anneeScolaire}`;
       contenu.repere = `Mut./${ABREGE_MOTIF[motif]}`;
     }
+    const lotsReunis = n.lotsFusionnes?.length
+      ? await this.lots.find({ where: { id: In(n.lotsFusionnes) } })
+      : [];
     return {
       ...n,
       contenu,
       lotNumero: lot?.numero ?? null,
       lotLibelle: lot ? libelleLot(lot) : null,
-      libelle: this.libelle(n, lot),
+      lotsReunis: lotsReunis.map((x) => ({
+        id: x.id,
+        numero: x.numero,
+        libelle: libelleLot(x),
+      })),
+      libelle: this.libelle(n, lot, new Map(lotsReunis.map((x) => [x.id, x]))),
       entete: this.entete(n, contenu),
     };
   }
@@ -930,6 +961,69 @@ export class NotesService {
     });
     await this.journal.log(u, 'NOTE_SOUMISE_DG', 'note_service', id);
     return { ok: true };
+  }
+
+  /**
+   * Réunir dans cette note les notes d'autres lots (DG, 26/10/2026) : une seule note au lieu de
+   * plusieurs, pour des notes d'affectation du même type, encore « à soumettre au DG ».
+   * Les autres notes sont retirées ; leurs personnes passent dans celle-ci.
+   */
+  async fusionner(u: UtilisateurConnecte, id: string, avec: string[]) {
+    const n = await this.charger(id);
+    const autres = (avec ?? []).filter((x) => x !== id);
+    if (!autres.length)
+      throw new BadRequestException('Choisissez au moins une autre note.');
+    const liste = await this.notes.find({ where: { id: In(autres) } });
+    if (liste.length !== autres.length)
+      throw new NotFoundException('Une des notes est introuvable.');
+    for (const x of [n, ...liste]) {
+      if (x.module !== 'AFFECTATION')
+        throw new BadRequestException(
+          'Seules les notes d’affectation se réunissent.',
+        );
+      if (x.statut !== 'BROUILLON')
+        throw new BadRequestException(
+          'Seules les notes « à soumettre au DG » se réunissent (renvoyez d’abord une note soumise).',
+        );
+      if (x.typeNote !== n.typeNote)
+        throw new BadRequestException(
+          'Les notes à réunir doivent être du même type (mêmes colonnes et même introduction).',
+        );
+    }
+    const lots = [
+      ...new Set(
+        liste
+          .flatMap((x) => [x.lotPublicationId, ...(x.lotsFusionnes ?? [])])
+          .filter((x): x is number => !!x),
+      ),
+    ].filter((x) => x !== n.lotPublicationId);
+    const lotsFusionnes = [...new Set([...(n.lotsFusionnes ?? []), ...lots])];
+    await this.notes.manager.transaction(async (m) => {
+      await m.update(NoteService, n.id, { lotsFusionnes });
+      await m.delete(NoteService, { id: In(autres) });
+    });
+    await this.journal.log(u, 'NOTES_REUNIES', 'note_service', id, {
+      notesRetirees: autres.length,
+      lots: lotsFusionnes.length + 1,
+    });
+    return { ok: true, lots: lotsFusionnes.length + 1 };
+  }
+
+  /** Défaire la réunion : la note garde son lot ; chaque autre lot retrouve sa note en la préparant. */
+  async separer(u: UtilisateurConnecte, id: string) {
+    const n = await this.charger(id);
+    if (n.statut !== 'BROUILLON')
+      throw new BadRequestException(
+        'Seule une note « à soumettre au DG » peut être séparée.',
+      );
+    if (!n.lotsFusionnes?.length)
+      throw new BadRequestException('Cette note ne réunit qu’un seul lot.');
+    const lots = await this.lots.find({ where: { id: In(n.lotsFusionnes) } });
+    await this.notes.update(n.id, { lotsFusionnes: [] });
+    await this.journal.log(u, 'NOTES_SEPAREES', 'note_service', id, {
+      lots: lots.map((l) => l.numero),
+    });
+    return { ok: true, lots: lots.map((l) => l.numero) };
   }
 
   async renvoyer(u: UtilisateurConnecte, id: string, commentaire: string) {
@@ -1206,7 +1300,11 @@ export class NotesService {
     const niveau = await this.niveauDe(u);
     const lots = new Map((await this.lots.find()).map((l) => [l.id, l]));
     const lib = (n: NoteService) =>
-      this.libelle(n, n.lotPublicationId ? lots.get(n.lotPublicationId) : null);
+      this.libelle(
+        n,
+        n.lotPublicationId ? lots.get(n.lotPublicationId) : null,
+        lots,
+      );
     const jours = (d: Date | null) => joursDepuis(d);
     const notes: {
       id: string;
@@ -1386,6 +1484,18 @@ export class NotesService {
     await this.notes.delete(id);
     await this.journal.log(u, 'NOTE_SUPPRIMEE', 'note_service', id);
     return { ok: true };
+  }
+
+  /** La note au format Word : même mise en page que la version imprimée, modifiable. */
+  async word(id: string): Promise<{ nom: string; contenu: Buffer }> {
+    const n = await this.obtenir(id);
+    return {
+      nom: `${n.libelle
+        .replace(/[^\p{L}\p{N} ()-]+/gu, ' ')
+        .replace(/\s+/g, ' ')
+        .trim()}.docx`,
+      contenu: await noteWord(n),
+    };
   }
 
   /** La note au format Excel (mêmes informations que la version imprimée). */

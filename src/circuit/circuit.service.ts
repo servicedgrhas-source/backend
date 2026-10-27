@@ -1343,7 +1343,17 @@ export class CircuitService implements OnModuleInit {
    * centaines d'alertes passées « non lues ».
    * Liste par pages de 50 (de la plus récente à la plus ancienne) ; `avant` : suite.
    */
-  async mesAlertes(u: UtilisateurConnecte, avant?: number) {
+  /**
+   * Alertes du compte, par pages de 50 ; `du` et `au` (AAAA-MM-JJ, inclus) limitent à une période
+   * (cette semaine, ce mois… : DG, 27/10/2026).
+   */
+  async mesAlertes(
+    u: UtilisateurConnecte,
+    avant?: number,
+    periode: { du?: string; au?: string } = {},
+  ) {
+    const date = (d?: string) =>
+      d && /^\d{4}-\d{2}-\d{2}$/.test(d) ? d : null;
     const mes = await this.structuresDe(u);
     if (!mes.length) return { nonLues: 0, alertes: [], suite: false };
     const PAGE = 50;
@@ -1355,9 +1365,11 @@ export class CircuitService implements OnModuleInit {
     LEFT JOIN alerte_lue l ON l."alerteId" = a.id AND l."utilisateurId" = $2
         WHERE ${SQL_ALERTE_A_MOI}
           AND ($3::int IS NULL OR a.id < $3)
+          AND ($4::date IS NULL OR a."creeLe" >= $4::date)
+          AND ($5::date IS NULL OR a."creeLe" < $5::date + 1)
      ORDER BY a.id DESC
         LIMIT ${PAGE + 1}`,
-      [mes, u.id, avant ?? null],
+      [mes, u.id, avant ?? null, date(periode.du), date(periode.au)],
     );
     const suite = lignes.length > PAGE;
     const page = lignes.slice(0, PAGE);

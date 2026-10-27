@@ -1,14 +1,23 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { In, Repository } from 'typeorm';
 import type { UtilisateurConnecte } from '../auth/auth';
 import { lireClasseur } from '../common/excel';
+import { estPdf, lireListePriseEnCharge } from '../common/pdf-pris-en-charge';
 import { IndexNoms } from '../common/index-noms';
 import { MOIS_RE, moisEnClair } from '../common/mois';
 import { motsDuNom, ressemblance } from '../common/ressemblance';
-import { enTexte, lireDate, normaliser } from '../common/texte';
-import { JournalService } from '../core/core.service';
-import { Departement, LigneBottin, Volontaire } from '../entities';
+import { reconnaitreDiplome } from '../common/referentiels';
+import { ageRevolu, enTexte, lireDate, normaliser } from '../common/texte';
+import { JournalService, ParametresService } from '../core/core.service';
+import {
+  AgentRecense,
+  Departement,
+  LigneBottin,
+  RegleDiplome,
+  Volontaire,
+} from '../entities';
+import { etape, parcoursDe } from '../recensement/recensement.service';
 import { VolontairesService } from './volontaires.service';
 
 /**
@@ -104,6 +113,21 @@ export interface PointageBottin {
   memeNaissance: boolean;
   /** Autres lignes du bottin qui ressemblent aussi à ce volontaire (homonymes). */
   autres: number;
+  /**
+   * Statut proposé dans la base du personnel au premier salaire (réglages d'Administration ›
+   * Paramètres) : contractuel au-delà de l'âge limite de sa catégorie, sinon fonctionnaire.
+   */
+  proposition: PropositionStatut;
+}
+
+export interface PropositionStatut {
+  statut: 'FONCTIONNAIRE' | 'CONTRACTUEL';
+  categorie: string | null;
+  age: number | null;
+  /** Date où l'âge est compté : intégration de la fiche, sinon le mois du premier salaire. */
+  dateAge: string;
+  ageLimite: number;
+  explication: string;
 }
 
 @Injectable()
@@ -115,9 +139,67 @@ export class BottinService {
     private readonly volontaires: Repository<Volontaire>,
     @InjectRepository(Departement)
     private readonly deps: Repository<Departement>,
+    @InjectRepository(AgentRecense)
+    private readonly agents: Repository<AgentRecense>,
+    @InjectRepository(RegleDiplome)
+    private readonly regles: Repository<RegleDiplome>,
     private readonly registre: VolontairesService,
     private readonly journal: JournalService,
+    private readonly params: ParametresService,
   ) {}
+
+  /**
+   * Fonctionnaire ou contractuel au premier salaire (règle du DG, réglée dans les Paramètres) :
+   * l'âge à l'entrée comparé à l'âge limite de la catégorie (catégorie I : sa propre limite).
+   * La catégorie vient de la fiche, sinon du diplôme, sinon de l'indice du bottin.
+   */
+  private proposer(
+    v: Pick<Volontaire, 'dateNaissance' | 'diplome'>,
+    ligne: {
+      mois: string;
+      dateNaissance: string | null;
+      indice: number | null;
+    },
+    fiche: { donnees: Record<string, unknown> } | undefined,
+    regles: RegleDiplome[],
+  ): PropositionStatut {
+    const d = fiche?.donnees ?? {};
+    const parDiplome = reconnaitreDiplome(d.DIPLOME_PRO ?? v.diplome, regles);
+    const parIndice = ligne.indice
+      ? [
+          ...new Set(
+            regles
+              .filter((r) => r.indice === ligne.indice && r.categorie)
+              .map((r) => r.categorie!),
+          ),
+        ]
+      : [];
+    const categorie =
+      enTexte(d.CATEGORIE).trim().toUpperCase() ||
+      regles.find((r) => r.code === parDiplome)?.categorie ||
+      (parIndice.length === 1 ? parIndice[0] : null);
+    const dateAge = lireDate(d.DATE_RECRUTEMENT) ?? `${ligne.mois}-01`;
+    const naissance = v.dateNaissance ?? ligne.dateNaissance;
+    const age = naissance ? ageRevolu(naissance, dateAge) : null;
+    const catI = categorie === 'I';
+    const ageLimite = catI
+      ? Number(this.params.get('CONTRACTUEL_AGE_LIMITE_CAT_I')) || 35
+      : Number(this.params.get('CONTRACTUEL_AGE_LIMITE')) || 30;
+    const statut =
+      age !== null && age > ageLimite ? 'CONTRACTUEL' : 'FONCTIONNAIRE';
+    const quand = dateAge.split('-').reverse().join('/');
+    return {
+      statut,
+      categorie,
+      age,
+      dateAge,
+      ageLimite,
+      explication:
+        age === null
+          ? 'Date de naissance inconnue : fonctionnaire par défaut, à vérifier.'
+          : `${age} ans au ${quand} ; ${statut === 'CONTRACTUEL' ? 'au-delà de' : 'pas au-delà de'} ${ageLimite} ans (${catI ? 'catégorie I' : categorie ? `catégorie ${categorie}` : 'catégorie inconnue : règle des catégories II et III'}).`,
+    };
+  }
 
   /** Mois déjà importés, avec leur nombre de lignes. */
   async mois() {
@@ -142,14 +224,56 @@ export class BottinService {
   ) {
     if (!MOIS_RE.test(o.mois ?? ''))
       throw new BadRequestException('Choisissez le mois payé par ce bottin.');
-    const feuilles = await lireClasseur(contenu, [COLONNES.nom.join('|')]);
-    if (!feuilles.length)
+    // PDF de la Solde « Liste des agents pris en charge » (premiers salaires), lu tel quel
+    const pdf = estPdf(contenu) ? await lireListePriseEnCharge(contenu) : null;
+    if (pdf && !pdf.lignes.length)
       throw new BadRequestException(
-        'Aucune feuille avec une colonne « Nom » ou « Noms et prénoms ». Si le bottin est en PDF, convertissez-le d’abord en Excel.',
+        'Ce PDF ne ressemble pas à la « Liste des agents pris en charge » de la Solde : aucune ligne avec un matricule sous les titres NOM, PRENOM, MATRI., DATE NAIS.',
+      );
+    const feuilles = pdf
+      ? []
+      : await lireClasseur(contenu, [COLONNES.nom.join('|')]);
+    if (!pdf && !feuilles.length)
+      throw new BadRequestException(
+        'Aucune feuille avec une colonne « Nom » ou « Noms et prénoms ». Un PDF n’est lu que s’il s’agit de la « Liste des agents pris en charge » de la Solde ; un autre PDF se convertit d’abord en Excel.',
       );
     const lues: LigneBottin[] = [];
     const ignorees: string[] = [];
     const colonnesVues = new Set<string>();
+    if (pdf) {
+      for (const k of [
+        'nom',
+        'matricule',
+        'naissance',
+        'grade',
+        'indice',
+        'brut',
+      ])
+        colonnesVues.add(k);
+      for (const l of pdf.lignes) {
+        const nom = `${l.nom} ${l.prenom}`.replace(/\s+/g, ' ').trim();
+        lues.push(
+          this.lignes.create({
+            mois: o.mois,
+            matricule: normaliser(l.matricule),
+            nomComplet: nom,
+            nomNormalise: normaliser(nom),
+            dateNaissance: l.dateNaissance,
+            departement: l.service?.slice(0, 200) ?? null,
+            grade: l.grade?.slice(0, 120) ?? null,
+            indice: l.indice,
+            brut: l.net,
+            banque: l.mdr ? `MDR ${l.mdr}`.slice(0, 120) : null,
+            source:
+              `${nomFichier} · page ${l.page}${l.referenceTexte ? ` · texte ${l.referenceTexte}` : ''}`.slice(
+                0,
+                250,
+              ),
+            importePar: u.nom,
+          }),
+        );
+      }
+    }
     for (const f of feuilles) {
       const col = Object.fromEntries(
         Object.entries(COLONNES).map(([k, noms]) => [
@@ -289,6 +413,15 @@ export class BottinService {
     );
     const index = new IndexNoms<(typeof lignes)[number]>();
     for (const l of lignes) index.ajouter(l.nomComplet, l.dateNaissance, l);
+    const regles = await this.regles.find();
+    const fiches = new Map(
+      (
+        await this.agents.find({
+          where: { volontaireId: In(vols.map((v) => v.id)) },
+          select: { id: true, volontaireId: true, donnees: true },
+        })
+      ).map((a) => [a.volontaireId, a]),
+    );
     const resultats: PointageBottin[] = [];
     for (const v of vols) {
       const mots = motsDuNom(v.nomComplet);
@@ -337,6 +470,7 @@ export class BottinService {
         memeDepartement: memeDep(l),
         memeNaissance: !!v.dateNaissance && v.dateNaissance === l.dateNaissance,
         autres: candidats.length - 1,
+        proposition: this.proposer(v, l, fiches.get(v.id), regles),
       });
     }
     resultats.sort(
@@ -354,7 +488,7 @@ export class BottinService {
    */
   async sortir(
     u: UtilisateurConnecte,
-    choix: { volontaireId: string; ligneId: number }[],
+    choix: { volontaireId: string; ligneId: number; statut?: string }[],
   ) {
     if (!Array.isArray(choix) || !choix.length)
       throw new BadRequestException(
@@ -381,6 +515,12 @@ export class BottinService {
                 AND NOT EXISTS (SELECT 1 FROM agent_recense x WHERE x.matricule = $2)`,
             [c.volontaireId, l.matricule],
           );
+        await this.statutAuPremierSalaire(
+          c.volontaireId,
+          c.statut === 'CONTRACTUEL' ? 'CONTRACTUEL' : 'FONCTIONNAIRE',
+          `${l.mois}-01`,
+          `Premier salaire au bottin de ${moisEnClair(l.mois)}`,
+        );
         res.sortis++;
       } catch (e) {
         res.erreurs.push(`${(e as Error).message}`);
@@ -391,6 +531,30 @@ export class BottinService {
       erreurs: res.erreurs.length,
     });
     return res;
+  }
+
+  /**
+   * La fiche du personnel du volontaire sorti prend le statut choisi (fonctionnaire ou contractuel).
+   * La liaison avec le registre la passe déjà « fonctionnaire » ; un contractuel est corrigé ici,
+   * et l'étape de son parcours aussi.
+   */
+  private async statutAuPremierSalaire(
+    volontaireId: string,
+    statut: 'FONCTIONNAIRE' | 'CONTRACTUEL',
+    date: string,
+    texte: string,
+  ) {
+    const a = await this.agents.findOne({ where: { volontaireId } });
+    if (!a) return;
+    const parcours = parcoursDe(a);
+    if (['VOLONTAIRE', 'COMMUNAUTAIRE'].includes(a.statut))
+      parcours.push(etape(statut, 'Bottin de la solde', date, texte));
+    else if (a.statut === 'FONCTIONNAIRE' && statut === 'CONTRACTUEL') {
+      const der = parcours[parcours.length - 1];
+      if (der?.statut === 'FONCTIONNAIRE') der.statut = 'CONTRACTUEL';
+      else parcours.push(etape(statut, 'Bottin de la solde', date, texte));
+    } else return;
+    await this.agents.update(a.id, { statut, parcours });
   }
 
   /** « Pas la même personne » : le volontaire n'est plus proposé tant qu'un nouveau bottin ne le retrouve pas. */

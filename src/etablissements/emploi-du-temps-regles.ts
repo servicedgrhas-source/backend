@@ -257,6 +257,41 @@ export function genererEmploiDuTemps(e: {
           'Plus de créneau libre (classe, enseignant ou salle déjà pris, jours de travail de l’enseignant)',
       });
   }
+  // Assez de créneaux dans la semaine pour le programme de chaque classe ? (vague B : l'après-midi
+  // seulement, sans le samedi) : sinon, ce n'est pas un manque d'enseignant mais de créneaux
+  const capacite = (vague: string | null) =>
+    e.jours.reduce(
+      (t, jour) =>
+        t +
+        e.creneaux.filter(
+          (c) =>
+            !(vague === 'A' && !estMatin(c)) &&
+            !(vague === 'B' && estMatin(c)) &&
+            !(jour === 6 && !estMatin(c)),
+        ).length,
+      0,
+    );
+  const besoinClasse = new Map<number, number>();
+  for (const l of lots)
+    besoinClasse.set(
+      l.classe.id,
+      (besoinClasse.get(l.classe.id) ?? 0) + l.heures,
+    );
+  const manques: NonPlace[] = [];
+  for (const c of e.classes) {
+    const v = vagueDe(c.nom);
+    const cap = capacite(v);
+    const h = besoinClasse.get(c.id) ?? 0;
+    if (h > cap)
+      manques.push({
+        classe: c.nom,
+        matiere: '',
+        matiereLibelle: 'Créneaux de la semaine',
+        heures: 0,
+        raison: `${h} h de programme mais seulement ${cap} créneaux par semaine${v === 'B' ? ' l’après-midi (vague B)' : v === 'A' ? ' le matin (vague A)' : ''} : ${h - cap} h ne peuvent pas être placées ; ajoutez des créneaux ou des jours dans Administration › Paramètres (emplois du temps)`,
+      });
+  }
+  nonPlaces.unshift(...manques);
   seances.sort(
     (a, b) =>
       a.classe.localeCompare(b.classe) ||
