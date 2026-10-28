@@ -58,6 +58,8 @@ export interface Anomalie {
   volontaireId: string;
   nomComplet: string;
   message: string;
+  /** Doublon, payé sur l'autre liste : l'autre fiche, pour les comparer et choisir (DG, 28/10/2026). */
+  autreId?: string;
 }
 
 /** Libellés des contrôles (affichés dans l'état et dans la fiche). */
@@ -279,7 +281,12 @@ export class BourseService {
     const debutSysteme = premier && premier < mois ? premier : mois;
 
     const anomalies: Anomalie[] = [];
-    const signaler = (v: Volontaire, code: string, message: string) => {
+    const signaler = (
+      v: Volontaire,
+      code: string,
+      message: string,
+      autreId?: string,
+    ) => {
       if (v.verifications?.[code]) return; // vérifié à la main
       anomalies.push({
         code,
@@ -287,6 +294,7 @@ export class BourseService {
         volontaireId: v.id,
         nomComplet: v.nomComplet,
         message,
+        ...(autreId ? { autreId } : {}),
       });
     };
 
@@ -377,11 +385,13 @@ export class BourseService {
           x.v,
           'DOUBLON',
           `Même personne probable que ${autre.v.nomComplet} (${autre.v.etablissement ?? 'établissement inconnu'}).`,
+          autre.v.id,
         );
         signaler(
           autre.v,
           'DOUBLON',
           `Même personne probable que ${x.v.nomComplet} (${x.v.etablissement ?? 'établissement inconnu'}).`,
+          x.v.id,
         );
       }
       index.ajouter(x.v.nomComplet, x.v.dateNaissance, x);
@@ -399,6 +409,7 @@ export class BourseService {
           x.v,
           'AUTRE_LISTE',
           `Aussi sur la liste des ${LISTES[populationDe(a.population)]} : ${a.nomComplet} (${a.etablissement ?? 'établissement inconnu'}).`,
+          a.id,
         );
     }
 
