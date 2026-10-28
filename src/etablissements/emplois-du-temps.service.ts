@@ -3,7 +3,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { In, Repository } from 'typeorm';
 import type { UtilisateurConnecte } from '../auth/auth';
 import { JournalService, ParametresService } from '../core/core.service';
-import { Classe, EmploiDuTemps, HoraireAgent } from '../entities';
+import { Classe, EmploiDuTemps, HoraireAgent, Structure } from '../entities';
 import {
   genererEmploiDuTemps,
   lireCreneaux,
@@ -29,23 +29,78 @@ export class EmploisDuTempsService {
     @InjectRepository(Classe) private readonly classes: Repository<Classe>,
     @InjectRepository(HoraireAgent)
     private readonly horaires: Repository<HoraireAgent>,
+    @InjectRepository(Structure)
+    private readonly structures: Repository<Structure>,
     private readonly etab: EtablissementsService,
     private readonly params: ParametresService,
     private readonly journal: JournalService,
   ) {}
 
-  private reglages(cycle?: string | null) {
-    const jours = this.params
-      .get('EDT_JOURS')
-      .split(/[,; ]+/)
-      .map(Number)
-      .filter((j) => Number.isInteger(j) && j >= 1 && j <= 6);
-    const creneaux = lireCreneaux(this.params.get('EDT_CRENEAUX'));
+  /** Réglages de l'école s'il y en a (DG, 28/10/2026), sinon ceux d'Administration › Paramètres. */
+  private reglages(s: Pick<Structure, 'cycle' | 'reglagesEdt'>) {
+    const propres = s.reglagesEdt ?? {};
+    const jours = (
+      propres.jours?.length
+        ? propres.jours
+        : this.params
+            .get('EDT_JOURS')
+            .split(/[,; ]+/)
+            .map(Number)
+    ).filter((j) => Number.isInteger(j) && j >= 1 && j <= 6);
+    const creneaux = lireCreneaux(
+      propres.creneaux || this.params.get('EDT_CRENEAUX'),
+    );
     return {
       jours: jours.length ? [...new Set(jours)].sort() : [1, 2, 3, 4, 5],
       creneaux,
-      heuresEnseignant: this.etab.heuresEnseignant(cycle),
+      heuresEnseignant:
+        propres.heuresEnseignant || this.etab.heuresEnseignant(s.cycle),
+      propres: !!s.reglagesEdt,
     };
+  }
+
+  /**
+   * Réglages propres à l'école : jours de cours, créneaux, heures d'un enseignant. `null` revient
+   * aux réglages généraux. Le chef d'établissement, la DDEPPSA et la DGRHAS peuvent les changer.
+   */
+  async enregistrerReglages(
+    u: UtilisateurConnecte,
+    structureId: number,
+    dto: {
+      jours?: number[];
+      creneaux?: string;
+      heuresEnseignant?: number;
+    } | null,
+  ) {
+    const s = await this.etab.structure(u, structureId);
+    let reglages: Structure['reglagesEdt'] = null;
+    if (dto) {
+      const jours = [...new Set((dto.jours ?? []).map(Number))]
+        .filter((j) => Number.isInteger(j) && j >= 1 && j <= 6)
+        .sort();
+      if (!jours.length)
+        throw new BadRequestException('Cochez au moins un jour de cours.');
+      const creneaux = lireCreneaux(dto.creneaux ?? '');
+      if (!creneaux.length)
+        throw new BadRequestException(
+          'Écrivez les créneaux de la journée, par exemple : 07:30-08:25, 08:25-09:20.',
+        );
+      const h = Number(dto.heuresEnseignant);
+      if (!Number.isInteger(h) || h < 1 || h > 40)
+        throw new BadRequestException(
+          'Heures d’un enseignant par semaine : un nombre de 1 à 40.',
+        );
+      reglages = {
+        jours,
+        creneaux: creneaux.map((c) => `${c.debut}-${c.fin}`).join(', '),
+        heuresEnseignant: h,
+      };
+    }
+    await this.structures.update(s.id, { reglagesEdt: reglages });
+    await this.journal.log(u, 'ECOLE_REGLAGES_EDT', 'structure', String(s.id), {
+      reglages,
+    });
+    return this.lire(u, structureId);
   }
 
   /** L'emploi du temps enregistré de l'année (ou rien), avec les réglages. */
@@ -59,13 +114,37 @@ export class EmploisDuTempsService {
       structure: { id: s.id, nom: s.nom, cycle: s.cycle },
       annee: a,
       parMatiere: PAR_MATIERE.includes(s.cycle ?? ''),
-      reglages: this.reglages(s.cycle),
+      reglages: this.reglages(s),
+      // Enseignants et leurs jours de travail : ils se règlent depuis l'école (DG, 28/10/2026)
+      enseignants: await this.enseignantsEtJours(structureId),
       emploi: e,
       aRegenerer:
         e && PAR_MATIERE.includes(s.cycle ?? '')
           ? this.changements(e, await this.situation(structureId, a, s.cycle!))
           : [],
     };
+  }
+
+  /** Enseignants en poste de l'école, avec leurs jours et heures de travail (Présence). */
+  private async enseignantsEtJours(structureId: number) {
+    const agents = (
+      (await this.etab.agentsDe([structureId])).get(structureId) ?? []
+    ).filter((x) => x.enseignant && x.enPoste);
+    const horaires = new Map(
+      (
+        await this.horaires.find({
+          where: {
+            agentId: In(agents.length ? agents.map((x) => x.id) : [-1]),
+          },
+        })
+      ).map((h) => [h.agentId, h.jours]),
+    );
+    return agents.map((x) => ({
+      id: x.id,
+      nom: x.nomComplet,
+      specialite: x.specialite,
+      jours: horaires.get(x.id) ?? null,
+    }));
   }
 
   /** Classes ouvertes, programme et enseignants (avec leur matière) d'aujourd'hui. */
@@ -152,7 +231,7 @@ export class EmploisDuTempsService {
           : 'Indiquez d’abord le cycle de l’école dans l’organigramme (collège ou lycée).',
       );
     const a = this.etab.annee(annee);
-    const r = this.reglages(s.cycle);
+    const r = this.reglages(s);
     if (!r.creneaux.length)
       throw new BadRequestException(
         'Aucun créneau de cours dans les paramètres (Administration › Paramètres › créneaux des emplois du temps).',

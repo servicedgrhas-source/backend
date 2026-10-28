@@ -5,6 +5,20 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
+import {
+  AlignmentType,
+  Document,
+  HeightRule,
+  Packer,
+  PageOrientation,
+  Paragraph,
+  Table,
+  TableCell,
+  TableRow,
+  TextRun,
+  VerticalAlign,
+  WidthType,
+} from 'docx';
 import ExcelJS from 'exceljs';
 import { DataSource, LessThan, Not, Repository } from 'typeorm';
 import type { UtilisateurConnecte } from '../auth/auth';
@@ -739,7 +753,14 @@ export class BourseService {
    * État de paiement comme ceux de la DGRHAS : liste générale, une feuille par département,
    * récapitulatif par montant, total arrêté en lettres et signataire.
    */
-  async excel(id: number): Promise<{ nom: string; contenu: Buffer }> {
+  /**
+   * État de paiement au modèle officiel (réunion DG du 27/10/2026) : c'est ce qu'on envoie au
+   * Trésor et que les bénéficiaires signent en touchant leur bourse. Colonnes N°, Nom et prénoms,
+   * Cycle, Département, Établissement, Vague, Mois, Montant, N° CNI et Émargement (remplis à la
+   * main), Téléphone, Observation ; le total ; une liste générale puis une par département (les
+   * communautaires : une liste unique) ; la signature de la Directrice de cabinet, le nom en gras.
+   */
+  async etatPaiement(id: number) {
     const etat = await this.etats.findOne({ where: { id } });
     if (!etat) throw new NotFoundException('État de bourse introuvable');
     const c = this.config.get();
@@ -758,8 +779,253 @@ export class BourseService {
         nomDep(a.departementId).localeCompare(nomDep(b.departementId), 'fr') ||
         a.nomComplet.localeCompare(b.nomComplet, 'fr'),
     );
-    const enClair = moisEnClair(etat.mois).toUpperCase();
     const brouillon = etat.statut !== 'VALIDE';
+    const versLigne = (l: LigneBourse) => ({
+      nomComplet: l.nomComplet,
+      cycle: libCat(l.categorie),
+      departementId: l.departementId,
+      departement: nomDep(l.departementId),
+      etablissement: l.etablissement ?? '',
+      vague: l.vague ?? '',
+      mois: l.mois,
+      montant: l.total,
+      telephone: l.telephone ?? '',
+      // Sans colonne « Mois » (DG, 28/10/2026) : un rappel se lit dans l'observation
+      observation: [
+        l.mois > 1 ? `${l.mois} mois payés (rappel)` : null,
+        l.observation,
+      ]
+        .filter(Boolean)
+        .join(' ; '),
+    });
+    const section = (titre: string, liste: LigneBourse[]) => {
+      const total = liste.reduce((t, l) => t + l.total, 0);
+      return {
+        titre,
+        lignes: liste.map(versLigne),
+        total,
+        arrete: montantArrete(total),
+      };
+    };
+    const sections = [
+      section(communautaires ? 'LISTE UNIQUE' : 'LISTE GÉNÉRALE', lignes),
+    ];
+    if (!communautaires) {
+      const parDep = new Map<string, LigneBourse[]>();
+      for (const l of lignes)
+        parDep.set(nomDep(l.departementId), [
+          ...(parDep.get(nomDep(l.departementId)) ?? []),
+          l,
+        ]);
+      for (const [d, liste] of parDep)
+        sections.push(section(`DÉPARTEMENT : ${d.toUpperCase()}`, liste));
+    }
+    return {
+      etat: {
+        id: etat.id,
+        mois: etat.mois,
+        statut: etat.statut,
+        population: populationDe(etat.population),
+      },
+      titre: communautaires
+        ? 'ÉTAT DE PAIEMENT DES ENSEIGNANTS COMMUNAUTAIRES'
+        : 'ÉTAT DE PAIEMENT DES ENSEIGNANTS VOLONTAIRES',
+      sousTitre: `${communautaires ? 'PAIEMENT' : 'BOURSE'} DU MOIS DE ${moisEnClair(etat.mois).toUpperCase()}${brouillon ? ' (PROJET NON VALIDÉ)' : ''}`,
+      brouillon,
+      sections,
+      signature: {
+        titre: c.signatairePaiementTitre,
+        nom: c.signatairePaiementNom,
+      },
+      nomFichier: `${communautaires ? 'Communautaires' : 'Bourse'} ${etat.mois}${brouillon ? ' (projet)' : ''}`,
+    };
+  }
+
+  /** Colonnes de l'état de paiement (Excel, Word et impression). */
+  static readonly COLONNES_PAIEMENT = [
+    'N°',
+    'Nom et prénoms',
+    'Cycle',
+    'Départ.',
+    'Établissement',
+    'Vague',
+    'Montant (FCFA)',
+    'N° CNI',
+    'Émargement',
+    'Téléphone',
+    'Observation',
+  ];
+
+  /** État de paiement en Word (paysage) : chaque liste sur ses pages, signée. */
+  async word(id: number): Promise<{ nom: string; contenu: Buffer }> {
+    const e = await this.etatPaiement(id);
+    const police = 'Times New Roman';
+    const texte = (
+      t: string,
+      o: { gras?: boolean; taille?: number; souligne?: boolean } = {},
+    ) =>
+      new TextRun({
+        text: t,
+        bold: o.gras,
+        size: o.taille ?? 16,
+        font: police,
+        underline: o.souligne ? {} : undefined,
+      });
+    const para = (
+      t: string,
+      o: {
+        gras?: boolean;
+        taille?: number;
+        centre?: boolean;
+        souligne?: boolean;
+        droite?: boolean;
+        avant?: number;
+      } = {},
+    ) =>
+      new Paragraph({
+        alignment: o.centre
+          ? AlignmentType.CENTER
+          : o.droite
+            ? AlignmentType.RIGHT
+            : AlignmentType.LEFT,
+        spacing: { before: o.avant ?? 0, after: 0 },
+        children: [texte(t, o)],
+      });
+    const cellule = (
+      t: string | number,
+      o: { gras?: boolean; droite?: boolean; fond?: boolean } = {},
+    ) =>
+      new TableCell({
+        verticalAlign: VerticalAlign.CENTER,
+        shading: o.fond ? { fill: 'E5E7EB' } : undefined,
+        children: [
+          new Paragraph({
+            alignment: o.droite ? AlignmentType.RIGHT : AlignmentType.LEFT,
+            children: [texte(String(t), { gras: o.gras, taille: 15 })],
+          }),
+        ],
+      });
+    // Largeurs en pourcentage : la place de l'émargement et de la CNI, remplis à la main
+    // La CNI s'écrit à la main : une colonne large (DG, 28/10/2026)
+    const largeurs = [3, 19, 7, 7, 14, 4, 7, 14, 11, 7, 7];
+    const sections = e.sections.map((s, k) => ({
+      properties: {
+        page: {
+          size: { orientation: PageOrientation.LANDSCAPE },
+          margin: { top: 700, bottom: 700, left: 700, right: 700 },
+        },
+      },
+      children: [
+        para('RÉPUBLIQUE DU CONGO', { gras: true, taille: 18, centre: true }),
+        para('Unité * Travail * Progrès', { taille: 16, centre: true }),
+        para(
+          'MINISTÈRE DE L’ENSEIGNEMENT PRÉSCOLAIRE, PRIMAIRE, SECONDAIRE ET DE L’ALPHABÉTISATION',
+          { gras: true, taille: 18, centre: true, avant: 120 },
+        ),
+        para(
+          'DIRECTION GÉNÉRALE DES RESSOURCES HUMAINES ET DE L’ADMINISTRATION SCOLAIRE',
+          { gras: true, taille: 16, centre: true },
+        ),
+        para(e.titre, { gras: true, taille: 24, centre: true, avant: 240 }),
+        para(`${e.sousTitre} — ${s.titre}`, {
+          gras: true,
+          taille: 20,
+          centre: true,
+          avant: 60,
+        }),
+        new Paragraph({ children: [] }),
+        new Table({
+          width: { size: 100, type: WidthType.PERCENTAGE },
+          columnWidths: largeurs.map((x) => x * 150),
+          rows: [
+            new TableRow({
+              tableHeader: true,
+              children: BourseService.COLONNES_PAIEMENT.map((x) =>
+                cellule(x, { gras: true, fond: true }),
+              ),
+            }),
+            ...s.lignes.map(
+              (l, i) =>
+                new TableRow({
+                  cantSplit: true,
+                  height: { value: 420, rule: HeightRule.ATLEAST },
+                  children: [
+                    cellule(i + 1),
+                    cellule(l.nomComplet),
+                    cellule(l.cycle),
+                    cellule(l.departement),
+                    cellule(l.etablissement),
+                    cellule(l.vague),
+                    cellule(fcfa(l.montant), { droite: true }),
+                    cellule(''),
+                    cellule(''),
+                    cellule(l.telephone),
+                    cellule(l.observation),
+                  ],
+                }),
+            ),
+            new TableRow({
+              cantSplit: true,
+              children: [
+                cellule(''),
+                cellule('TOTAL', { gras: true }),
+                ...Array.from({ length: 4 }, () => cellule('')),
+                cellule(fcfa(s.total), { gras: true, droite: true }),
+                ...Array.from({ length: 4 }, () => cellule('')),
+              ],
+            }),
+          ],
+        }),
+        para(
+          `Arrêté le présent état à ${s.lignes.length} bénéficiaire(s) et à la somme de : ${s.arrete}`,
+          { taille: 18, avant: 200 },
+        ),
+        para(
+          `Fait à Brazzaville, le ${new Date().toLocaleDateString('fr-FR')}`,
+          {
+            taille: 20,
+            droite: true,
+            avant: 240,
+          },
+        ),
+        para(e.signature.titre, { taille: 22, droite: true, avant: 120 }),
+        // Au moins deux lignes pour la signature (DG, 27/10/2026)
+        para('', { taille: 22 }),
+        para('', { taille: 22 }),
+        para('', { taille: 22 }),
+        para(e.signature.nom, {
+          gras: true,
+          souligne: true,
+          taille: 22,
+          droite: true,
+        }),
+        ...(k === 0 && e.brouillon
+          ? [
+              para(
+                'Projet non validé : à faire valider par le Directeur général avant paiement.',
+                { taille: 16, avant: 200 },
+              ),
+            ]
+          : []),
+      ],
+    }));
+    const doc = new Document({ sections });
+    return {
+      nom: `${e.nomFichier}.docx`,
+      contenu: await Packer.toBuffer(doc),
+    };
+  }
+
+  async excel(id: number): Promise<{ nom: string; contenu: Buffer }> {
+    const ep = await this.etatPaiement(id);
+    const lignes = await this.lignes.find({ where: { etatId: id } });
+    const communautaires = ep.etat.population === 'COMMUNAUTAIRE';
+    const deps = new Map((await this.deps.find()).map((d) => [d.id, d.nom]));
+    const nomDep = (d: number | null) =>
+      d ? (deps.get(d) ?? '') : 'Non renseigné';
+    const enClair = moisEnClair(ep.etat.mois).toUpperCase();
+    const brouillon = ep.brouillon;
+    const c = this.config.get();
 
     const wb = new ExcelJS.Workbook();
     wb.creator = 'SIRHAS';
@@ -770,8 +1036,15 @@ export class BourseService {
       right: { style: 'thin' },
     };
     const fmt = '#,##0';
+    const nbCol = BourseService.COLONNES_PAIEMENT.length;
 
-    const feuille = (nom: string, titre: string, liste: LigneBourse[]) => {
+    for (const s of ep.sections) {
+      const nom =
+        s.titre === 'LISTE GÉNÉRALE' || s.titre === 'LISTE UNIQUE'
+          ? s.titre === 'LISTE UNIQUE'
+            ? 'Liste unique'
+            : 'Liste générale'
+          : s.titre.replace('DÉPARTEMENT : ', '');
       const ws = wb.addWorksheet(
         nom.slice(0, 31).replace(/[\\/?*[\]:]/g, ' '),
         {
@@ -781,38 +1054,30 @@ export class BourseService {
             fitToWidth: 1,
             fitToHeight: 0,
             paperSize: 9,
+            printTitlesRow: '8:8',
           },
         },
       );
-      ws.addRow(['RÉPUBLIQUE DU CONGO']);
-      ws.addRow([
+      const centre = (t: string, gras = true, taille = 11) => {
+        const r = ws.addRow([t]);
+        ws.mergeCells(r.number, 1, r.number, nbCol);
+        r.alignment = { horizontal: 'center' };
+        r.font = { bold: gras, size: taille };
+      };
+      centre('RÉPUBLIQUE DU CONGO');
+      centre('Unité * Travail * Progrès', false, 9);
+      centre(
         'MINISTÈRE DE L’ENSEIGNEMENT PRÉSCOLAIRE, PRIMAIRE, SECONDAIRE ET DE L’ALPHABÉTISATION',
-      ]);
-      ws.addRow([
+      );
+      centre(
         'DIRECTION GÉNÉRALE DES RESSOURCES HUMAINES ET DE L’ADMINISTRATION SCOLAIRE',
-      ]);
+      );
+      centre(ep.titre, true, 13);
+      centre(`${ep.sousTitre} — ${s.titre}`, true, 11);
       ws.addRow([]);
-      const t = ws.addRow([
-        `${titre} — ${communautaires ? 'PAIEMENT' : 'BOURSE'} DU MOIS DE ${enClair}${brouillon ? ' (PROJET NON VALIDÉ)' : ''}`,
-      ]);
-      t.font = { bold: true, size: 12 };
-      ws.mergeCells(t.number, 1, t.number, 9);
-      t.alignment = { horizontal: 'center' };
-      ws.addRow([]);
-      const e = ws.addRow([
-        'N°',
-        'Noms et prénoms',
-        'Catégorie',
-        'Département',
-        'Établissement',
-        'Vague',
-        'Téléphone',
-        'Mois',
-        'Montant (FCFA)',
-        'Observation',
-      ]);
-      e.font = { bold: true };
-      e.eachCell((cell) => {
+      const en = ws.addRow(BourseService.COLONNES_PAIEMENT);
+      en.font = { bold: true };
+      en.eachCell((cell) => {
         cell.border = bord;
         cell.fill = {
           type: 'pattern',
@@ -825,53 +1090,55 @@ export class BourseService {
           wrapText: true,
         };
       });
-      liste.forEach((l, i) => {
+      s.lignes.forEach((l, i) => {
         const r = ws.addRow([
           i + 1,
           l.nomComplet,
-          libCat(l.categorie),
-          nomDep(l.departementId),
+          l.cycle,
+          l.departement,
           l.etablissement,
           l.vague,
+          l.montant,
+          '',
+          '',
           l.telephone,
-          l.mois,
-          l.total,
           l.observation,
         ]);
+        // De la hauteur pour signer
+        r.height = 24;
+        r.alignment = { vertical: 'middle', wrapText: true };
         r.eachCell({ includeEmpty: true }, (cell) => (cell.border = bord));
-        r.getCell(9).numFmt = fmt;
+        r.getCell(7).numFmt = fmt;
       });
-      const somme = liste.reduce((s, l) => s + l.total, 0);
-      const tot = ws.addRow(['', 'TOTAL', '', '', '', '', '', '', somme]);
+      const tot = ws.addRow(['', 'TOTAL', '', '', '', '', s.total]);
       tot.font = { bold: true };
-      tot.getCell(9).numFmt = fmt;
-      tot.eachCell({ includeEmpty: true }, (cell) => (cell.border = bord));
+      tot.getCell(7).numFmt = fmt;
+      for (let k = 1; k <= nbCol; k++) tot.getCell(k).border = bord;
       ws.addRow([]);
       ws.addRow([
-        `Arrêté le présent état à la somme de : ${montantArrete(somme)}`,
+        `Arrêté le présent état à ${s.lignes.length} bénéficiaire(s) et à la somme de : ${s.arrete}`,
       ]).font = { italic: true };
       ws.addRow([]);
-      const s1 = ws.addRow(['', '', '', '', '', '', c.signatairePaiementTitre]);
-      s1.font = { bold: true };
+      ws.addRow([
+        ...Array<string>(7).fill(''),
+        `Fait à Brazzaville, le ${new Date().toLocaleDateString('fr-FR')}`,
+      ]);
+      // Le titre sans gras, au moins deux lignes, puis le nom en gras (DG, 27/10/2026)
+      ws.addRow([...Array<string>(7).fill(''), ep.signature.titre]);
       ws.addRow([]);
       ws.addRow([]);
-      ws.addRow(['', '', '', '', '', '', c.signatairePaiementNom]).font = {
+      ws.addRow([]);
+      ws.addRow([...Array<string>(7).fill(''), ep.signature.nom]).font = {
         bold: true,
         underline: true,
       };
-      [6, 34, 22, 18, 32, 11, 15, 7, 15, 30].forEach(
+      [5, 32, 13, 12, 28, 7, 13, 26, 18, 14, 24].forEach(
         (w, i) => (ws.getColumn(i + 1).width = w),
       );
-      ws.views = [{ state: 'frozen', ySplit: e.number }];
-      return somme;
-    };
-
-    feuille(
-      'Liste générale',
-      communautaires
-        ? 'ÉTAT DE PAIEMENT DES ENSEIGNANTS COMMUNAUTAIRES'
-        : 'ÉTAT DE PAIEMENT DES ENSEIGNANTS VOLONTAIRES',
-      lignes,
+      ws.views = [{ state: 'frozen', ySplit: en.number }];
+    }
+    lignes.sort((a, b) =>
+      nomDep(a.departementId).localeCompare(nomDep(b.departementId), 'fr'),
     );
     const parDep = new Map<string, LigneBourse[]>();
     for (const l of lignes)
@@ -879,8 +1146,9 @@ export class BourseService {
         ...(parDep.get(nomDep(l.departementId)) ?? []),
         l,
       ]);
-    for (const [d, liste] of parDep)
-      feuille(d, `DÉPARTEMENT : ${d.toUpperCase()}`, liste);
+    [...parDep.values()].forEach((x) =>
+      x.sort((a, b) => a.nomComplet.localeCompare(b.nomComplet, 'fr')),
+    );
 
     // Récapitulatif : effectif et montant par département et par montant de bourse
     const montants = [...new Set(lignes.map((l) => l.montant))].sort(
@@ -947,9 +1215,8 @@ export class BourseService {
       `Arrêté le présent récapitulatif à la somme de : ${montantArrete(totaux[totaux.length - 1])}`,
     ]).font = { italic: true };
     ws.addRow([]);
-    ws.addRow(['', '', '', '', c.signatairePaiementTitre]).font = {
-      bold: true,
-    };
+    ws.addRow(['', '', '', '', c.signatairePaiementTitre]);
+    ws.addRow([]);
     ws.addRow([]);
     ws.addRow([]);
     ws.addRow(['', '', '', '', c.signatairePaiementNom]).font = {
@@ -961,9 +1228,6 @@ export class BourseService {
     for (let k = 3; k <= totaux.length + 2; k++) ws.getColumn(k).width = 15;
 
     const contenu = Buffer.from(await wb.xlsx.writeBuffer());
-    return {
-      nom: `${communautaires ? 'Communautaires' : 'Bourse'} ${etat.mois}${brouillon ? ' (projet)' : ''}.xlsx`,
-      contenu,
-    };
+    return { nom: `${ep.nomFichier}.xlsx`, contenu };
   }
 }

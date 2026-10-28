@@ -1,4 +1,8 @@
 import {
+  CATEGORIE as CATEGORIE_NOMINATION,
+  OBSERVATIONS,
+} from '../nominations/categories';
+import {
   BadRequestException,
   Injectable,
   NotFoundException,
@@ -20,6 +24,7 @@ import {
   echellesDe,
   promotionsAttendues,
   trouverEchelle,
+  natureEnEntier,
 } from './valeurs';
 
 /**
@@ -436,6 +441,44 @@ export class CarriereService {
         modifiable: false,
       });
 
+    // Nominations (note de nomination signée par le ministre) : directeur, surveillant général,
+    // inspecteur… (DGRHAS, 26/10/2026)
+    for (const x of await this.agents.query<
+      {
+        id: number;
+        numero: string | null;
+        dateSignature: string | null;
+        categorie: string;
+        nouveauPoste: string | null;
+        observation: string;
+        motif: string | null;
+        annee: string;
+      }[]
+    >(
+      `SELECT m.id, n.numero, to_char(n."dateSignature", 'YYYY-MM-DD') AS "dateSignature", m.categorie,
+              m."nouveauPoste", m.observation, m.motif, m.annee
+         FROM nomination m JOIN note_service n ON n.id = m."noteId" AND n.statut = 'SIGNEE'
+        WHERE m."agentId" = $1`,
+      [a.id],
+    ))
+      elements.push({
+        genre: 'EVENEMENT',
+        id: `nomination-${x.id}`,
+        date: x.dateSignature,
+        type: 'NOMINATION',
+        nature: 'Nomination',
+        intitule: `${CATEGORIE_NOMINATION.get(x.categorie)?.libelle ?? 'Nomination'} (${OBSERVATIONS[x.observation as keyof typeof OBSERVATIONS]?.libelle.toLowerCase() ?? x.observation}, ${x.annee})`,
+        acte: x.numero
+          ? `Note de service n° ${x.numero}${x.dateSignature ? ` du ${dateFr(x.dateSignature)}` : ''}`
+          : null,
+        lieu: x.nouveauPoste,
+        changements: [],
+        commentaire: x.motif,
+        fichier: false,
+        origine: 'Note de nomination',
+        modifiable: false,
+      });
+
     // Évaluations annuelles (compétence professionnelle et sociale, sur 5)
     const evaluations = await this.agents.query<
       {
@@ -585,8 +628,10 @@ export class CarriereService {
 
   /** « Arrêté n° 21996/MFPTSS/DGFP du 31/12/2025 » : nature et référence du texte d'entrée. */
   private texteEntree(d: Record<string, unknown>, ch: Map<string, ChampFiche>) {
-    const ref = texte(d.TEXTE_RECRUTEMENT);
-    if (!ref) return null;
+    const brut = texte(d.TEXTE_RECRUTEMENT);
+    if (!brut) return null;
+    // « D n° … » écrit à la main : la nature en entier
+    const ref = natureEnEntier(brut);
     const c = ch.get('NATURE_TEXTE_RECRUTEMENT');
     const nature = c ? valeurLisible(c, d.NATURE_TEXTE_RECRUTEMENT) : '';
     return nature && !cleCompacte(ref).startsWith(cleCompacte(nature))
@@ -715,20 +760,24 @@ export class CarriereService {
     // déjà échues : on évalue la situation jusqu'à aujourd'hui (DG, 26/10/2026 : « il ne peut pas
     // être en 2026 », un échelon pas encore atteint n'est pas attendu)
     const aujourdhui = new Date().toISOString().slice(0, 10);
-    const attendues = av
-      ? promotionsAttendues({
-          depuis: av.depuis,
-          delaiMois:
-            av.nature === 'PROMOTION'
-              ? conf.delaiPromotionMois
-              : conf.delaiAvancementMois,
-          dureeEchelle: av.nature === 'PROMOTION',
-          echelon,
-          echelle: ech,
-          echelles,
-          aujourdhui,
-        }).filter((x) => x.date <= aujourdhui)
-      : [];
+    // Échelon au-delà du 1er sans date de dernière promotion : on ne sait pas quand il a été
+    // atteint ; les promotions attendues ne peuvent pas être calculées (DG, 27/10/2026)
+    const dateManquante = av?.origine === 'ENTREE' && !!echelon && echelon > 1;
+    const attendues =
+      av && !dateManquante
+        ? promotionsAttendues({
+            depuis: av.depuis,
+            delaiMois:
+              av.nature === 'PROMOTION'
+                ? conf.delaiPromotionMois
+                : conf.delaiAvancementMois,
+            dureeEchelle: av.nature === 'PROMOTION',
+            echelon,
+            echelle: ech,
+            echelles,
+            aujourdhui,
+          }).filter((x) => x.date <= aujourdhui)
+        : [];
     const echelle = ech;
     return {
       valeurs,
@@ -750,8 +799,10 @@ export class CarriereService {
             nombreEchelons: nombre,
           }
         : null,
-      prochainEchelon: av && !dernierEchelon ? av.prochain : null,
+      prochainEchelon:
+        av && !dernierEchelon && !dateManquante ? av.prochain : null,
       attendues,
+      dateManquante,
       dernierEchelon,
     };
   }

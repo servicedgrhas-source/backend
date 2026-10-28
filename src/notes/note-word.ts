@@ -51,6 +51,8 @@ const LARGEUR: Record<string, number> = {
   ge: 13,
   matricule: 18,
   ancienPoste: 25,
+  nouveauPoste: 25,
+  vague: 11,
   origine: 19,
   naissance: 20,
   lieu: 22,

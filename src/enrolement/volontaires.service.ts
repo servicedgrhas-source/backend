@@ -480,15 +480,58 @@ export class VolontairesService implements OnModuleInit {
   }
 
   /** Sortie (recruté, déserteur…) : la bourse s'arrête selon la règle du motif. */
+  /**
+   * Sortie de plusieurs volontaires d'un coup, avec le même motif et la même date (DG, 27/10/2026 :
+   * les « Déjà recruté à la FP » des contrôles de la bourse, cochés comme au pointage du bottin).
+   */
+  async sortirPlusieurs(
+    u: UtilisateurConnecte,
+    dto: {
+      ids: string[];
+      motif: string;
+      date: string;
+      observation?: string;
+      /** Observation propre à chacun (ce que le contrôle a retrouvé). */
+      observations?: Record<string, string>;
+    },
+  ) {
+    const ids = Array.isArray(dto?.ids) ? [...new Set(dto.ids)] : [];
+    if (!ids.length)
+      throw new BadRequestException('Cochez les volontaires à sortir.');
+    if (ids.length > 1000)
+      throw new BadRequestException('1 000 volontaires au plus à la fois.');
+    const res = { sortis: 0, erreurs: [] as string[] };
+    for (const id of ids) {
+      try {
+        await this.sortir(
+          u,
+          id,
+          { ...dto, observation: dto.observations?.[id] ?? dto.observation },
+          false,
+        );
+        res.sortis++;
+      } catch (e) {
+        res.erreurs.push((e as Error).message);
+      }
+    }
+    if (res.sortis) await this.lier();
+    return res;
+  }
+
   async sortir(
     u: UtilisateurConnecte,
     id: string,
     dto: { motif: string; date: string; observation?: string },
+    lier = true,
   ) {
     const v = await this.volontaires.findOne({ where: { id } });
     if (!v) throw new NotFoundException('Volontaire introuvable');
     if (v.statut === 'SORTI')
-      throw new BadRequestException('Ce volontaire est déjà sorti.');
+      throw new BadRequestException(
+        lier
+          ? 'Ce volontaire est déjà sorti.'
+          : `${v.nomComplet} : déjà sorti.`,
+      );
     const motif = this.config.motif(dto.motif);
     if (!motif || !motif.actif)
       throw new BadRequestException('Choisissez un motif de sortie.');
@@ -504,6 +547,7 @@ export class VolontairesService implements OnModuleInit {
     await this.mouvement(u, id, 'SORTIE', dto.date, motif.code, {
       observation: dto.observation?.trim() || null,
     });
+    if (!lier) return null;
     await this.lier();
     return this.fiche(id);
   }

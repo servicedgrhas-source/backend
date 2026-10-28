@@ -28,12 +28,14 @@ import { JournalService, ParametresService } from '../core/core.service';
 import { libelleLot, repereLot } from '../common/lots';
 import {
   Affectation,
+  Alerte,
   DemandeMutation,
   Departement,
   LotPublication,
   NoteService,
   CampagneEnrolement,
   Enrole,
+  Nomination,
   Structure,
   type AvisConformite,
 } from '../entities';
@@ -41,6 +43,8 @@ import { MutationService } from '../mutation/mutation.service';
 import { AffectationsPersonnelService } from '../recensement/affectations-personnel.service';
 import { DIPLOMES_ENROLEMENT } from '../enrolement/enrolement.service';
 import { noteWord } from './note-word';
+import { CATEGORIE as CATEGORIE_NOMINATION } from '../nominations/categories';
+import { NominationsService } from '../nominations/nominations.service';
 
 export interface Colonne {
   cle: string;
@@ -202,10 +206,12 @@ export class NotesService {
     @InjectRepository(Structure)
     private readonly structures: Repository<Structure>,
     private readonly personnel: AffectationsPersonnelService,
+    private readonly nomSvc: NominationsService,
   ) {}
 
   private annee(
-    module: 'AFFECTATION' | 'MUTATION' | 'ENROLEMENT' = 'AFFECTATION',
+    module:
+      'AFFECTATION' | 'MUTATION' | 'ENROLEMENT' | 'NOMINATION' = 'AFFECTATION',
   ) {
     return (
       (module === 'MUTATION' && this.params.get('ANNEE_SCOLAIRE_MUTATION')) ||
@@ -219,7 +225,7 @@ export class NotesService {
    */
   private async suivreAnnee(n: NoteService) {
     if (n.contenu || !['BROUILLON', 'SOUMISE'].includes(n.statut)) return n;
-    if (n.module === 'ENROLEMENT') return n;
+    if (n.module === 'ENROLEMENT' || n.module === 'NOMINATION') return n;
     const annee = this.annee(n.module);
     if (annee && annee !== n.anneeScolaire) {
       await this.notes.update(n.id, { anneeScolaire: annee });
@@ -591,6 +597,177 @@ export class NotesService {
     return creees;
   }
 
+  /* ======================== Notes de nomination ======================== */
+
+  /**
+   * Note de nomination d'une catégorie (DGRHAS, 26/10/2026, modèles « Notes de service
+   * nominations ») : par département, puis par circonscription ; les colonnes de la catégorie
+   * (établissements : G/E ; inspections : grade, catégorie, échelle, échelon, spécialité).
+   */
+  private async contenuNomination(note: NoteService): Promise<ContenuNote> {
+    const cat = CATEGORIE_NOMINATION.get(note.typeNote);
+    const liste = await this.nomSvc.pourNote(note.anneeScolaire, note.typeNote);
+    const deps = await this.deps.find({ order: { ordre: 'ASC' } });
+    const g = cat?.gabarit ?? 'ETAB';
+    const colonnes: Colonne[] = [
+      { cle: 'nom', libelle: 'Noms et prénoms' },
+      ...(g === 'ETAB_VAGUE' ? [{ cle: 'vague', libelle: 'Vague' }] : []),
+      ...(g === 'ETAB' || g === 'ETAB_VAGUE'
+        ? [{ cle: 'ge', libelle: 'G/E' }]
+        : []),
+      ...(g === 'INSP' || g === 'INSP_SPEC' || g === 'ITIN'
+        ? [
+            { cle: 'grade', libelle: 'Grade' },
+            { cle: 'cat', libelle: 'Cat.' },
+            { cle: 'echl', libelle: 'Echelle' },
+            { cle: 'ech', libelle: 'Echelon' },
+          ]
+        : []),
+      ...(g === 'CP'
+        ? [
+            { cle: 'grade', libelle: 'Grade' },
+            { cle: 'ech', libelle: 'Echelon' },
+          ]
+        : []),
+      ...(g === 'INSP_SPEC' || g === 'ITIN'
+        ? [{ cle: 'specialite', libelle: 'Spécialité' }]
+        : []),
+      ...(g === 'ITIN'
+        ? []
+        : [{ cle: 'ancienPoste', libelle: 'Ancien poste' }]),
+      { cle: 'nouveauPoste', libelle: 'Nouveau poste' },
+      { cle: 'obs', libelle: 'Obs.' },
+    ];
+    const ligne = (x: Nomination, n: number): LigneNote => ({
+      id: String(x.id),
+      n,
+      nom: x.nomComplet,
+      vague: x.vague,
+      ge: [
+        x.grade,
+        x.echelon
+          ? `${x.echelon}${/^\d+$/.test(x.echelon) ? (x.echelon === '1' ? 'er' : 'e') : ''}`
+          : null,
+      ]
+        .filter(Boolean)
+        .join(' '),
+      grade: x.grade,
+      cat: x.categorieAgent,
+      echl: x.echelle,
+      ech: x.echelon,
+      specialite: x.specialite,
+      ancienPoste: x.ancienPoste,
+      nouveauPoste: x.nouveauPoste,
+      obs: NominationsService.obsImprimee(x),
+    });
+    const tri = (a: Nomination, b: Nomination) =>
+      (a.circonscription ?? '').localeCompare(b.circonscription ?? '', 'fr', {
+        numeric: true,
+      }) || a.nomComplet.localeCompare(b.nomComplet, 'fr');
+    const sections: SectionNote[] = [];
+    let i = 0;
+    for (const dep of deps) {
+      const items = liste.filter((x) => x.departementId === dep.id).sort(tri);
+      if (!items.length) continue;
+      i++;
+      // Une section par circonscription ; le titre du département sur la première seulement
+      const circos = [...new Set(items.map((x) => x.circonscription ?? ''))];
+      circos.forEach((c, k) =>
+        sections.push({
+          titre:
+            k === 0 ? `${entierVersRomain(i)}- ${titreDepartement(dep)}` : null,
+          sousTitre: c
+            ? `${String(k + 1).padStart(2, '0')}- Circonscription scolaire de ${c}`
+            : null,
+          lignes: items
+            .filter((x) => (x.circonscription ?? '') === c)
+            .map((x, j) => ligne(x, j + 1)),
+        }),
+      );
+    }
+    const nbDeps = new Set(liste.map((x) => x.departementId)).size;
+    return {
+      titre: 'NOTE DE SERVICE',
+      introduction: accordTableaux(
+        note.introduction.replaceAll('{annee}', note.anneeScolaire),
+        sections.length,
+      ),
+      colonnes,
+      classification: false,
+      sections,
+      total: liste.length,
+      departements: nbDeps,
+      ampliations: this.ampliations(
+        cat?.directionGenerale ?? 'DGES-DC',
+        nbDeps,
+        liste.length,
+      ),
+      mentions: [
+        'Les intéressés percevront les indemnités prévues par les textes en vigueur.',
+        'La présente note de service prend effet à compter de la date de signature.',
+      ],
+      piedDePage: `Note de nomination des ${cat?.formule ?? note.typeNote}/MEPPSA/${note.anneeScolaire}`,
+      repere: 'Nom.',
+    };
+  }
+
+  introductionNomination(categorie: string) {
+    const cat = CATEGORIE_NOMINATION.get(categorie);
+    return `Les cadres de l’enseignement dont les noms et prénoms suivent, sont nommés ${cat?.formule ?? categorie}, au titre de l’année scolaire {annee}, conformément aux tableaux ci-après :`;
+  }
+
+  /** Une note par catégorie qui a des nominations validées hors note (pas deux notes ouvertes). */
+  async preparerNomination(u: UtilisateurConnecte, anneeDemandee?: string) {
+    const annee =
+      anneeDemandee && /^\d{4}-\d{4}$/.test(anneeDemandee)
+        ? anneeDemandee
+        : await this.nomSvc.anneeCourante();
+    const creees: NoteService[] = [];
+    for (const { categorie } of await this.nomSvc.categoriesAPublier(annee)) {
+      const ouverte = await this.notes.findOne({
+        where: {
+          module: 'NOMINATION',
+          typeNote: categorie,
+          anneeScolaire: annee,
+          statut: In(['BROUILLON', 'SOUMISE']),
+        },
+      });
+      if (ouverte) continue;
+      const rang =
+        (await this.notes.count({
+          where: {
+            module: 'NOMINATION',
+            typeNote: categorie,
+            anneeScolaire: annee,
+          },
+        })) + 1;
+      creees.push(
+        await this.notes.save({
+          module: 'NOMINATION',
+          typeNote: categorie,
+          motif: null,
+          lotPublicationId: null,
+          anneeScolaire: annee,
+          rang,
+          introduction: this.introductionNomination(categorie),
+          statut: 'BROUILLON',
+          creePar: u.nom,
+        }),
+      );
+    }
+    await this.journal.log(
+      u,
+      'PREPARATION_NOTES_NOMINATION',
+      'note_service',
+      null,
+      {
+        annee,
+        notes: creees.map((n) => n.typeNote),
+      },
+    );
+    return creees;
+  }
+
   /* ======================== Notes d'enrôlement ======================== */
 
   /** Volontaires retenus d'une campagne et d'un diplôme, pas encore dans une autre note validée. */
@@ -780,6 +957,8 @@ export class NotesService {
       .filter((l): l is LotPublication => !!l)
       .map((l) => ` + ${libelleLot(l)}`)
       .join('');
+    if (n.module === 'NOMINATION')
+      return `Nomination – ${CATEGORIE_NOMINATION.get(n.typeNote)?.formule ?? n.typeNote} – ${n.anneeScolaire}${n.rang > 1 ? ` (suite ${n.rang - 1})` : ''}`;
     if (n.module === 'ENROLEMENT')
       return `Enrôlement – ${DIPLOMES_ENROLEMENT[n.typeNote]?.libelle ?? n.typeNote} – ${n.anneeScolaire}${n.rang > 1 ? ` (suite ${n.rang - 1})` : ''}`;
     if (n.module === 'AFFECTATION')
@@ -828,19 +1007,22 @@ export class NotesService {
       const lotNumero = lot?.numero ?? null;
       const total = n.contenu
         ? (n.contenu as ContenuNote).total
-        : n.module === 'ENROLEMENT'
-          ? (await this.lignesEnrolement(n)).prets.length
-          : n.module === 'AFFECTATION'
-            ? [n.lotPublicationId, ...(n.lotsFusionnes ?? [])].reduce<number>(
-                (s, id) => s + (pretesParNote.get(`${id}|${n.typeNote}`) ?? 0),
-                0,
-              )
-            : (
-                await this.mutSvc.eligiblesPourNote(
-                  n.motif as MotifMutation,
-                  n.typeNote as GroupeMutation,
+        : n.module === 'NOMINATION'
+          ? (await this.nomSvc.pourNote(n.anneeScolaire, n.typeNote)).length
+          : n.module === 'ENROLEMENT'
+            ? (await this.lignesEnrolement(n)).prets.length
+            : n.module === 'AFFECTATION'
+              ? [n.lotPublicationId, ...(n.lotsFusionnes ?? [])].reduce<number>(
+                  (s, id) =>
+                    s + (pretesParNote.get(`${id}|${n.typeNote}`) ?? 0),
+                  0,
                 )
-              ).length;
+              : (
+                  await this.mutSvc.eligiblesPourNote(
+                    n.motif as MotifMutation,
+                    n.typeNote as GroupeMutation,
+                  )
+                ).length;
       res.push({
         ...n,
         contenu: undefined,
@@ -866,7 +1048,9 @@ export class NotesService {
         ? await this.contenuAffectation(n)
         : n.module === 'ENROLEMENT'
           ? await this.contenuEnrolement(n)
-          : await this.contenuMutation(n));
+          : n.module === 'NOMINATION'
+            ? await this.contenuNomination(n)
+            : await this.contenuMutation(n));
     // Bas de page et repère : simple mise en page, recalculés même pour une note figée
     if (n.module === 'AFFECTATION') {
       const def = NOTES_AFFECTATION[n.typeNote as TypeNoteAffectation];
@@ -1067,6 +1251,12 @@ export class NotesService {
           { id: In(ids), noteId: IsNull() },
           { noteId: id },
         );
+      else if (n.module === 'NOMINATION')
+        await m.update(
+          Nomination,
+          { id: In(ids.map(Number)), noteId: IsNull() },
+          { noteId: id },
+        );
       else
         await m.update(
           DemandeMutation,
@@ -1109,6 +1299,8 @@ export class NotesService {
         );
       else if (n.module === 'ENROLEMENT')
         await m.update(Enrole, { noteId: id }, { noteId: null });
+      else if (n.module === 'NOMINATION')
+        await m.update(Nomination, { noteId: id }, { noteId: null });
       else await m.update(DemandeMutation, { noteId: id }, { noteId: null });
       await m.update(NoteService, id, {
         statut: 'BROUILLON',
@@ -1285,7 +1477,41 @@ export class NotesService {
     await this.journal.log(u, 'NOTE_SCAN_AJOUTE', 'note_service', id, {
       numero: n.numero,
     });
+    // Clôture : le dossier va aux archives et retourne au demandeur (DG, 27/10/2026). C'est le
+    // chef d'établissement qui a déposé la demande : sa structure est prévenue, pour remettre la
+    // réponse à l'agent. Une seule fois (un nouveau scan ne renvoie pas l'alerte).
+    if (n.module === 'MUTATION' && !n.scanLe) await this.retourDemandeurs(n);
     return { ok: true, ancien: n.scanFichier };
+  }
+
+  /** Alerte « dossier clos » à la structure de départ de chaque demande de la note. */
+  private async retourDemandeurs(n: NoteService) {
+    const demandes = await this.demandes.find({
+      where: { noteId: n.id },
+      select: {
+        id: true,
+        numeroEnregistrement: true,
+        nomComplet: true,
+        structureOrigineId: true,
+        circuit: true,
+      },
+    });
+    const signee = n.dateSignature
+      ? ` le ${String(n.dateSignature).slice(0, 10).split('-').reverse().join('/')}`
+      : '';
+    for (const d of demandes) {
+      const structures = [
+        d.structureOrigineId,
+        d.circuit?.[0]?.structureId ?? null,
+      ].filter((x): x is number => !!x);
+      if (!structures.length) continue;
+      await this.demandes.manager.save(Alerte, {
+        demandeId: d.id,
+        type: 'CLOTURE',
+        texte: `Demande n° ${d.numeroEnregistrement} (${d.nomComplet}) : dossier clos. La note de service n° ${n.numero ?? '—'} signée${signee} est aux archives. Remettez la réponse à l’agent.`,
+        structures: [...new Set(structures)],
+      });
+    }
   }
 
   async cheminScan(id: string) {

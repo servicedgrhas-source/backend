@@ -517,6 +517,20 @@ export class MutationService {
   ) {
     const champs = this.normaliserDto(dto);
     await this.verifierAgent(champs.agentId);
+    // Administration centrale : le formulaire ne demande pas de département ; c'est celui de la
+    // structure (ou d'une structure au-dessus), sinon Brazzaville (DG, 28/10/2026)
+    if (!champs.departementOrigineId && champs.structureOrigineId) {
+      const [r] = await this.deps.query<{ departementId: number | null }[]>(
+        `WITH RECURSIVE c AS (SELECT id, "parentId", "departementId", 0 AS n FROM structure WHERE id = $1
+                              UNION ALL SELECT s.id, s."parentId", s."departementId", c.n + 1 FROM structure s JOIN c ON s.id = c."parentId" WHERE c.n < 10)
+         SELECT "departementId" FROM c WHERE "departementId" IS NOT NULL ORDER BY n LIMIT 1`,
+        [champs.structureOrigineId],
+      );
+      champs.departementOrigineId =
+        r?.departementId ??
+        (await this.deps.findOne({ where: { code: 'BRAZZAVILLE' } }))?.id ??
+        null;
+    }
     if (!champs.departementOrigineId)
       throw new BadRequestException('Choisissez votre département actuel.');
     if (

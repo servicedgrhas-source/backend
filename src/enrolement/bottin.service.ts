@@ -7,7 +7,10 @@ import { estPdf, lireListePriseEnCharge } from '../common/pdf-pris-en-charge';
 import { IndexNoms } from '../common/index-noms';
 import { MOIS_RE, moisEnClair } from '../common/mois';
 import { motsDuNom, ressemblance } from '../common/ressemblance';
-import { reconnaitreDiplome } from '../common/referentiels';
+import {
+  memeDepartementLarge,
+  reconnaitreDiplome,
+} from '../common/referentiels';
 import { ageRevolu, enTexte, lireDate, normaliser } from '../common/texte';
 import { JournalService, ParametresService } from '../core/core.service';
 import {
@@ -434,10 +437,12 @@ export class BottinService {
         // Une ligne déjà écartée (« pas la même personne ») ne revient qu'avec un nouveau bottin
         .filter((l) => !verif || new Date(l.creeLe) > new Date(verif.le));
       if (!candidats.length) continue;
+      // La Solde garde les anciens découpages (« Kouilou » pour Pointe-Noire, « BZ/VILLE »)
       const memeDep = (l: (typeof lignes)[number]) =>
         !!dep &&
         !!l.departement &&
-        normaliser(l.departement).includes(normaliser(dep));
+        (normaliser(l.departement).includes(normaliser(dep)) ||
+          memeDepartementLarge(l.departement, dep));
       candidats.sort(
         (a, b) =>
           Number(memeDep(b)) - Number(memeDep(a)) ||

@@ -395,7 +395,7 @@ export type StatutNote = (typeof STATUTS_NOTE)[number];
 @Entity('note_service')
 export class NoteService {
   @PrimaryGeneratedColumn('uuid') id: string;
-  @Column() module: 'AFFECTATION' | 'MUTATION' | 'ENROLEMENT';
+  @Column() module: 'AFFECTATION' | 'MUTATION' | 'ENROLEMENT' | 'NOMINATION';
   /** Affectation : type de note ; mutation : groupe de cycles. */
   @Column() typeNote: string;
   @Column({ type: 'varchar', nullable: true }) motif: string | null;
@@ -668,6 +668,15 @@ export class Structure {
   @Column({ type: 'int', nullable: true }) responsableId: number | null;
   /** Le responsable n'assure qu'un intérim. */
   @Column({ type: 'boolean', default: false }) responsableInterim: boolean;
+  /**
+   * Emploi du temps propre à l'école (DG, 28/10/2026) : jours de cours, créneaux de la journée,
+   * heures d'un enseignant par semaine. Vide : les réglages généraux (Administration › Paramètres).
+   */
+  @Column({ type: 'jsonb', nullable: true }) reglagesEdt: {
+    jours?: number[];
+    creneaux?: string;
+    heuresEnseignant?: number;
+  } | null;
   @Column({ type: 'boolean', default: true }) actif: boolean;
   /** Rang parmi les structures du même niveau (flèches « monter / descendre »). */
   @Column({ type: 'int', default: 0 }) ordre: number;
@@ -1468,6 +1477,97 @@ export class EmploiDuTemps {
   @UpdateDateColumn() genereLe: Date;
 }
 
+/**
+ * Cadre organique d'une structure administrative (DG, 28/10/2026) : pour chaque poste, l'effectif
+ * normal (ex. 5 collaborateurs dans ce bureau). Une demande de personnel se compare à lui.
+ */
+@Entity('cadre_organique')
+@Index(['structureId', 'poste'], { unique: true })
+export class CadreOrganique {
+  @PrimaryGeneratedColumn() id: number;
+  @Index() @Column({ type: 'int' }) structureId: number;
+  @Column() poste: string;
+  @Column({ type: 'int' }) effectif: number;
+  @Column({ type: 'varchar', nullable: true }) modifiePar: string | null;
+  @UpdateDateColumn() modifieLe: Date;
+}
+
+/**
+ * Besoin en personnel exprimé par une structure administrative (DG, 28/10/2026) : un directeur, un
+ * chef de service, des collaborateurs… La DGRHAS l'accorde (en tout ou en partie) ou le refuse.
+ */
+@Entity('besoin_personnel')
+export class BesoinPersonnel {
+  @PrimaryGeneratedColumn() id: number;
+  @Index() @Column({ type: 'int' }) structureId: number;
+  @Column() poste: string;
+  @Column({ type: 'int' }) nombre: number;
+  @Column({ type: 'text' }) motif: string;
+  /** EN_ATTENTE, ACCORDE, REFUSE */
+  @Index() @Column({ default: 'EN_ATTENTE' }) statut: string;
+  @Column({ type: 'int', nullable: true }) nombreAccorde: number | null;
+  @Column({ type: 'text', nullable: true }) decision: string | null;
+  @Column({ type: 'varchar', nullable: true }) decidePar: string | null;
+  @Column({ type: 'timestamptz', nullable: true }) decideLe: Date | null;
+  @Column({ type: 'varchar', nullable: true }) creePar: string | null;
+  @Column({ type: 'uuid', nullable: true }) creeParId: string | null;
+  @CreateDateColumn() creeLe: Date;
+}
+
+/**
+ * Nomination d'un cadre de gestion (DGRHAS, 26/10/2026) : une ligne par personne et par année
+ * scolaire. La DDEPPSA propose (reconduire, muter, promouvoir, permuter, relever), la DGRHAS et la
+ * commission décident ; les lignes validées vont dans la note de service de leur catégorie.
+ * Rien n'est effacé d'une année à l'autre : une personne relevée peut être nommée de nouveau.
+ */
+@Entity('nomination')
+@Index(['annee', 'categorie'])
+export class Nomination {
+  @PrimaryGeneratedColumn() id: number;
+  /** Année scolaire de la nomination (« 2026-2027 »). */
+  @Index() @Column() annee: string;
+  /** Catégorie (catalogue des nominations) : elle donne la note de service. */
+  @Column() categorie: string;
+  @Index() @Column({ type: 'int', nullable: true }) departementId:
+    number | null;
+  /** Circonscription scolaire (« Madingou », « ILZ 4 ») : sous-titre dans la note. */
+  @Column({ type: 'varchar', nullable: true }) circonscription: string | null;
+  /** Fiche de la base du personnel, quand elle est retrouvée. */
+  @Index() @Column({ type: 'int', nullable: true }) agentId: number | null;
+  @Column() nomComplet: string;
+  @Index() @Column() nomNormalise: string;
+  @Column({ type: 'varchar', nullable: true }) genre: string | null;
+  @Column({ type: 'varchar', nullable: true }) grade: string | null;
+  @Column({ type: 'varchar', nullable: true }) echelon: string | null;
+  /** Catégorie et échelle de l'agent (notes des inspections). */
+  @Column({ type: 'varchar', nullable: true }) categorieAgent: string | null;
+  @Column({ type: 'varchar', nullable: true }) echelle: string | null;
+  @Column({ type: 'varchar', nullable: true }) specialite: string | null;
+  @Column({ type: 'varchar', nullable: true }) vague: string | null;
+  @Column({ type: 'varchar', nullable: true }) ancienPoste: string | null;
+  @Column({ type: 'varchar', nullable: true }) nouveauPoste: string | null;
+  /** RECONDUIT, PROMU, MUTE, PERMUTE, RELEVE. */
+  @Column({ default: 'RECONDUIT' }) observation: string;
+  @Column({ type: 'text', nullable: true }) motif: string | null;
+  /** PROPOSEE (par la DDEPPSA), VALIDEE ou REJETEE (DGRHAS, commission, ministre). */
+  @Index() @Column({ default: 'PROPOSEE' }) statut: string;
+  @Column({ type: 'text', nullable: true }) avisDdeppsa: string | null;
+  @Column({ type: 'text', nullable: true }) avisDgrhas: string | null;
+  @Column({ type: 'varchar', nullable: true }) decidePar: string | null;
+  @Column({ type: 'timestamptz', nullable: true }) decideLe: Date | null;
+  /** Modifiée par la DDEPPSA par rapport à ce qui lui a été envoyé (« surligné en jaune »). */
+  @Column({ type: 'boolean', default: false }) modifie: boolean;
+  /** Ligne de l'année précédente d'où elle vient (reconduction). */
+  @Column({ type: 'int', nullable: true }) origineId: number | null;
+  /** Note de service validée qui la contient. */
+  @Index() @Column({ type: 'uuid', nullable: true }) noteId: string | null;
+  /** IMPORT (base de la DGRHAS), REPRISE (année précédente) ou SAISIE. */
+  @Column({ default: 'SAISIE' }) source: string;
+  @Column({ type: 'varchar', nullable: true }) creePar: string | null;
+  @CreateDateColumn() creeLe: Date;
+  @UpdateDateColumn() modifieLe: Date;
+}
+
 export const ENTITES = [
   Utilisateur,
   Journal,
@@ -1521,4 +1621,7 @@ export const ENTITES = [
   SemainePresence,
   EvaluationAgent,
   EmploiDuTemps,
+  CadreOrganique,
+  BesoinPersonnel,
+  Nomination,
 ];

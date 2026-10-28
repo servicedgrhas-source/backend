@@ -16,6 +16,7 @@ import {
   Utilisateur,
   type UtilisateurConnecte,
 } from '../auth/auth';
+import { BesoinsAdministratifsService } from './besoins-administratifs.service';
 import { EtablissementsService } from './etablissements.service';
 import { EmploisDuTempsService } from './emplois-du-temps.service';
 
@@ -81,6 +82,21 @@ export class EtablissementsController {
   }
 
   /** Matière enseignée par un enseignant de l'école (rubrique « Spécialité » de sa fiche). */
+  @Put(':id/emploi-du-temps/reglages')
+  reglagesEdt(
+    @Utilisateur() u: UtilisateurConnecte,
+    @Param('id', ParseIntPipe) id: number,
+    @Body()
+    dto: {
+      jours?: number[];
+      creneaux?: string;
+      heuresEnseignant?: number;
+      general?: boolean;
+    },
+  ) {
+    return this.edt.enregistrerReglages(u, id, dto?.general ? null : dto);
+  }
+
   @Put(':id/enseignants/:agent/matiere')
   definirMatiere(
     @Utilisateur() u: UtilisateurConnecte,
@@ -187,5 +203,73 @@ export class StructuresController {
     @Param('id', ParseIntPipe) id: number,
   ) {
     return this.service.personnelStructure(u, id);
+  }
+}
+
+/**
+ * Besoins en personnel des structures administratives (DG, 28/10/2026) : cadre organique (effectif
+ * normal de chaque poste) et demandes, auxquelles la DGRHAS répond.
+ */
+@Roles(...ROLES_TRAITEMENT, 'DDEPPSA', 'STRUCTURE')
+@Controller('besoins-administratifs')
+export class BesoinsAdministratifsController {
+  constructor(private readonly service: BesoinsAdministratifsService) {}
+
+  @Get()
+  liste(
+    @Utilisateur() u: UtilisateurConnecte,
+    @Query('statut') statut?: string,
+    @Query('departement') departement?: string,
+  ) {
+    return this.service.liste(u, { statut, departement: nombre(departement) });
+  }
+
+  @Get('postes')
+  postes() {
+    return this.service.postes();
+  }
+
+  @Get('structures/:id')
+  situation(
+    @Utilisateur() u: UtilisateurConnecte,
+    @Param('id', ParseIntPipe) id: number,
+  ) {
+    return this.service.situation(u, id);
+  }
+
+  @Put('structures/:id/cadre')
+  cadre(
+    @Utilisateur() u: UtilisateurConnecte,
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: { lignes: { poste: string; effectif: number }[] },
+  ) {
+    return this.service.fixerCadre(u, id, dto?.lignes);
+  }
+
+  @Post('structures/:id/demandes')
+  exprimer(
+    @Utilisateur() u: UtilisateurConnecte,
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: { poste: string; nombre: number; motif: string },
+  ) {
+    return this.service.exprimer(u, id, dto);
+  }
+
+  @Post('demandes/:id/decision')
+  decider(
+    @Utilisateur() u: UtilisateurConnecte,
+    @Param('id', ParseIntPipe) id: number,
+    @Body()
+    dto: { decision: string; nombreAccorde?: number; commentaire?: string },
+  ) {
+    return this.service.decider(u, id, dto);
+  }
+
+  @Delete('demandes/:id')
+  retirer(
+    @Utilisateur() u: UtilisateurConnecte,
+    @Param('id', ParseIntPipe) id: number,
+  ) {
+    return this.service.retirer(u, id);
   }
 }

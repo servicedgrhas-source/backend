@@ -244,8 +244,8 @@ export function genererEmploiDuTemps(e: {
         matiereLibelle: lib(l.matiere),
         heures: l.heures,
         raison: e.enseignants.some((t) => t.matiere === l.matiere)
-          ? `Les enseignants de ${lib(l.matiere)} ont déjà leurs ${e.heuresEnseignant} h : enseignant à trouver`
-          : `Aucun enseignant de ${lib(l.matiere)} dans l’école : enseignant à trouver`,
+          ? `les enseignants de ${lib(l.matiere)} de l’école n’ont plus assez d’heures libres (${e.heuresEnseignant} h au plus chacun) : heures « à pourvoir », enseignant à trouver`
+          : `aucun enseignant de ${lib(l.matiere)} dans l’école : heures « à pourvoir », enseignant à trouver`,
       });
     if (restant > 0)
       nonPlaces.push({
@@ -291,6 +291,16 @@ export function genererEmploiDuTemps(e: {
         raison: `${h} h de programme mais seulement ${cap} créneaux par semaine${v === 'B' ? ' l’après-midi (vague B)' : v === 'A' ? ' le matin (vague A)' : ''} : ${h - cap} h ne peuvent pas être placées ; ajoutez des créneaux ou des jours dans Administration › Paramètres (emplois du temps)`,
       });
   }
+  // Une classe dont le niveau n'a pas de programme ne reçoit aucune heure : on le dit
+  for (const c of e.classes)
+    if (!(e.programme.get(c.niveau) ?? []).some((p) => p.heures > 0))
+      manques.push({
+        classe: c.nom,
+        matiere: '',
+        matiereLibelle: 'Programme',
+        heures: 0,
+        raison: `aucun programme (heures par matière) pour le niveau « ${c.niveau} » : la classe n’a aucun cours ; ajoutez-le dans Administration › Référentiels › Programmes, ou corrigez le niveau de la classe`,
+      });
   nonPlaces.unshift(...manques);
   seances.sort(
     (a, b) =>

@@ -951,7 +951,11 @@ export class CircuitService implements OnModuleInit {
           })
         : null;
       if (!dd)
-        throw new BadRequestException('Indiquez le département d’origine.');
+        throw new BadRequestException(
+          o.departementOrigineId
+            ? 'Le département actuel choisi n’a pas encore de direction départementale (DDEPPSA) dans l’organigramme : la demande ne peut pas lui être envoyée. Signalez-le à la DGRHAS (Administration › Organigramme).'
+            : 'Choisissez votre département actuel.',
+        );
       circuit.push(this.etape('EXTERNE', dd, null));
     }
     if (decideur === 'DGRHAS')
@@ -1198,6 +1202,29 @@ export class CircuitService implements OnModuleInit {
       texteAlerte,
       destinataires,
     );
+    // Clôture : la réponse retourne au demandeur, c'est-à-dire au chef d'établissement qui a déposé
+    // la demande et la remet à l'agent (DG, 27/10/2026). Une mutation accordée attend sa note de
+    // service : l'alerte part quand la note signée est scannée.
+    if (derniere && dto.decision !== 'EN_INSTANCE') {
+      const type = d.typePrestation
+        ? await this.types.findOne({ where: { code: d.typePrestation } })
+        : null;
+      const mutation =
+        !!type?.motifMutation ||
+        /^(MUTATION|PERMUTATION)/.test(d.typePrestation ?? 'MUTATION');
+      const origine = [d.structureOrigineId, circuit[0]?.structureId].filter(
+        (x): x is number => !!x,
+      );
+      if (origine.length && (dto.decision === 'REJETEE' || !mutation))
+        await this.alerter(
+          id,
+          'CLOTURE',
+          dto.decision === 'ACCORDEE'
+            ? `Demande n° ${d.numeroEnregistrement} (${d.nomComplet}) : accordée, dossier clos et archivé. ${type?.acte ? `L’acte (${type.acte.toLowerCase()})` : 'L’acte'} est prêt : imprimez-le depuis la demande et remettez-le à l’agent.`
+            : `Demande n° ${d.numeroEnregistrement} (${d.nomComplet}) : rejetée, dossier clos et archivé. Informez l’agent de la décision et de son motif : « ${motivation} ».`,
+          origine,
+        );
+    }
     await this.journal.log(
       u,
       derniere ? 'DECISION_DEMANDE' : 'AVIS_CIRCUIT',

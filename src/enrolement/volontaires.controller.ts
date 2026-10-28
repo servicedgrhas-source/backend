@@ -163,6 +163,22 @@ export class VolontairesController {
   }
 
   @Roles('CHEF_SERVICE', 'DIRECTEUR', 'DG')
+  @Post('volontaires/sortie')
+  sortirPlusieurs(
+    @Utilisateur() u: UtilisateurConnecte,
+    @Body()
+    dto: {
+      ids: string[];
+      motif: string;
+      date: string;
+      observation?: string;
+      observations?: Record<string, string>;
+    },
+  ) {
+    return this.volontaires.sortirPlusieurs(u, dto ?? ({} as never));
+  }
+
+  @Roles('CHEF_SERVICE', 'DIRECTEUR', 'DG')
   @Post('volontaires/:id/sortie')
   sortir(
     @Utilisateur() u: UtilisateurConnecte,
@@ -376,6 +392,28 @@ export class VolontairesController {
     @Param('id', ParseIntPipe) id: number,
   ) {
     return this.bourse.supprimer(u, id);
+  }
+
+  /** État de paiement au modèle officiel, pour l'impression (PDF). */
+  @Roles(...ROLES_TRAITEMENT)
+  @Get('bourse/:id/etat-paiement')
+  etatPaiement(@Param('id', ParseIntPipe) id: number) {
+    return this.bourse.etatPaiement(id);
+  }
+
+  @Roles(...ROLES_TRAITEMENT)
+  @Get('bourse/:id/word')
+  async word(@Param('id', ParseIntPipe) id: number, @Res() res: Response) {
+    const { nom, contenu } = await this.bourse.word(id);
+    res.setHeader(
+      'Content-Type',
+      'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    );
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename="${nom}"; filename*=UTF-8''${encodeURIComponent(nom)}`,
+    );
+    res.send(contenu);
   }
 
   @Roles(...ROLES_TRAITEMENT)

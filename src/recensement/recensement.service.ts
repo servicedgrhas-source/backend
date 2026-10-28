@@ -181,7 +181,7 @@ export class RecensementService {
     return a.structureId !== null && p.structures.includes(a.structureId);
   }
 
-  private filtrePerimetre(
+  filtrePerimetre(
     p: Perimetre,
     alias = 'a',
   ): { sql: string; params: unknown[] } {
@@ -1682,7 +1682,11 @@ export class RecensementService {
         (!l.contentieux || l.contentieux === 'CONFIRME')
           ? prochainAvancement(c, l.statut, l.carriere ?? {}, echelles)
           : null;
-      if (av && !av.fin && av.prochain <= aujourdhui)
+      // Échelon au-delà du 1er sans date de dernière promotion : la date manque (DG, 27/10/2026)
+      const echelon = Number(enTexte(l.carriere?.ECHELON)) || 0;
+      if (av && av.origine === 'ENTREE' && echelon > 1)
+        ajouter('DATE_PROMOTION_MANQUANTE', l.id);
+      else if (av && !av.fin && av.prochain <= aujourdhui)
         ajouter('AVANCEMENT_DU', l.id);
       for (const v of l.manques?.aVerifier ?? [])
         ajouter(v.startsWith('REGLE:') ? v : 'VALEUR_HORS_LISTE', l.id);
@@ -1696,6 +1700,8 @@ export class RecensementService {
         ? `Âge de la retraite atteint et encore en activité (âge de sa catégorie, sinon ${c.ageRetraite} ans)`
         : 'Âge de la retraite de sa catégorie atteint et encore en activité',
       AVANCEMENT_DU: `Promotion (fonctionnaire, tous les ${duree(c.delaiPromotionMois)}) ou avancement (contractuel, tous les ${duree(c.delaiAvancementMois)}) dû`,
+      DATE_PROMOTION_MANQUANTE:
+        'Échelon au-delà du 1er sans date de dernière promotion (ou du dernier avancement) : la date est à renseigner',
       VALEUR_HORS_LISTE: 'Valeur hors des listes de la fiche (à vérifier)',
       VOLONTAIRE_AGENT_ETAT:
         'Volontaire encore payé qui figure aussi comme fonctionnaire ou contractuel',

@@ -9,6 +9,7 @@ import {
   codeDepartement,
   codeDiplome,
   codeMotif,
+  memeDepartementLarge,
   lireGradeEchelon,
   REGLES_DIPLOMES,
   specialiteStat,
@@ -412,5 +413,20 @@ describe('Catégorie écrite à la main (âge de la retraite)', () => {
     expect(codeCategorie(null)).toBeNull();
     expect(codeCategorie('IV')).toBeNull();
     expect(codeCategorie('Instituteur')).toBeNull();
+  });
+});
+
+describe('Départements de la Solde (anciens découpages)', () => {
+  it('rapproche Kouilou et Pointe-Noire, Pool et Brazzaville', () => {
+    expect(memeDepartementLarge('KOUILOU', 'Pointe-Noire')).toBe(true);
+    expect(memeDepartementLarge('P/NOIRE', 'Pointe-Noire')).toBe(true);
+    expect(memeDepartementLarge('BZ/VILLE', 'Brazzaville')).toBe(true);
+    expect(memeDepartementLarge('POOL', 'Brazzaville')).toBe(true);
+    expect(memeDepartementLarge('Plateaux', 'Nkéni-Alima')).toBe(true);
+  });
+  it('ne rapproche pas deux départements sans lien', () => {
+    expect(memeDepartementLarge('Niari', 'Pointe-Noire')).toBe(false);
+    expect(memeDepartementLarge('Sangha', 'Brazzaville')).toBe(false);
+    expect(memeDepartementLarge(null, 'Brazzaville')).toBe(false);
   });
 });

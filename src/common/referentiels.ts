@@ -68,6 +68,31 @@ export function codeDepartement(brut: unknown): string | null {
   return meilleur?.code ?? null;
 }
 
+/**
+ * Anciens découpages encore utilisés par la Solde (réunion DG du 27/10/2026) : Pointe-Noire
+ * dans le Kouilou, Brazzaville dans le Pool (« BZ/VILLE »), et les départements créés depuis
+ * (Djoué-Léfini tiré du Pool, Nkéni-Alima des Plateaux).
+ */
+const GROUPES_ANCIENS_DECOUPAGES = [
+  ['KOUILOU', 'POINTE_NOIRE'],
+  ['POOL', 'BRAZZAVILLE', 'DJOUE_LEFINI'],
+  ['PLATEAUX', 'NKENI_ALIMA'],
+];
+
+/**
+ * Deux écritures du département désignent-elles le même lieu, en tenant compte des anciens
+ * découpages ? « Kouilou » (Solde) et « Pointe-Noire » (registre) : oui.
+ */
+export function memeDepartementLarge(a: unknown, b: unknown): boolean {
+  const ca = codeDepartement(a);
+  const cb = codeDepartement(b);
+  if (!ca || !cb) return false;
+  if (ca === cb) return true;
+  return GROUPES_ANCIENS_DECOUPAGES.some(
+    (g) => g.includes(ca) && g.includes(cb),
+  );
+}
+
 /** "DEPARTEMENT SCOLAIRE DE LA BOUENZA" */
 export function titreDepartement(d: { nom: string; article: string }): string {
   return `DEPARTEMENT SCOLAIRE ${d.article} ${normaliser(d.nom)}`;

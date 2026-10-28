@@ -6,7 +6,12 @@ describe('Droits par rubrique', () => {
       '/notes/affectation',
     ]);
     expect(rubriquesDe('/notes/12/valider').sort()).toEqual(
-      ['/notes/affectation', '/notes/enrolement', '/notes/mutation'].sort(),
+      [
+        '/notes/affectation',
+        '/notes/enrolement',
+        '/notes/mutation',
+        '/notes/nomination',
+      ].sort(),
     );
     expect(rubriquesDe('/candidats/import')).toEqual(['/candidats']);
     expect(rubriquesDe('/candidatsXYZ')).toEqual([]);

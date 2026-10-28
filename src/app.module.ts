@@ -61,11 +61,15 @@ import { RecensementController } from './recensement/recensement.controller';
 import { RecensementService } from './recensement/recensement.service';
 import { CarriereService } from './recensement/carriere.service';
 import {
+  BesoinsAdministratifsController,
   EtablissementsController,
   StructuresController,
 } from './etablissements/etablissements.controller';
 import { EtablissementsService } from './etablissements/etablissements.service';
 import { EmploisDuTempsService } from './etablissements/emplois-du-temps.service';
+import { BesoinsAdministratifsService } from './etablissements/besoins-administratifs.service';
+import { NominationsController } from './nominations/nominations.controller';
+import { NominationsService } from './nominations/nominations.service';
 import { SuiviController } from './etablissements/suivi.controller';
 import { SuiviService } from './etablissements/suivi.service';
 import { DemandesController } from './circuit/demandes.controller';
@@ -73,6 +77,7 @@ import { DemandesService } from './circuit/demandes.service';
 import { LiaisonVolontairesService } from './recensement/liaison-volontaires.service';
 import { AffectationsPersonnelService } from './recensement/affectations-personnel.service';
 import { BottinService } from './enrolement/bottin.service';
+import { RetardsEchelonsService } from './recensement/retards-echelons.service';
 import { ImportStructuresService } from './circuit/structures-import.service';
 import { RecommandationsController } from './recommandations/recommandations.controller';
 import { RecommandationsService } from './recommandations/recommandations.service';
@@ -102,6 +107,8 @@ import { ReferentielsService } from './referentiels/referentiels.service';
     DemandesController,
     EtablissementsController,
     StructuresController,
+    BesoinsAdministratifsController,
+    NominationsController,
     SuiviController,
     CoreController,
     ConfigurationController,
@@ -163,8 +170,11 @@ import { ReferentielsService } from './referentiels/referentiels.service';
     ConfigRecensementService,
     RecensementService,
     CarriereService,
+    RetardsEchelonsService,
     EtablissementsService,
     EmploisDuTempsService,
+    BesoinsAdministratifsService,
+    NominationsService,
     SuiviService,
     DemandesService,
     ExcelRecensementService,

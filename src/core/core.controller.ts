@@ -137,9 +137,16 @@ export class CoreController {
 
   @Roles(...TOUS_LES_ROLES)
   @Get('auth/moi')
-  moi(@Moi() u: UtilisateurConnecte) {
-    // Profil relu en base à chaque requête (voir AuthGuard)
-    return u;
+  async moi(@Moi() u: UtilisateurConnecte) {
+    // Profil relu en base à chaque requête (voir AuthGuard). Le type de sa structure dit au menu si
+    // c'est une école ou une structure administrative (besoins en personnel, DG 28/10/2026).
+    const [s] = u.structureId
+      ? await this.users.query<{ type: string }[]>(
+          `SELECT type FROM structure WHERE id = $1`,
+          [u.structureId],
+        )
+      : [];
+    return { ...u, structureType: s?.type ?? null };
   }
 
   /**

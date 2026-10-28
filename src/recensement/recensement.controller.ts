@@ -25,6 +25,10 @@ import {
 import { StockageService } from '../common/stockage';
 import { JournalService } from '../core/core.service';
 import { CarriereService, type EvenementDto } from './carriere.service';
+import {
+  RetardsEchelonsService,
+  type FiltresRetards,
+} from './retards-echelons.service';
 import { configDefaut, LIBELLES_TYPES } from './configuration';
 import { ExcelRecensementService } from './excel-recensement.service';
 import {
@@ -83,6 +87,7 @@ export class RecensementController {
     private readonly stockage: StockageService,
     private readonly journal: JournalService,
     private readonly carriere: CarriereService,
+    private readonly retards: RetardsEchelonsService,
   ) {}
 
   /* ------------------------------ Configuration ------------------------------ */
@@ -449,5 +454,67 @@ export class RecensementController {
   @Get('tableau')
   tableau(@Utilisateur() u: UtilisateurConnecte) {
     return this.rec.tableau(u);
+  }
+
+  /* ---------------- Échelons en retard (commission administrative paritaire) ---------------- */
+
+  private filtresRetards(
+    q: Record<string, string | undefined>,
+  ): FiltresRetards {
+    const n = (v?: string) => (v && /^\d+$/.test(v) ? Number(v) : undefined);
+    return {
+      departement: n(q.departement),
+      structure: n(q.structure),
+      annee: n(q.annee),
+      categorie: q.categorie || undefined,
+      cycle: q.cycle || undefined,
+      dus: q.dus || undefined,
+      statut: q.statut || undefined,
+      recherche: q.recherche || undefined,
+    };
+  }
+
+  @Get('retards-echelons')
+  retardsEchelons(
+    @Utilisateur() u: UtilisateurConnecte,
+    @Query() q: Record<string, string | undefined>,
+  ) {
+    return this.retards.calculer(u, this.filtresRetards(q));
+  }
+
+  @Get('retards-echelons/excel')
+  async retardsExcel(
+    @Utilisateur() u: UtilisateurConnecte,
+    @Query() q: Record<string, string | undefined>,
+    @Res() res: Response,
+  ) {
+    const contenu = await this.retards.excel(u, this.filtresRetards(q));
+    res.setHeader(
+      'Content-Type',
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    );
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename*=UTF-8''${encodeURIComponent('Échelons en retard.xlsx')}`,
+    );
+    res.send(contenu);
+  }
+
+  @Get('retards-echelons/word')
+  async retardsWord(
+    @Utilisateur() u: UtilisateurConnecte,
+    @Query() q: Record<string, string | undefined>,
+    @Res() res: Response,
+  ) {
+    const contenu = await this.retards.word(u, this.filtresRetards(q));
+    res.setHeader(
+      'Content-Type',
+      'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    );
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename*=UTF-8''${encodeURIComponent('Échelons en retard.docx')}`,
+    );
+    res.send(contenu);
   }
 }

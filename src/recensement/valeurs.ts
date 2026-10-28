@@ -650,6 +650,39 @@ export function prochainAvancement(
   };
 }
 
+/**
+ * Échelons dus à une date (réunion DG du 27/10/2026, tableau des échelons en retard) : les
+ * promotions (ou avancements) attendues depuis la dernière, jusqu'à `reference`. Un agent au-delà
+ * du 1er échelon sans date de dernière promotion : rien ne se calcule, la date est à renseigner.
+ */
+export function echelonsDus(
+  c: Pick<ConfigRecensement, 'delaiPromotionMois' | 'delaiAvancementMois'>,
+  statut: string,
+  donnees: Record<string, unknown>,
+  echelles: EchelleGrille[],
+  reference: string,
+) {
+  const av = prochainAvancement(c, statut, donnees, echelles);
+  if (!av) return null;
+  const echelon = Number(enTexte(donnees.ECHELON)) || null;
+  const dateManquante = av.origine === 'ENTREE' && !!echelon && echelon > 1;
+  const attendues = dateManquante
+    ? []
+    : promotionsAttendues({
+        depuis: av.depuis,
+        delaiMois:
+          av.nature === 'PROMOTION'
+            ? c.delaiPromotionMois
+            : c.delaiAvancementMois,
+        dureeEchelle: av.nature === 'PROMOTION',
+        echelon,
+        echelle: trouverEchelle(echelles, donnees.ECHELLE),
+        echelles,
+        aujourdhui: reference,
+      }).filter((x) => x.date <= reference);
+  return { av, echelon, dateManquante, attendues };
+}
+
 /** Contrôle fixe : texte d'entrée d'un fonctionnaire qui n'est ni un arrêté ni un décret. */
 export const REGLE_INTEGRATION = 'INTEGRATION_PAR_ARRETE';
 export const LIBELLE_REGLE_INTEGRATION =
@@ -713,6 +746,22 @@ export function deduire(
 }
 
 /**
+ * Nature du texte écrite en entier (DG, 27/10/2026 : « D n° 1203 » → « Décret n° 1203 »,
+ * « Arr. n° 45 » → « Arrêté n° 45 ») ; « N° » devient « n° ». Le reste ne change pas.
+ */
+export function natureEnEntier(ref: string): string {
+  let r = ref.replace(/\s+/g, ' ').trim();
+  r = r
+    .replace(/^(?:D|DEC|DÉC|DECR|DÉCR)\.?\s*(?=(?:N\s*[°ºO]|\d))/i, 'Décret ')
+    .replace(/^(?:A|AR|ARR|ARRT)\.?\s*(?=(?:N\s*[°ºO]|\d))/i, 'Arrêté ')
+    .replace(
+      /^(Décret|Arrêté|Decret|Arrete)\s+N\s*[°ºO]\.?\s*/i,
+      (_m, n: string) => `${/^d/i.test(n) ? 'Décret' : 'Arrêté'} n° `,
+    );
+  return r;
+}
+
+/**
  * Référence complète du texte d'entrée, telle qu'elle est signée (DG, 26/10/2026) :
  * « Arrêté n° 6805 du 17/10/2022 ». S'ils manquent, le système ajoute la nature du texte
  * (celle choisie ; sinon d'après la catégorie : I → décret, II et III → arrêté) et la date
@@ -724,8 +773,9 @@ export function completerReference(
 ): string | null {
   const ref = enTexte(donnees.TEXTE_RECRUTEMENT).replace(/\s+/g, ' ').trim();
   if (!ref) return null;
-  let r = ref;
-  const t = normaliser(ref);
+  let r = natureEnEntier(ref);
+  // Sur la référence corrigée : « D n° 1203 » est déjà devenu « Décret n° 1203 »
+  const t = normaliser(r);
   if (!/^(ARRETE|DECRET|NOTE|CONTRAT|DECISION|LETTRE)/.test(t)) {
     const choisie = enTexte(donnees.NATURE_TEXTE_RECRUTEMENT);
     const cat = normaliser(donnees.CATEGORIE).replace(/^CAT(EGORIE)?\s*/, '');
@@ -741,7 +791,7 @@ export function completerReference(
               : /^(II|III|2|3)$/.test(cat)
                 ? 'Arrêté'
                 : null;
-    if (nature) r = `${nature} ${/^N\s*[°O]/i.test(ref) ? ref : `n° ${ref}`}`;
+    if (nature) r = `${nature} ${/^N\s*[°O]/i.test(r) ? r : `n° ${r}`}`;
   }
   const date = lireDate(donnees.DATE_RECRUTEMENT);
   const datee =

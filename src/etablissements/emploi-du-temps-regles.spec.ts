@@ -115,9 +115,11 @@ describe('Emploi du temps (DG, 24/10/2026)', () => {
       heuresEnseignant: 20,
     });
     expect(r2.charges[0].heures).toBe(18);
-    expect(r2.nonPlaces.some((x) => /déjà leurs 20 h/.test(x.raison))).toBe(
-      true,
-    );
+    expect(
+      r2.nonPlaces.some((x) =>
+        /plus assez d’heures libres \(20 h au plus/.test(x.raison),
+      ),
+    ).toBe(true);
     expect(
       r2.seances
         .filter((s) => s.agentId === 100)
@@ -177,5 +179,36 @@ describe('Emploi du temps (DG, 24/10/2026)', () => {
       /18 h de programme mais seulement 15 créneaux/,
     );
     expect(r4.heuresPlacees).toBe(15);
+  });
+
+  it('respecte les jours ET les heures de chaque jour d’un enseignant (lundi 9 h-12 h, mardi 7 h-9 h, jeudi toute la journée)', () => {
+    const horaire = {
+      '1': { debut: '09:00', fin: '12:30' },
+      '2': { debut: '07:00', fin: '09:30' },
+      '4': { debut: null, fin: null },
+    };
+    const x = genererEmploiDuTemps({
+      classes: [{ id: 1, nom: '6ème 1', niveau: '6EME', salleId: null }],
+      programme: new Map([['6EME', [{ matiere: 'ANG', heures: 6 }]]]),
+      libelles,
+      enseignants: [prof(200, 'ANG', horaire)],
+      jours: [1, 2, 3, 4, 5],
+      creneaux,
+      heuresEnseignant: 20,
+    });
+    const siennes = x.seances.filter((s) => s.agentId === 200);
+    expect(siennes.length).toBeGreaterThan(0);
+    for (const s of siennes) {
+      const c = creneaux[s.creneau];
+      expect([1, 2, 4]).toContain(s.jour);
+      if (s.jour === 1)
+        expect(c.debut >= '09:00' && c.fin <= '12:30').toBe(true);
+      if (s.jour === 2)
+        expect(c.debut >= '07:00' && c.fin <= '09:30').toBe(true);
+    }
+    // Le mardi, seuls 07:30-08:25 et 08:25-09:20 tiennent dans 7 h-9 h 30
+    expect(
+      siennes.filter((s) => s.jour === 2).every((s) => s.creneau <= 1),
+    ).toBe(true);
   });
 });

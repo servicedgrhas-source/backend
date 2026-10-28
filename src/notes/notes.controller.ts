@@ -89,6 +89,14 @@ export class NotesController {
     );
   }
 
+  @Post('preparer/nomination')
+  preparerNomination(
+    @Utilisateur() u: UtilisateurConnecte,
+    @Body() dto: { annee?: string },
+  ) {
+    return this.service.preparerNomination(u, dto?.annee);
+  }
+
   @Post('preparer/mutation')
   preparerMutation(@Utilisateur() u: UtilisateurConnecte) {
     return this.service.preparerMutation(u);
