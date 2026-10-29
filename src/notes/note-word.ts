@@ -307,6 +307,17 @@ export async function noteWord(n: NoteWord): Promise<Buffer> {
                   taille: 10,
                 }),
                 sep(),
+                // Le service suit le numéro : « …-DRSC-SR » (une note signée avant garde son en-tête)
+                ...(/-SR$/.test(e.reference)
+                  ? [
+                      p('SERVICE DES RECRUTEMENTS', {
+                        centre: true,
+                        gras: true,
+                        taille: 10,
+                      }),
+                      sep(),
+                    ]
+                  : []),
                 p(
                   `N°${n.numero ? ` ${n.numero}` : '__________'}/${e.reference}`,
                   {
