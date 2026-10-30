@@ -15,9 +15,22 @@ export type Niveau = 'MASQUE' | 'LECTURE' | 'MODIFICATION';
 export const NIVEAUX: Niveau[] = ['MASQUE', 'LECTURE', 'MODIFICATION'];
 
 export interface ConfigDroits {
-  roles: Partial<Record<Role, Record<string, Niveau>>>;
+  /** Réglages par rôle : rôles du système et rôles personnalisés (« PERSO_… »). */
+  roles: Partial<Record<Role, Record<string, Niveau>>> &
+    Record<string, Record<string, Niveau>>;
   utilisateurs: Record<string, Record<string, Niveau>>;
+  /**
+   * Rôles créés par le DG (« Secrétariat DRSC ») : un nom et un rôle de départ (ses actions) ; ses
+   * rubriques sont réglées dans `roles` comme pour un rôle du système.
+   */
+  rolesPerso?: Record<string, { libelle: string; base: Role }>;
+  /** Rôle personnalisé de chaque compte (id du compte → code du rôle). */
+  attributions?: Record<string, string>;
 }
+
+/** Rôles qui ne peuvent pas servir de départ à un rôle personnalisé. */
+export const BASES_INTERDITES: Role[] = ['ADMIN', 'DG', 'STRUCTURE'];
+const CODE_PERSO = /^PERSO_[A-Z0-9_]{1,40}$/;
 
 /** Rôles que l'on ne règle pas : ils voient et font tout. */
 export const ROLES_LIBRES: Role[] = ['ADMIN', 'DG'];
@@ -133,7 +146,41 @@ export function validerDroits(brut: unknown): ConfigDroits {
   const b = (brut && typeof brut === 'object' ? brut : {}) as {
     roles?: unknown;
     utilisateurs?: unknown;
+    rolesPerso?: unknown;
+    attributions?: unknown;
   };
+  const objet = (v: unknown) =>
+    (v && typeof v === 'object' && !Array.isArray(v) ? v : {}) as Record<
+      string,
+      unknown
+    >;
+  const rolesPerso: NonNullable<ConfigDroits['rolesPerso']> = {};
+  for (const [code, v] of Object.entries(objet(b.rolesPerso))) {
+    const r = objet(v);
+    const libelle = typeof r.libelle === 'string' ? r.libelle.trim() : '';
+    if (!CODE_PERSO.test(code)) continue;
+    if (!libelle || libelle.length > 60)
+      throw new BadRequestException(
+        'Nom de rôle vide ou trop long (60 caractères au plus).',
+      );
+    if (
+      !ROLES.includes(r.base as Role) ||
+      BASES_INTERDITES.includes(r.base as Role)
+    )
+      throw new BadRequestException(
+        `Rôle de départ non permis pour « ${libelle} ».`,
+      );
+    rolesPerso[code] = { libelle, base: r.base as Role };
+  }
+  const libelles = Object.values(rolesPerso).map((r) =>
+    r.libelle.toLowerCase(),
+  );
+  if (new Set(libelles).size !== libelles.length)
+    throw new BadRequestException('Deux rôles portent le même nom.');
+  const attributions: Record<string, string> = {};
+  for (const [id, code] of Object.entries(objet(b.attributions)))
+    if (UUID.test(id) && typeof code === 'string' && rolesPerso[code])
+      attributions[id] = code;
   const roles: ConfigDroits['roles'] = {};
   for (const [r, v] of Object.entries(
     (b.roles && typeof b.roles === 'object' ? b.roles : {}) as Record<
@@ -141,10 +188,11 @@ export function validerDroits(brut: unknown): ConfigDroits {
       unknown
     >,
   )) {
-    if (!ROLES.includes(r as Role) || ROLES_LIBRES.includes(r as Role))
-      continue;
+    const systeme =
+      ROLES.includes(r as Role) && !ROLES_LIBRES.includes(r as Role);
+    if (!systeme && !rolesPerso[r]) continue;
     const n = niveaux(v);
-    if (Object.keys(n).length) roles[r as Role] = n;
+    if (Object.keys(n).length) roles[r] = n;
   }
   const utilisateurs: ConfigDroits['utilisateurs'] = {};
   for (const [id, v] of Object.entries(
@@ -156,16 +204,30 @@ export function validerDroits(brut: unknown): ConfigDroits {
     const n = niveaux(v);
     if (Object.keys(n).length) utilisateurs[id] = n;
   }
-  return { roles, utilisateurs };
+  return { roles, utilisateurs, rolesPerso, attributions };
 }
 
-/** Réglages qui valent pour ce compte : ceux de son rôle, puis les siens par-dessus. */
+/**
+ * Réglages qui valent pour ce compte : ceux de son rôle, puis ceux de son rôle personnalisé, puis
+ * les siens par-dessus.
+ */
 export function droitsDe(
   c: ConfigDroits,
   u: { id: string; role: Role },
 ): Record<string, Niveau> {
   if (ROLES_LIBRES.includes(u.role)) return {};
-  return { ...(c.roles[u.role] ?? {}), ...(c.utilisateurs[u.id] ?? {}) };
+  const perso = c.attributions?.[u.id];
+  return {
+    ...(c.roles[u.role] ?? {}),
+    ...(perso && c.rolesPerso?.[perso] ? (c.roles[perso] ?? {}) : {}),
+    ...(c.utilisateurs[u.id] ?? {}),
+  };
+}
+
+/** Nom du rôle personnalisé d'un compte (affiché à la place de son rôle), sinon null. */
+export function rolePersoDe(c: ConfigDroits, id: string): string | null {
+  const code = c.attributions?.[id];
+  return (code && c.rolesPerso?.[code]?.libelle) || null;
 }
 
 /** Rubriques propriétaires d'une adresse du serveur (la correspondance la plus précise). */

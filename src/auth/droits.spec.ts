@@ -1,4 +1,10 @@
-import { decider, droitsDe, rubriquesDe, validerDroits } from './droits';
+import {
+  decider,
+  droitsDe,
+  rolePersoDe,
+  rubriquesDe,
+  validerDroits,
+} from './droits';
 
 describe('Droits par rubrique', () => {
   it('rattache une adresse à la rubrique la plus précise', () => {
@@ -97,5 +103,48 @@ describe('Droits par rubrique', () => {
     expect(
       validerDroits({ roles: { AGENT: { '/nimporte': 'LECTURE' } } }).roles,
     ).toEqual({});
+  });
+
+  it('rôle personnalisé : ses rubriques par-dessus son rôle de départ, la personne par-dessus', () => {
+    const id = '33333333-3333-3333-3333-333333333333';
+    const c = validerDroits({
+      roles: {
+        AGENT: { '/lots': 'MASQUE' },
+        PERSO_SECRETARIAT: { '/lots': 'LECTURE', '/candidats': 'MODIFICATION' },
+      },
+      rolesPerso: {
+        PERSO_SECRETARIAT: { libelle: 'Secrétariat', base: 'AGENT' },
+      },
+      attributions: {
+        [id]: 'PERSO_SECRETARIAT',
+        [id.replace(/3/g, '4')]: 'PERSO_INCONNU',
+      },
+      utilisateurs: { [id]: { '/candidats': 'LECTURE' } },
+    });
+    expect(Object.keys(c.attributions ?? {})).toEqual([id]);
+    expect(droitsDe(c, { id, role: 'AGENT' })).toEqual({
+      '/lots': 'LECTURE',
+      '/candidats': 'LECTURE',
+    });
+    expect(rolePersoDe(c, id)).toBe('Secrétariat');
+    // Sans attribution : seulement le rôle du système
+    expect(droitsDe(c, { id: id.replace(/3/g, '5'), role: 'AGENT' })).toEqual({
+      '/lots': 'MASQUE',
+    });
+  });
+
+  it('refuse un rôle personnalisé parti du DG, de l’administrateur ou d’une structure', () => {
+    for (const base of ['DG', 'ADMIN', 'STRUCTURE'])
+      expect(() =>
+        validerDroits({ rolesPerso: { PERSO_X: { libelle: 'X', base } } }),
+      ).toThrow();
+    expect(() =>
+      validerDroits({
+        rolesPerso: {
+          PERSO_A: { libelle: 'Même', base: 'AGENT' },
+          PERSO_B: { libelle: 'même', base: 'AGENT' },
+        },
+      }),
+    ).toThrow();
   });
 });

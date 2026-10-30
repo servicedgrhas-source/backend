@@ -14,6 +14,7 @@ import type { Role } from '../entities';
 import {
   decider,
   droitsDe,
+  rolePersoDe,
   type Niveau,
   validerDroits,
   type ConfigDroits,
@@ -35,6 +36,8 @@ export interface UtilisateurConnecte {
   aCode?: boolean;
   /** Rubriques réglées par le DG pour ce compte (rôle puis personne) : le menu en tient compte. */
   droits?: Record<string, Niveau>;
+  /** Nom du rôle personnalisé donné par le DG (« Secrétariat DRSC »), sinon absent. */
+  rolePerso?: string | null;
 }
 
 const CLE_PUBLIC = 'public';
@@ -112,8 +115,10 @@ export class AuthGuard implements CanActivate {
     if (!jeton) throw new UnauthorizedException('Authentification requise');
     // Le compte est relu en base : désactivation, rôle et sessions fermées valent tout de suite
     req.user = await this.sessions.profilDuJeton(jeton);
-    const droits = droitsDe(this.config(), req.user);
+    const config = this.config();
+    const droits = droitsDe(config, req.user);
     req.user.droits = droits;
+    req.user.rolePerso = rolePersoDe(config, req.user.id);
 
     // Droits par rubrique : lecture seule, rubrique fermée, ou rubrique ouverte en plus du rôle
     const chemin = (req.path ?? '').replace(/^\/api(?=\/|$)/, '');
