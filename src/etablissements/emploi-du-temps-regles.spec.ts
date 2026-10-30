@@ -8,6 +8,13 @@ import {
 const creneaux = lireCreneaux(
   '07:30-08:25, 08:25-09:20, 09:20-10:15, 10:30-11:25, 11:25-12:20, 15:00-15:55, 15:55-16:50, 16:50-17:45',
 );
+/** Une plage au créneau n° i de l'école (ses heures). */
+const pl = (classeId: number, jour: number, i: number) => ({
+  classeId,
+  jour,
+  debut: creneaux[i].debut,
+  fin: creneaux[i].fin,
+});
 const programme = new Map([
   [
     '6EME',
@@ -229,12 +236,12 @@ describe('Emploi du temps (DG, 24/10/2026)', () => {
     // Prof 101 : la 6ème 2 le lundi aux deux premiers créneaux et le mardi au 4e, puis la 6ème 1
     // le jeudi au 1er ; chaque classe a 5 h de maths au programme
     const plages101 = [
-      { classeId: 2, jour: 1, creneau: 0 },
-      { classeId: 2, jour: 1, creneau: 1 },
-      { classeId: 2, jour: 2, creneau: 3 },
-      { classeId: 2, jour: 3, creneau: 0 },
-      { classeId: 2, jour: 5, creneau: 2 },
-      { classeId: 1, jour: 4, creneau: 0 },
+      { ...pl(2, 1, 0), creneau: 0 },
+      { ...pl(2, 1, 1), creneau: 1 },
+      { ...pl(2, 2, 3), creneau: 3 },
+      { ...pl(2, 3, 0), creneau: 0 },
+      { ...pl(2, 5, 2), creneau: 2 },
+      { ...pl(1, 4, 0), creneau: 0 },
     ];
     const x = genererEmploiDuTemps({
       ...base,
@@ -306,11 +313,11 @@ describe('Emploi du temps (DG, 24/10/2026)', () => {
         enseignants: [
           {
             ...prof(101, 'MATH'),
-            plages: [{ classeId: 1, jour: 1, creneau: 0 }],
+            plages: [pl(1, 1, 0)],
           },
           {
             ...prof(100, 'FR'),
-            plages: [{ classeId: 1, jour: 1, creneau: 0 }],
+            plages: [pl(1, 1, 0)],
           },
         ],
       });
@@ -328,15 +335,11 @@ describe('Emploi du temps (DG, 24/10/2026)', () => {
         enseignants: [
           {
             ...prof(103, 'ANG'),
-            plages: [0, 1, 2, 3].map((creneau) => ({
-              classeId: 1,
-              jour: 2,
-              creneau,
-            })),
+            plages: [0, 1, 2, 3].map((i) => pl(1, 2, i)),
           },
           {
             ...prof(104, 'FR'),
-            plages: [{ classeId: 2, jour: 1, creneau: -1 }],
+            plages: [{ ...pl(2, 1, 0), jour: 7 }],
           },
         ],
       });
@@ -347,9 +350,153 @@ describe('Emploi du temps (DG, 24/10/2026)', () => {
             /4 h saisies .* pour 3 h au programme/.test(n.raison),
         ),
       ).toBe(true);
+      expect(y.nonPlaces.some((n) => /un jour sans cours/.test(n.raison))).toBe(
+        true,
+      );
+    });
+  });
+
+  describe('plages à leurs propres heures (DG, 30/10/2026)', () => {
+    const classes = [
+      { id: 1, nom: '6ème 1', niveau: '6EME', salleId: null },
+      { id: 2, nom: '6ème 2', niveau: '6EME', salleId: null },
+    ];
+    const base = {
+      classes,
+      programme,
+      libelles: new Map([
+        ['FR', 'Français'],
+        ['MATH', 'Mathématiques'],
+        ['ANG', 'Anglais'],
+      ]),
+      jours: [1, 2, 3, 4, 5],
+      creneaux,
+      heuresEnseignant: 20,
+    };
+    const prof = (id: number, matiere: string): EnseignantEdt => ({
+      id,
+      nom: `Prof ${id}`,
+      matiere,
+      horaire: null,
+    });
+
+    it('une plage de 07:00 à 08:00 garde ses heures et bloque le créneau 07:30-08:25 pour la classe et pour lui', () => {
+      const y = genererEmploiDuTemps({
+        ...base,
+        enseignants: [
+          {
+            ...prof(1, 'MATH'),
+            plages: [{ classeId: 1, jour: 1, debut: '07:00', fin: '08:00' }],
+          },
+          prof(2, 'FR'),
+          prof(3, 'ANG'),
+          prof(4, 'MATH'),
+        ],
+      });
+      const p = y.seances.find((x) => x.agentId === 1)!;
+      expect(p).toMatchObject({
+        jour: 1,
+        creneau: 0,
+        debut: '07:00',
+        fin: '08:00',
+        fixe: true,
+      });
+      // Rien d'autre pour la 6ème 1 le lundi au 1er créneau
+      expect(
+        y.seances.filter(
+          (x) => x.classeId === 1 && x.jour === 1 && x.creneau === 0,
+        ),
+      ).toHaveLength(1);
+    });
+
+    it('une plage de 07:30 à 09:20 compte 2 h et occupe les deux créneaux', () => {
+      const y = genererEmploiDuTemps({
+        ...base,
+        enseignants: [
+          {
+            ...prof(1, 'MATH'),
+            plages: [{ classeId: 1, jour: 2, debut: '07:30', fin: '09:20' }],
+          },
+          prof(2, 'FR'),
+          prof(3, 'ANG'),
+        ],
+      });
+      const p = y.seances.find((x) => x.agentId === 1)!;
+      expect(p.heures).toBe(2);
+      expect(
+        y.seances.filter(
+          (x) => x.classeId === 1 && x.jour === 2 && [0, 1].includes(x.creneau),
+        ),
+      ).toHaveLength(1);
+      expect(
+        y.nonPlaces.some(
+          (n) =>
+            n.classe === '6ème 1' &&
+            n.matiere === 'MATH' &&
+            n.heures === 3 &&
+            /complétez ses plages/.test(n.raison),
+        ),
+      ).toBe(true);
+    });
+
+    it('deux enseignants dans la même classe, 07:00-08:00 et 07:30-08:30 : le chevauchement est signalé avec les heures', () => {
+      const y = genererEmploiDuTemps({
+        ...base,
+        enseignants: [
+          {
+            ...prof(1, 'MATH'),
+            plages: [{ classeId: 1, jour: 1, debut: '07:00', fin: '08:00' }],
+          },
+          {
+            ...prof(2, 'FR'),
+            plages: [{ classeId: 1, jour: 1, debut: '07:30', fin: '08:30' }],
+          },
+        ],
+      });
+      expect(y.seances.filter((x) => x.fixe)).toHaveLength(1);
       expect(
         y.nonPlaces.some((n) =>
-          /hors des jours ou des créneaux/.test(n.raison),
+          /a déjà cours avec Prof 1 de 07:00 à 08:00 : les heures se chevauchent/.test(
+            n.raison,
+          ),
+        ),
+      ).toBe(true);
+    });
+
+    it('à la suite sans chevauchement (07:00-08:00 puis 08:00-09:00) : les deux sont placées', () => {
+      const y = genererEmploiDuTemps({
+        ...base,
+        enseignants: [
+          {
+            ...prof(1, 'MATH'),
+            plages: [{ classeId: 1, jour: 1, debut: '07:00', fin: '08:00' }],
+          },
+          {
+            ...prof(2, 'FR'),
+            plages: [{ classeId: 1, jour: 1, debut: '08:00', fin: '09:00' }],
+          },
+        ],
+      });
+      expect(y.seances.filter((x) => x.fixe)).toHaveLength(2);
+    });
+
+    it('le même enseignant dans deux classes à des heures qui se chevauchent : signalé', () => {
+      const y = genererEmploiDuTemps({
+        ...base,
+        enseignants: [
+          {
+            ...prof(1, 'MATH'),
+            plages: [
+              { classeId: 1, jour: 3, debut: '10:30', fin: '11:25' },
+              { classeId: 2, jour: 3, debut: '11:00', fin: '12:00' },
+            ],
+          },
+        ],
+      });
+      expect(y.seances.filter((x) => x.fixe)).toHaveLength(1);
+      expect(
+        y.nonPlaces.some((n) =>
+          /il a déjà cours en 6ème 1 de 10:30 à 11:25/.test(n.raison),
         ),
       ).toBe(true);
     });

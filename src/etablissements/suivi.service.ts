@@ -96,6 +96,12 @@ export const DECISIONS: Record<string, string[]> = {
 export const MOYENNE = 2.5;
 
 /**
+ * L'appréciation d'une évaluation lue sur sa note globale (et non sur le texte enregistré) : 2,5,
+ * la moyenne, est « Bon » (DG, 30/10/2026 : des évaluations à 2,5 étaient restées « Faible »).
+ */
+const APPRECIATION_SQL = `CASE WHEN e.globale >= 5 THEN 'Excellent' WHEN e.globale >= 4 THEN 'Très bon' WHEN e.globale >= ${MOYENNE} THEN 'Bon' WHEN e.globale >= 2 THEN 'Faible' ELSE 'Très faible' END`;
+
+/**
  * Appréciation de la note globale : 2,5 (la moyenne) et 3,5 restent « bon », 4 et 4,5 « très bon »,
  * 5 « excellent » ; 2 « faible », 1 et 1,5 « très faible ».
  */
@@ -166,6 +172,20 @@ export class SuiviService implements OnApplicationBootstrap {
    * l'année de leur date (« 2026 »), sauf si l'agent a déjà une évaluation cette année-là.
    */
   async onApplicationBootstrap() {
+    // Appréciations enregistrées avec l'ancien seuil (3) : remises d'accord avec la note globale
+    try {
+      const r = await this.evaluations.query<unknown[]>(
+        `UPDATE evaluation_agent e SET appreciation = ${APPRECIATION_SQL}
+          WHERE e.appreciation IS DISTINCT FROM ${APPRECIATION_SQL} RETURNING e.id`,
+      );
+      const n = Array.isArray(r[0]) ? r[0].length : r.length;
+      if (n)
+        this.log.log(
+          `${n} appréciation(s) remise(s) d’accord avec la note globale`,
+        );
+    } catch (e) {
+      this.log.error(`Appréciations : ${(e as Error).message}`);
+    }
     try {
       const r = await this.evaluations.query<unknown[]>(
         `UPDATE evaluation_agent e SET annee = to_char(e.date, 'YYYY')
@@ -225,7 +245,11 @@ export class SuiviService implements OnApplicationBootstrap {
       if (vus.has(e.structureId)) continue;
       vus.add(e.structureId);
       for (const x of e.seances as unknown as Seance[]) {
-        const c = e.creneaux[x.creneau];
+        // Une plage saisie à ses propres heures (07:00-08:00) garde ses heures, sinon celles du créneau
+        const c =
+          x.debut && x.fin
+            ? { debut: x.debut, fin: x.fin }
+            : e.creneaux[x.creneau];
         if (!x.agentId || !c) continue;
         const m = res.get(x.agentId) ?? {};
         const j = String(x.jour);
@@ -550,17 +574,28 @@ export class SuiviService implements OnApplicationBootstrap {
   }
 
   /**
-   * Rapport de présence d'une période : par structure (taux de présence, absences) et les
-   * semaines que les chefs n'ont pas validées.
+   * Rapport de présence d'une période : par structure (agents en poste, journées attendues et
+   * pointées, présence, absences) et les semaines que les chefs n'ont pas validées.
+   * Revu le 30/10/2026 (DG : « relève les incohérences ») :
+   * - les agents comptés sont ceux en poste, les seuls que l'on pointe ;
+   * - le taux de pointage (journées pointées sur journées attendues) dit si le chef pointe vraiment :
+   *   un taux de présence de 100 % sur un seul jour pointé ne veut rien dire seul ;
+   * - les semaines dues commencent à la mise en service de la présence (premier pointage du
+   *   système), pas avant ; la fin de période ne dépasse pas aujourd'hui (heure de Brazzaville).
    */
   async rapport(
     u: UtilisateurConnecte,
     f: { departement?: number; structure?: number; du?: string; au?: string },
   ) {
     const p = await this.rec.perimetre(u);
-    const au = f.au && DATE.test(f.au) ? f.au : aujourdhui();
+    const auj = aujourdhui();
+    const au = f.au && DATE.test(f.au) && f.au <= auj ? f.au : auj;
     const du = f.du && DATE.test(f.du) ? f.du : plusJours(au, -27);
     if (du > au) throw new BadRequestException('La période est inversée.');
+    if (plusJours(du, 186) < au)
+      throw new BadRequestException(
+        'Six mois au plus : choisissez une période plus courte.',
+      );
     const conds = ['TRUE'];
     const params: unknown[] = [du, au];
     const ajouter = (sql: string, v: unknown) => {
@@ -601,6 +636,56 @@ export class SuiviService implements OnApplicationBootstrap {
         GROUP BY s.id, d.nom ORDER BY s.nom`,
       params,
     );
+    // Mise en service de la présence : le premier pointage enregistré dans le système
+    const [{ lancement }] = await this.presences.query<
+      { lancement: string | null }[]
+    >(`SELECT to_char(min(date), 'YYYY-MM-DD') AS lancement FROM presence`);
+    // Agents en poste et journées attendues de chaque structure (emploi du temps, horaire ou défaut),
+    // à partir de la mise en service et de la fiche de l'agent
+    const ids = structures.map((s) => s.id);
+    const parStructure = await this.etab.agentsDe(ids);
+    const enPoste = [...parStructure.values()].flat().filter((a) => a.enPoste);
+    const idsAgents = enPoste.map((a) => a.id);
+    const r = this.reglages();
+    const [horaires, coursDe, crees] = await Promise.all([
+      idsAgents.length
+        ? this.horaires.find({ where: { agentId: In(idsAgents) } })
+        : Promise.resolve([] as HoraireAgent[]),
+      this.coursParAgent(ids),
+      idsAgents.length
+        ? this.presences.query<{ id: number; d: string }[]>(
+            `SELECT id, to_char("creeLe", 'YYYY-MM-DD') AS d FROM agent_recense WHERE id = ANY($1)`,
+            [idsAgents],
+          )
+        : Promise.resolve([] as { id: number; d: string }[]),
+    ]);
+    const hDe = new Map(horaires.map((h) => [h.agentId, h.jours]));
+    const creeLe = new Map(crees.map((x) => [x.id, x.d]));
+    const jours: { d: string; j: number }[] = [];
+    if (lancement)
+      for (
+        let d = du > lancement ? du : lancement;
+        d <= au;
+        d = plusJours(d, 1)
+      ) {
+        const j = ((new Date(`${d}T00:00:00Z`).getUTCDay() + 6) % 7) + 1;
+        if (j <= 6) jours.push({ d, j });
+      }
+    const attendues = new Map<number, { agents: number; journees: number }>();
+    for (const [sid, l] of parStructure) {
+      let journees = 0;
+      const poste = l.filter((a) => a.enPoste);
+      for (const a of poste) {
+        const att = joursAttendus(
+          horaireEffectif(hDe.get(a.id), coursDe.get(a.id), r).jours,
+        );
+        const depuis = creeLe.get(a.id) ?? '';
+        journees += jours.filter(
+          (x) => x.d >= depuis && att.includes(x.j),
+        ).length;
+      }
+      attendues.set(sid, { agents: poste.length, journees });
+    }
     // Semaines entières de la période (jusqu'à la dernière semaine terminée ou en cours)
     const lundis: string[] = [];
     for (let l = lundiDe(du); l <= au; l = plusJours(l, 7)) lundis.push(l);
@@ -612,12 +697,23 @@ export class SuiviService implements OnApplicationBootstrap {
         )
       : [];
     const vu = new Set(validees.map((v) => `${v.structureId}|${v.lundi}`));
-    // Une semaine est due une fois terminée (à partir du lundi suivant)
-    const dues = lundis.filter((l) => plusJours(l, 7) <= aujourdhui());
+    // Une semaine est due une fois terminée (à partir du lundi suivant), depuis la mise en service
+    const dues = lancement
+      ? lundis.filter(
+          (l) => plusJours(l, 7) <= auj && plusJours(l, 5) >= lancement,
+        )
+      : [];
     const lignes = structures.map((s) => {
       const nonValidees = dues.filter((l) => !vu.has(`${s.id}|${l}`));
+      const att = attendues.get(s.id) ?? { agents: 0, journees: 0 };
       return {
         ...s,
+        agents: att.agents,
+        journeesAttendues: att.journees,
+        // Journées pointées sur journées attendues (plafonné : un jour hors horaire peut être pointé)
+        tauxPointage: att.journees
+          ? Math.min(100, Math.round((100 * s.pointages) / att.journees))
+          : null,
         taux: s.pointages
           ? Math.round((100 * (s.presents + s.retards)) / s.pointages)
           : null,
@@ -647,19 +743,28 @@ export class SuiviService implements OnApplicationBootstrap {
       (t, l) => ({
         pointages: t.pointages + l.pointages,
         presents: t.presents + l.presents + l.retards,
+        attendues: t.attendues + l.journeesAttendues,
       }),
-      { pointages: 0, presents: 0 },
+      { pointages: 0, presents: 0, attendues: 0 },
     );
     return {
       du,
       au,
       semainesDues: dues,
+      lancement,
       taux: tot.pointages
         ? Math.round((100 * tot.presents) / tot.pointages)
         : null,
+      journeesAttendues: tot.attendues,
+      journeesPointees: tot.pointages,
+      tauxPointage: tot.attendues
+        ? Math.min(100, Math.round((100 * tot.pointages) / tot.attendues))
+        : null,
+      // Les structures qui pointent le moins d'abord, puis celles qui ont le plus de semaines en retard
       structures: lignes.sort(
         (a, b) =>
           b.semainesNonValidees.length - a.semainesNonValidees.length ||
+          (a.tauxPointage ?? -1) - (b.tauxPointage ?? -1) ||
           (a.taux ?? 101) - (b.taux ?? 101),
       ),
       sansPointage: lignes.filter((l) => l.semainesNonValidees.length).length,
@@ -1233,6 +1338,8 @@ export class SuiviService implements OnApplicationBootstrap {
       departement?: number;
       q?: string;
       etat?: string;
+      /** Une barre de la répartition : « Faible », « Bon »… (validées seulement). */
+      appreciation?: string;
       page?: number;
     },
   ) {
@@ -1279,11 +1386,11 @@ export class SuiviService implements OnApplicationBootstrap {
               (count(e.id) - count(e."valideeLe"))::int AS brouillons,
               round((avg(e."competenceProfessionnelle") FILTER (WHERE ${V}))::numeric, 1)::float AS "moyennePro",
               round((avg(e."competenceSociale") FILTER (WHERE ${V}))::numeric, 1)::float AS "moyenneSociale",
-              count(*) FILTER (WHERE ${V} AND e.appreciation = 'Très faible')::int AS tf,
-              count(*) FILTER (WHERE ${V} AND e.appreciation = 'Faible')::int AS f,
-              count(*) FILTER (WHERE ${V} AND e.appreciation = 'Bon')::int AS b,
-              count(*) FILTER (WHERE ${V} AND e.appreciation = 'Très bon')::int AS tb,
-              count(*) FILTER (WHERE ${V} AND e.appreciation = 'Excellent')::int AS ex,
+              count(*) FILTER (WHERE ${V} AND ${APPRECIATION_SQL} = 'Très faible')::int AS tf,
+              count(*) FILTER (WHERE ${V} AND ${APPRECIATION_SQL} = 'Faible')::int AS f,
+              count(*) FILTER (WHERE ${V} AND ${APPRECIATION_SQL} = 'Bon')::int AS b,
+              count(*) FILTER (WHERE ${V} AND ${APPRECIATION_SQL} = 'Très bon')::int AS tb,
+              count(*) FILTER (WHERE ${V} AND ${APPRECIATION_SQL} = 'Excellent')::int AS ex,
               count(*) FILTER (WHERE ${V} AND e."competenceProfessionnelle" >= ${MOYENNE} AND e."competenceSociale" < ${MOYENNE})::int AS relations,
               count(*) FILTER (WHERE ${V} AND e."competenceProfessionnelle" < ${MOYENNE} AND e."competenceSociale" >= ${MOYENNE})::int AS metier,
               count(*) FILTER (WHERE ${V} AND e.globale < ${MOYENNE})::int AS "aSuivre"
@@ -1291,7 +1398,7 @@ export class SuiviService implements OnApplicationBootstrap {
       params,
     );
     const filtreEtat =
-      f.etat === 'NON_EVALUE'
+      (f.etat === 'NON_EVALUE'
         ? ' AND e.id IS NULL'
         : f.etat === 'BROUILLON'
           ? ` AND e.id IS NOT NULL AND NOT (${V})`
@@ -1299,7 +1406,11 @@ export class SuiviService implements OnApplicationBootstrap {
             ? ` AND ${V}`
             : f.etat === 'A_SUIVRE'
               ? ` AND ${V} AND e.globale < ${MOYENNE}`
-              : '';
+              : '') +
+      // Barre de la répartition cliquée : les agents de cette appréciation (valeur connue seulement)
+      (APPRECIATIONS.includes(f.appreciation ?? '') && f.appreciation
+        ? ` AND ${V} AND ${APPRECIATION_SQL} = '${f.appreciation.replace(/'/g, "''")}'`
+        : '');
     const page = Math.max(1, f.page ?? 1);
     const lignes = await this.evaluations.query<
       {

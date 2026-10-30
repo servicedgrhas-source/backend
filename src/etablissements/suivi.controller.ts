@@ -140,6 +140,7 @@ export class SuiviController {
       departement: nombre(q.departement),
       q: q.q,
       etat: q.etat,
+      appreciation: q.appreciation,
       page: nombre(q.page),
     });
   }

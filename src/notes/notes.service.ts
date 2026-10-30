@@ -680,7 +680,7 @@ export class NotesService {
               ? `${entierVersRomain(i)}- DEPARTEMENT SCOLAIRE : ${normaliser(dep.nom)}`
               : null,
           sousTitre: c
-            ? `${String(k + 1).padStart(2, '0')}- Circonscription scolaire de ${c}`
+            ? `${String(k + 1).padStart(2, '0')}- Circonscription scolaire : ${c}`
             : null,
           lignes: items
             .filter((x) => (x.circonscription ?? '') === c)

@@ -13,6 +13,7 @@ import {
 import {
   genererEmploiDuTemps,
   lireCreneaux,
+  seChevauchent,
   type ChargeEnseignant,
   type EnseignantEdt,
   type NonPlace,
@@ -283,10 +284,12 @@ export class EmploisDuTempsService {
   }
 
   /**
-   * Plages horaires d'un enseignant (DG, 28/10/2026) : son emploi du temps tel que l'école le fait,
-   * créneau par créneau (le lundi 07:30-08:25 en 6ème 1, le mardi 10:30-11:25 en 5ème 2…), dans sa
-   * matière. Une classe ne peut pas avoir deux enseignants sur le même créneau. Ses jours de
-   * présence (Présence) suivent ses plages. L'emploi du temps est regénéré tout de suite.
+   * Plages horaires d'un enseignant (DG, 28 et 30/10/2026) : son emploi du temps tel que l'école le
+   * fait (le lundi 07:30-08:25 en 6ème 1…), aux heures des créneaux de l'école ou à ses propres heures
+   * (le lundi 07:00-08:00 en 5ème 2). Une classe ne peut pas avoir deux enseignants à des heures qui se
+   * chevauchent (07:00-08:00 et 07:30-08:30 le même jour : refusé, avec les heures du collègue), ni
+   * lui deux classes à la fois. Ses jours de présence suivent ses plages. L'emploi du temps est
+   * regénéré tout de suite.
    */
   async plagesEnseignant(
     u: UtilisateurConnecte,
@@ -315,13 +318,19 @@ export class EmploisDuTempsService {
       ).map((c) => [c.id, c]),
     );
     const nomJour = (j: number) => NOMS_JOURS_EDT[j] ?? `jour ${j}`;
+    const HEURE = /^([01]\d|2[0-3]):[0-5]\d$/;
+    const min = (h: string) => Number(h.slice(0, 2)) * 60 + Number(h.slice(3));
     const propres: PlageEnseignant[] = [];
-    const vues = new Set<string>();
     for (const x of Array.isArray(plages) ? plages : []) {
       const p = x as Partial<PlageEnseignant>;
       const classe = classes.get(Number(p.classeId));
       const jour = Number(p.jour);
-      const creneau = r.creneaux.find((c) => c.debut === p.debut);
+      const debut = String(p.debut ?? '').trim();
+      // Sans heure de fin : celle du créneau qui commence à cette heure
+      const fin =
+        String(p.fin ?? '').trim() ||
+        r.creneaux.find((c) => c.debut === debut)?.fin ||
+        '';
       if (!classe)
         throw new BadRequestException(
           `Une plage porte sur une classe qui n’est pas ouverte en ${a} dans cette école.`,
@@ -330,22 +339,33 @@ export class EmploisDuTempsService {
         throw new BadRequestException(
           `${nomJour(jour)} n’est pas un jour de cours de l’école.`,
         );
-      if (!creneau)
+      if (!HEURE.test(debut) || !HEURE.test(fin))
         throw new BadRequestException(
-          `${nomJour(jour)} : ${p.debut ?? '?'} n’est pas un créneau de l’école (Réglages de l’école).`,
+          `${nomJour(jour)}, ${classe.nom} : écrivez l’heure de début et l’heure de fin comme 07:30 et 08:25.`,
         );
-      const k = `${jour}:${creneau.debut}`;
-      if (vues.has(k))
+      const duree = min(fin) - min(debut);
+      if (duree <= 0)
         throw new BadRequestException(
-          `${nomJour(jour)} ${creneau.debut}-${creneau.fin} : deux classes au même moment pour lui.`,
+          `${nomJour(jour)} ${debut}-${fin} (${classe.nom}) : la fin doit être après le début.`,
         );
-      vues.add(k);
-      propres.push({
-        classeId: classe.id,
-        jour,
-        debut: creneau.debut,
-        fin: creneau.fin,
-      });
+      if (duree < 15 || duree > 240)
+        throw new BadRequestException(
+          `${nomJour(jour)} ${debut}-${fin} (${classe.nom}) : un cours dure de 15 minutes à 4 heures.`,
+        );
+      if (debut < '06:00' || fin > '20:00')
+        throw new BadRequestException(
+          `${nomJour(jour)} ${debut}-${fin} (${classe.nom}) : les cours ont lieu entre 06:00 et 20:00.`,
+        );
+      const plage = { classeId: classe.id, jour, debut, fin };
+      // Lui : deux classes à des heures qui se chevauchent
+      const lui = propres.find(
+        (q) => q.jour === jour && seChevauchent(q, plage),
+      );
+      if (lui)
+        throw new BadRequestException(
+          `${nomJour(jour)} : ${debut}-${fin} (${classe.nom}) chevauche sa plage ${lui.debut}-${lui.fin} (${classes.get(lui.classeId)?.nom ?? 'classe'}) : il ne peut pas être dans deux cours à la fois.`,
+        );
+      propres.push(plage);
     }
     // Une classe n'a qu'un enseignant à la fois : les plages des collègues sont vérifiées
     const collegues = await this.horaires.find({
@@ -363,11 +383,11 @@ export class EmploisDuTempsService {
           (q) =>
             q.classeId === p.classeId &&
             q.jour === p.jour &&
-            q.debut === p.debut,
+            seChevauchent(q, p),
         );
         if (autre)
           throw new BadRequestException(
-            `${nomJour(p.jour)} ${p.debut}-${p.fin} : la ${classes.get(p.classeId)!.nom} a déjà cours avec ${agents.find((x) => x.id === h.agentId)?.nomComplet ?? 'un autre enseignant'}.`,
+            `${nomJour(p.jour)} ${p.debut}-${p.fin} : la ${classes.get(p.classeId)!.nom} a déjà cours avec ${agents.find((x) => x.id === h.agentId)?.nomComplet ?? 'un autre enseignant'} de ${autre.debut} à ${autre.fin} : les heures se chevauchent.`,
           );
       }
     // Ses jours de présence suivent ses plages : chaque jour où il a cours, de la première à la
@@ -428,9 +448,7 @@ export class EmploisDuTempsService {
       throw new BadRequestException(
         `Aucune classe ouverte en ${a} : ouvrez d’abord les classes de l’école.`,
       );
-    // Une plage se repère par l'heure de début de son créneau ; -1 : plus dans les réglages
-    const indice = (debut: string) =>
-      r.creneaux.findIndex((c) => c.debut === debut);
+    // Les plages à leurs heures réelles : le moteur les place sur les créneaux qu'elles touchent
     const enseignants: EnseignantEdt[] = agents.map((x) => ({
       id: x.id,
       nom: x.nomComplet,
@@ -439,7 +457,8 @@ export class EmploisDuTempsService {
       plages: (horaires.get(x.id)?.plages ?? []).map((p) => ({
         classeId: p.classeId,
         jour: p.jour,
-        creneau: indice(p.debut),
+        debut: p.debut,
+        fin: p.fin,
       })),
     }));
     const res = genererEmploiDuTemps({

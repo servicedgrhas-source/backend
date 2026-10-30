@@ -2,10 +2,13 @@
  * Génération de l'emploi du temps d'un collège ou d'un lycée (DG, 24/10/2026), sans base de
  * données pour être testée seule.
  *
- * 0. Plages horaires (DG, 28/10/2026) : ce que l'école a saisi pour un enseignant (le lundi
- *    07:30-08:25 en 6ème 1…) est placé tel quel, dans sa matière. Ces heures comptent dans le
- *    programme de la classe ; un enseignant qui a des plages n'a rien d'autre : son emploi du temps
- *    est celui de l'école. Une plage impossible (classe déjà prise…) est signalée, pas placée.
+ * 0. Plages horaires (DG, 28 et 30/10/2026) : ce que l'école a saisi pour un enseignant (le lundi
+ *    07:30-08:25 en 6ème 1, ou à ses propres heures : 07:00-08:00) est placé tel quel, dans sa
+ *    matière, à ses vraies heures. Une plage occupe tous les créneaux de l'école qu'elle touche (rien
+ *    d'autre n'y est mis pour la classe ni pour lui) et compte autant d'heures que sa durée. Ces
+ *    heures comptent dans le programme de la classe ; un enseignant qui a des plages n'a rien
+ *    d'autre. Une plage qui chevauche, même de quelques minutes, une autre plage de la classe (un
+ *    collègue) ou de l'enseignant est signalée, pas placée.
  * 1. Répartition du reste : chaque classe, pour chaque matière, reçoit un enseignant de la matière
  *    sans plages ; on donne d'abord les plus grosses charges, à l'enseignant le moins chargé, sans
  *    dépasser ses heures de la semaine. Sans enseignant possible, les heures restent « à pourvoir ».
@@ -32,8 +35,8 @@ export interface EnseignantEdt {
   matiere: string | null;
   /** Jours et heures de travail (1 = lundi) ; vide : tous les jours, toute la journée. */
   horaire: Record<string, { debut: string | null; fin: string | null }> | null;
-  /** Plages horaires saisies par l'école (jour 1 = lundi, n° du créneau) ; vide : réparti automatiquement. */
-  plages?: { classeId: number; jour: number; creneau: number }[];
+  /** Plages horaires saisies par l'école (jour 1 = lundi, heures réelles) ; vide : réparti automatiquement. */
+  plages?: { classeId: number; jour: number; debut: string; fin: string }[];
 }
 export interface Seance {
   classeId: number;
@@ -43,9 +46,15 @@ export interface Seance {
   agentId: number | null;
   agent: string | null;
   jour: number;
+  /** Ligne de la grille : le créneau de l'école où la séance commence (le plus couvert). */
   creneau: number;
   /** Plage saisie par l'école (sinon placée par le système). */
   fixe?: boolean;
+  /** Heures réelles d'une plage saisie (07:00-08:00), si elles diffèrent du créneau. */
+  debut?: string;
+  fin?: string;
+  /** Heures de cours que compte la séance (une plage de 07:30 à 09:20 : 2) ; vide : 1. */
+  heures?: number;
 }
 export interface NonPlace {
   classe: string;
@@ -83,6 +92,61 @@ const minutes = (h: string | null | undefined) => {
   const m = /^(\d{2}):(\d{2})$/.exec(h ?? '');
   return m ? Number(m[1]) * 60 + Number(m[2]) : null;
 };
+const hhmm = (n: number) =>
+  `${String(Math.floor(n / 60)).padStart(2, '0')}:${String(n % 60).padStart(2, '0')}`;
+
+/** Deux plages d'un même jour se chevauchent-elles (07:00-08:00 et 07:30-08:30 : oui ; 08:00-09:00 après 07:00-08:00 : non) ? */
+export const seChevauchent = (
+  a: { debut: string; fin: string },
+  b: { debut: string; fin: string },
+) => a.debut < b.fin && b.debut < a.fin;
+
+/** Durée d'une heure de cours de l'école (la durée la plus courante de ses créneaux, 55 min). */
+export function dureeHeure(creneaux: Creneau[]) {
+  const d = creneaux
+    .map((c) => (minutes(c.fin) ?? 0) - (minutes(c.debut) ?? 0))
+    .filter((x) => x > 0)
+    .sort((a, b) => a - b);
+  return d.length ? d[Math.floor(d.length / 2)] : 55;
+}
+
+/**
+ * Où va une plage à ses heures réelles : les créneaux de l'école qu'elle touche (tous occupés), la
+ * ligne de la grille où l'afficher (le créneau qu'elle couvre le plus ; sinon le plus proche), et
+ * les heures de cours qu'elle compte (sa durée en heures de cours de l'école, au moins 1).
+ */
+export function placerPlage(
+  creneaux: Creneau[],
+  p: { debut: string; fin: string },
+) {
+  const d = minutes(p.debut) ?? 0;
+  const f = minutes(p.fin) ?? 0;
+  const recouvre = creneaux.map((c) =>
+    Math.max(
+      0,
+      Math.min(f, minutes(c.fin) ?? 0) - Math.max(d, minutes(c.debut) ?? 0),
+    ),
+  );
+  const couverts = recouvre.flatMap((x, i) => (x > 0 ? [i] : []));
+  const ligne = couverts.length
+    ? couverts.reduce(
+        (m, i) => (recouvre[i] > recouvre[m] ? i : m),
+        couverts[0],
+      )
+    : creneaux.reduce(
+        (m, c, i) =>
+          Math.abs((minutes(c.debut) ?? 0) - d) <
+          Math.abs((minutes(creneaux[m].debut) ?? 0) - d)
+            ? i
+            : m,
+        0,
+      );
+  return {
+    couverts,
+    ligne,
+    heures: Math.max(1, Math.round((f - d) / dureeHeure(creneaux))),
+  };
+}
 /** Un créneau du matin commence avant 13 h. */
 export const estMatin = (c: Creneau) => (minutes(c.debut) ?? 0) < 13 * 60;
 /** « 6ème 1A » : vague A (le matin), « 6ème 1B » : vague B (l'après-midi) ; sans lettre : une seule vague. */
@@ -139,15 +203,21 @@ export function genererEmploiDuTemps(e: {
     jour: number,
     i: number,
     fixe: boolean,
+    /** Plage à ses heures réelles : les créneaux qu'elle touche, et ce qu'elle compte. */
+    plage?: { debut: string; fin: string; couverts: number[]; heures: number },
   ) => {
-    const k = `${jour}:${i}`;
-    occupe.add(`C:${classe.id}:${k}`);
-    if (agent) occupe.add(`A:${agent.id}:${k}`);
-    if (classe.salleId) occupe.add(`S:${classe.salleId}:${k}`);
+    for (const j of plage ? plage.couverts : [i]) {
+      const k = `${jour}:${j}`;
+      occupe.add(`C:${classe.id}:${k}`);
+      if (agent) occupe.add(`A:${agent.id}:${k}`);
+      if (classe.salleId) occupe.add(`S:${classe.salleId}:${k}`);
+    }
+    const n = plage?.heures ?? 1;
     const kj = `${classe.id}:${matiere}:${jour}`;
-    parJour.set(kj, (parJour.get(kj) ?? 0) + 1);
+    parJour.set(kj, (parJour.get(kj) ?? 0) + n);
     const kc = `${classe.id}:${jour}`;
-    chargeJour.set(kc, (chargeJour.get(kc) ?? 0) + 1);
+    chargeJour.set(kc, (chargeJour.get(kc) ?? 0) + n);
+    const c = e.creneaux[i];
     seances.push({
       classeId: classe.id,
       classe: classe.nom,
@@ -158,10 +228,25 @@ export function genererEmploiDuTemps(e: {
       jour,
       creneau: i,
       ...(fixe ? { fixe: true } : {}),
+      // Heures propres de la plage (si elles diffèrent du créneau) et ce qu'elle compte
+      ...(plage && (plage.debut !== c?.debut || plage.fin !== c?.fin)
+        ? { debut: plage.debut, fin: plage.fin }
+        : {}),
+      ...(n !== 1 ? { heures: n } : {}),
     });
   };
-  const quand = (jour: number, i: number) =>
-    `${NOMS_JOURS[jour] ?? `jour ${jour}`} ${e.creneaux[i] ? `${e.creneaux[i].debut}-${e.creneaux[i].fin}` : `(créneau ${i + 1})`}`;
+  const quand = (jour: number, p: { debut: string; fin: string }) =>
+    `${NOMS_JOURS[jour] ?? `jour ${jour}`} ${p.debut}-${p.fin}`;
+  /** Plages déjà placées, à leurs heures réelles : on y cherche les chevauchements. */
+  const placees: {
+    classeId: number;
+    agentId: number;
+    agent: string;
+    classe: string;
+    jour: number;
+    debut: string;
+    fin: string;
+  }[] = [];
 
   // 0. Plages horaires saisies par l'école : placées telles quelles
   const parId = new Map(e.classes.map((c) => [c.id, c]));
@@ -184,41 +269,83 @@ export function genererEmploiDuTemps(e: {
     const matiere = t.matiere;
     for (const p of t.plages) {
       const classe = parId.get(p.classeId);
-      if (!classe || !e.jours.includes(p.jour) || !e.creneaux[p.creneau]) {
+      const d = minutes(p.debut);
+      const f = minutes(p.fin);
+      if (
+        !classe ||
+        !e.jours.includes(p.jour) ||
+        d === null ||
+        f === null ||
+        f <= d ||
+        !e.creneaux.length
+      ) {
         nonPlaces.push({
           classe: classe?.nom ?? '—',
           matiere,
           matiereLibelle: t.nom,
           heures: 1,
-          raison: classe
-            ? `plage du ${quand(p.jour, p.creneau)} hors des jours ou des créneaux de l’école (réglages changés ?) : à saisir à nouveau`
-            : 'plage dans une classe fermée ou d’une autre année : à saisir à nouveau',
+          raison: !classe
+            ? 'plage dans une classe fermée ou d’une autre année : à saisir à nouveau'
+            : !e.jours.includes(p.jour)
+              ? `plage du ${quand(p.jour, p)} un jour sans cours (réglages changés ?) : à saisir à nouveau`
+              : `plage du ${quand(p.jour, p)} aux heures mal écrites : à saisir à nouveau`,
         });
         continue;
       }
-      const k = `${p.jour}:${p.creneau}`;
-      if (occupe.has(`A:${t.id}:${k}`)) continue; // la même plage saisie deux fois
-      if (occupe.has(`C:${classe.id}:${k}`)) {
-        const autre = seances.find(
-          (s) =>
-            s.classeId === classe.id &&
-            s.jour === p.jour &&
-            s.creneau === p.creneau,
-        );
+      // Lui-même : deux plages qui se chevauchent (la même saisie deux fois : ignorée)
+      const lui = placees.find(
+        (x) => x.agentId === t.id && x.jour === p.jour && seChevauchent(x, p),
+      );
+      if (lui) {
+        if (!(
+          lui.classeId === classe.id &&
+          lui.debut === p.debut &&
+          lui.fin === p.fin
+        ))
+          nonPlaces.push({
+            classe: classe.nom,
+            matiere,
+            matiereLibelle: t.nom,
+            heures: 1,
+            raison: `le ${quand(p.jour, p)}, il a déjà cours en ${lui.classe} de ${lui.debut} à ${lui.fin} : les heures se chevauchent, cette plage n’est pas placée`,
+          });
+        continue;
+      }
+      // La classe : un collègue qui y a déjà cours à une heure qui chevauche
+      const autre = placees.find(
+        (x) =>
+          x.classeId === classe.id && x.jour === p.jour && seChevauchent(x, p),
+      );
+      if (autre) {
         nonPlaces.push({
           classe: classe.nom,
           matiere,
           matiereLibelle: t.nom,
           heures: 1,
-          raison: `le ${quand(p.jour, p.creneau)}, la classe a déjà cours avec ${autre?.agent ?? 'un autre enseignant'} : cette plage n’est pas placée`,
+          raison: `le ${quand(p.jour, p)}, la classe a déjà cours avec ${autre.agent} de ${autre.debut} à ${autre.fin} : les heures se chevauchent, cette plage n’est pas placée`,
         });
         continue;
       }
-      occuper(classe, matiere, t, p.jour, p.creneau, true);
-      ch.heures++;
+      const pl = placerPlage(e.creneaux, p);
+      occuper(classe, matiere, t, p.jour, pl.ligne, true, {
+        debut: hhmm(d),
+        fin: hhmm(f),
+        couverts: pl.couverts,
+        heures: pl.heures,
+      });
+      placees.push({
+        classeId: classe.id,
+        agentId: t.id,
+        agent: t.nom,
+        classe: classe.nom,
+        jour: p.jour,
+        debut: hhmm(d),
+        fin: hhmm(f),
+      });
+      ch.heures += pl.heures;
       if (!ch.classes.includes(classe.nom)) ch.classes.push(classe.nom);
       const kf = `${classe.id}|${matiere}`;
-      fixes.set(kf, (fixes.get(kf) ?? 0) + 1);
+      fixes.set(kf, (fixes.get(kf) ?? 0) + pl.heures);
       qui.set(kf, t.nom);
     }
     if (ch.heures > e.heuresEnseignant)
@@ -438,11 +565,13 @@ export function genererEmploiDuTemps(e: {
         raison: `aucun programme (heures par matière) pour le niveau « ${c.niveau} » : la classe n’a aucun cours ; ajoutez-le dans Administration › Référentiels › Programmes, ou corrigez le niveau de la classe`,
       });
   nonPlaces.unshift(...manques);
+  // Dans l'ordre des heures réelles (une plage à 07:00 avant le créneau de 07:30)
+  const heureDe = (x: Seance) => x.debut ?? e.creneaux[x.creneau]?.debut ?? '';
   seances.sort(
     (a, b) =>
       a.classe.localeCompare(b.classe) ||
       a.jour - b.jour ||
-      a.creneau - b.creneau,
+      heureDe(a).localeCompare(heureDe(b)),
   );
   const heuresTotal =
     lots.reduce((s, l) => s + l.heures, 0) +
@@ -454,6 +583,6 @@ export function genererEmploiDuTemps(e: {
       (a, b) => b.heures - a.heures || a.agent.localeCompare(b.agent),
     ),
     heuresTotal,
-    heuresPlacees: seances.length,
+    heuresPlacees: seances.reduce((n, x) => n + (x.heures ?? 1), 0),
   };
 }
