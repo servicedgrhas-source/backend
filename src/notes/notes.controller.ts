@@ -16,8 +16,11 @@ import {
 import { FileInterceptor } from '@nestjs/platform-express';
 import type { Response } from 'express';
 import {
+  ArrayNotEmpty,
+  IsArray,
   IsBoolean,
   IsIn,
+  IsInt,
   IsOptional,
   IsString,
   Matches,
@@ -55,6 +58,14 @@ class IntroductionDto {
   @IsString() introduction: string;
 }
 
+class SelectionLotsDto {
+  @IsArray() @ArrayNotEmpty() @IsInt({ each: true }) lots: number[];
+  @IsOptional()
+  @IsArray()
+  @IsIn(['MEPPSA', 'AUTRES_AVEC', 'AUTRES_SANS'], { each: true })
+  groupes?: string[];
+}
+
 @Controller('notes')
 export class NotesController {
   constructor(
@@ -65,6 +76,16 @@ export class NotesController {
   @Get()
   liste(@Query('module') module?: string, @Query('lot') lot?: string) {
     return this.service.liste(module, lot ? Number(lot) : undefined);
+  }
+
+  /** Lots choisis ensemble et groupes de quota : { lots: [3, 4], groupes: ['MEPPSA'] }. */
+  @Roles(...ROLES_TRAITEMENT)
+  @Post('preparer/affectation')
+  preparerSelection(
+    @Utilisateur() u: UtilisateurConnecte,
+    @Body() dto: SelectionLotsDto,
+  ) {
+    return this.service.preparerSelection(u, dto.lots, dto.groupes ?? []);
   }
 
   @Roles(...ROLES_TRAITEMENT)

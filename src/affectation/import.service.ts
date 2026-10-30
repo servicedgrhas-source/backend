@@ -8,11 +8,16 @@ import {
   TEXTE_PARTAGE,
 } from '../common/anomalies';
 import { motsDuNom, ressemblance } from '../common/ressemblance';
-import { sqlLibelleLot } from '../common/lots';
+import {
+  type FamilleLot,
+  romain,
+  sqlGroupeQuota,
+  sqlLibelleLot,
+} from '../common/lots';
 import { LotsReceptionService } from './lots-reception.service';
 import { BadRequestException, Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { IsNull, Not, Repository } from 'typeorm';
+import { In, IsNull, Not, Repository } from 'typeorm';
 import { champ, lireClasseur, type Ligne } from '../common/excel';
 import {
   codeCycle,
@@ -34,15 +39,29 @@ export interface RapportImport {
   crees: number;
   misAJour: number;
   ignorees: number;
+  /** Lignes d'une personne déjà lue dans une autre feuille : réunies en une seule fiche. */
+  fusionnees: number;
+  /** Bloc choisi à l'import : quota MEPPSA ou quota « Autres ». */
+  groupe: 'MEPPSA' | 'AUTRES' | null;
   /** Textes enregistrés dans le système et gardés malgré le fichier. */
   textesConserves: number;
   affectationsCreees: number;
-  lots: { numero: number; libelle: string; agents: number }[];
+  /** Lots touchés par l'import, avec leurs personnes par groupe de quota. */
+  lots: {
+    numero: number;
+    libelle: string;
+    agents: number;
+    meppsa: number;
+    autresAvec: number;
+    autresSans: number;
+  }[];
   anomalies: Record<string, number>;
   /** Même personne deux fois (nom et date de naissance), dans la base ou entre les feuilles. */
   doublons: number;
   /** Numéros de texte écrits pour plusieurs personnes. */
   textesPartages: number;
+  /** Anciennes fiches en double (même personne sans date de naissance) écartées. */
+  anciennesFichesEcartees: number;
 }
 
 function entier(v: unknown): number | null {
@@ -59,6 +78,67 @@ function lotCommission(v: unknown): string | null {
   const m = k.match(/^L(?:OT)?([IVX]+|\d+)$/);
   if (m) return `Lot ${romainVersEntier(m[1]) ?? m[1]}`;
   return s;
+}
+
+/** Feuille du quota « Autres » d'après son nom (« Quota Autres », « QA arrêtés… »). */
+export function feuilleAutres(nom: string) {
+  const k = cleCompacte(nom);
+  return k.includes('AUTRE') || /^QA/.test(k);
+}
+
+export type LigneLue = Partial<Agent> & {
+  lotPublicationNumero: number | null;
+  anomalies: string[];
+};
+
+const vide = (v: unknown) => v === null || v === undefined || v === '';
+
+/**
+ * Même personne dans plusieurs feuilles (QA arrêtés avec et sans département : 686 personnes dans
+ * le lot 8) : une seule fiche, qui garde ce que chaque ligne apporte (le département surtout).
+ */
+export function fusionner(a: LigneLue, b: LigneLue) {
+  const la = a.lotPublicationNumero;
+  const lb = b.lotPublicationNumero;
+  if (la !== null && lb !== null && (la !== lb || a.typeTexte !== b.typeTexte))
+    a.anomalies.push(
+      `Lot de publication différent d'une feuille à l'autre (${romain(la)} et ${romain(lb)})`,
+    );
+  if (
+    a.numeroTexte &&
+    b.numeroTexte &&
+    cleTexte(a.numeroTexte) !== cleTexte(b.numeroTexte)
+  )
+    a.anomalies.push(
+      `N° de texte différent d'une feuille à l'autre (${a.numeroTexte} et ${b.numeroTexte})`,
+    );
+  // Valeur reconnue d'une autre ligne : prise avec sa valeur brute
+  if (!a.departementId && b.departementId) {
+    a.departementId = b.departementId;
+    a.departementBrut = b.departementBrut;
+  }
+  if (!a.diplomeCode && b.diplomeCode) {
+    a.diplomeCode = b.diplomeCode;
+    a.diplomeBrut = b.diplomeBrut;
+  }
+  if (!a.dateNaissance && b.dateNaissance) {
+    a.dateNaissance = b.dateNaissance;
+    a.dateNaissanceBrute = b.dateNaissanceBrute;
+  }
+  for (const [k, v] of Object.entries(b))
+    if (
+      k !== 'anomalies' &&
+      vide((a as Record<string, unknown>)[k]) &&
+      !vide(v)
+    )
+      (a as Record<string, unknown>)[k] = v;
+  a.anomalies = [...new Set([...a.anomalies, ...b.anomalies])].filter((x) => {
+    if (x.startsWith('Département')) return !a.departementId;
+    if (x.startsWith('Date de naissance')) return !a.dateNaissance;
+    if (x.startsWith('Diplôme')) return !a.diplomeCode;
+    if (x.startsWith('Lot de publication sans')) return !a.numeroTexte;
+    return true;
+  });
 }
 
 function typeTexte(v: unknown): 'ARRETE' | 'DECRET' | null {
@@ -82,26 +162,106 @@ export class ImportBaseService {
     private readonly lotsReception: LotsReceptionService,
   ) {}
 
-  async importer(contenu: Buffer): Promise<RapportImport> {
+  /**
+   * Ce que contient le classeur, avant l'import : chaque feuille visible, ses lignes, ses lots de
+   * publication (« Arrêtés VIII : 53 ») et les personnes déjà vues dans une feuille précédente.
+   * Aucun nom n'est renvoyé.
+   */
+  async apercu(contenu: Buffer) {
     const feuilles = await lireClasseur(contenu, ['NOMSETPRENOMS', 'DIPLOME']);
     if (!feuilles.length)
       throw new BadRequestException(
         "Aucune feuille visible avec les colonnes « Noms et prénoms » et « Diplôme » n'a été trouvée.",
       );
+    const vues = new Set<string>();
+    const res = feuilles.map((f) => {
+      const lots: Record<string, number> = {};
+      let lignes = 0;
+      let avecDepartement = 0;
+      let dejaVues = 0;
+      let sansLot = 0;
+      const ici = new Set<string>();
+      for (const l of f.lignes) {
+        const nom = nettoyer(champ(l, 'NOMSETPRENOMS'));
+        if (!nom) continue;
+        lignes++;
+        const naissance = lireDate(champ(l, 'DATEDENAIS'));
+        const k = `${normaliser(nom)}|${naissance ?? ''}`;
+        if (vues.has(k)) dejaVues++;
+        ici.add(k);
+        let dep = nettoyer(champ(l, 'DEPARTEMENT', 'DEPART'));
+        const source = nettoyer(champ(l, 'SOURCE'));
+        if (cleCompacte(dep) === 'MEPPSA' && codeDepartement(source))
+          dep = source;
+        if (codeDepartement(dep)) avecDepartement++;
+        const n = romainVersEntier(
+          nettoyer(champ(l, 'LOTDEPUBLICAT', 'LOTDEPUBLICATION')),
+        );
+        if (n === null) {
+          sansLot++;
+          continue;
+        }
+        const t =
+          typeTexte(champ(l, 'TYPEDETEXTE')) === 'DECRET'
+            ? 'Décrets'
+            : 'Arrêtés';
+        const cle = `${t} — lot ${romain(n)}`;
+        lots[cle] = (lots[cle] ?? 0) + 1;
+      }
+      for (const k of ici) vues.add(k);
+      return {
+        nom: f.nom,
+        lignes,
+        groupe: feuilleAutres(f.nom) ? 'AUTRES' : 'MEPPSA',
+        avecDepartement,
+        dejaVues,
+        sansLot,
+        lots: Object.entries(lots)
+          .sort(([a], [b]) => a.localeCompare(b, 'fr', { numeric: true }))
+          .map(([libelle, n]) => ({ libelle, n })),
+      };
+    });
+    return { feuilles: res, personnes: vues.size };
+  }
+
+  /**
+   * Import de la base d'affectation (DG, 30/10/2026) : un bloc pour le quota MEPPSA, un pour le
+   * quota « Autres » (avec ou sans département) ; on peut ne prendre que certaines feuilles. Chaque
+   * personne est rangée dans le lot de publication écrit dans le fichier (« Arrêtés — lot VIII »).
+   */
+  async importer(
+    contenu: Buffer,
+    options: { groupe?: 'MEPPSA' | 'AUTRES'; feuilles?: string[] } = {},
+  ): Promise<RapportImport> {
+    const toutes = await lireClasseur(contenu, ['NOMSETPRENOMS', 'DIPLOME']);
+    if (!toutes.length)
+      throw new BadRequestException(
+        "Aucune feuille visible avec les colonnes « Noms et prénoms » et « Diplôme » n'a été trouvée.",
+      );
+    const feuilles = options.feuilles?.length
+      ? toutes.filter((f) => options.feuilles!.includes(f.nom))
+      : toutes;
+    if (!feuilles.length)
+      throw new BadRequestException('Aucune des feuilles choisies.');
 
     const deps = new Map((await this.deps.find()).map((d) => [d.code, d]));
     const regles = new Map((await this.regles.find()).map((r) => [r.code, r]));
     const existants = new Map(
       (await this.agents.find()).map((a) => [a.cle, a]),
     );
+    const parNom = new Map<string, Agent[]>();
+    for (const a of existants.values()) {
+      const k = `${a.feuille}|${a.nomNormalise}`;
+      (parNom.get(k) ?? parNom.set(k, []).get(k)!).push(a);
+    }
     // Fiches saisies dans le système, retrouvées par nom + date de naissance
     const saisies = new Map(
       [...existants.values()]
         .filter((a) => a.origineFiche === 'SAISIE')
         .map((a) => [`${a.nomNormalise}|${a.dateNaissance}`, a]),
     );
-    // Personnes à ranger dans les lots de réception (paquet = date de réception)
-    const aRanger: { agent: Agent; groupe: number; date: string | null }[] = [];
+    // Personnes à ranger dans le lot de publication du fichier
+    const aRanger: { agent: Agent; famille: FamilleLot; numero: number }[] = [];
 
     const rapport: RapportImport = {
       feuilles: feuilles.map((f) => ({ nom: f.nom, lignes: f.lignes.length })),
@@ -109,18 +269,24 @@ export class ImportBaseService {
       crees: 0,
       misAJour: 0,
       ignorees: 0,
+      fusionnees: 0,
+      groupe: options.groupe ?? null,
       textesConserves: 0,
       affectationsCreees: 0,
       lots: [],
       anomalies: {},
       doublons: 0,
       textesPartages: 0,
+      anciennesFichesEcartees: 0,
     };
     const aSauver: Agent[] = [];
-    const clesVues = new Set<string>();
 
+    // 1. Lecture : une personne présente dans plusieurs feuilles n'a qu'une fiche
+    const lues = new Map<string, LigneLue>();
     for (const f of feuilles) {
-      const quotaAutres = cleCompacte(f.nom).includes('AUTRE');
+      const quotaAutres = options.groupe
+        ? options.groupe === 'AUTRES'
+        : feuilleAutres(f.nom);
       for (const l of f.lignes) {
         const nom = nettoyer(champ(l, 'NOMSETPRENOMS'));
         if (!nom) {
@@ -132,12 +298,36 @@ export class ImportBaseService {
         let cle = data.cle!;
         if (!existants.has(cle)) {
           const s = saisies.get(`${data.nomNormalise}|${data.dateNaissance}`);
-          if (s && !clesVues.has(s.cle)) cle = s.cle;
+          if (s) cle = s.cle;
+          else {
+            // Fiche d'une base précédente sous une autre clé (date de naissance corrigée ou
+            // absente, autre n° d'ordre) : même nom, même feuille, et même date ou même texte
+            const t = cleTexte(data.numeroTexte);
+            const c = (
+              parNom.get(`${data.feuille}|${data.nomNormalise}`) ?? []
+            ).filter(
+              (x) =>
+                (!!data.dateNaissance &&
+                  x.dateNaissance === data.dateNaissance) ||
+                (!!t && cleTexte(x.numeroTexte) === t),
+            );
+            if (c.length === 1) cle = c[0].cle;
+          }
         }
-        if (clesVues.has(cle)) cle = `${cle}#${l._ligne}`;
-        clesVues.add(cle);
+        data.cle = cle;
+        const deja = lues.get(cle);
+        if (deja) {
+          fusionner(deja, data);
+          rapport.fusionnees++;
+        } else lues.set(cle, data);
+      }
+    }
 
-        // N° de lot du fichier (ancienne numérotation) : sert seulement à regrouper les dates
+    // 2. Enregistrement de chaque personne
+    {
+      for (const data of lues.values()) {
+        const cle = data.cle!;
+        // Lot de publication du fichier (« VIII ») : la personne y est rangée
         const lotNum = data.lotPublicationNumero;
         delete (data as { lotPublicationNumero?: unknown })
           .lotPublicationNumero;
@@ -229,30 +419,42 @@ export class ImportBaseService {
         delete (agent as Partial<Agent>).lotPublication;
         delete (agent as Partial<Agent>).departement;
         aSauver.push(agent);
-        // Texte enregistré dans le système : déjà rangé à la réception
-        if (lotNum !== null && !ex?.textePointeLe)
-          aRanger.push({ agent, groupe: lotNum, date: agent.dateReception });
+        // Le lot écrit dans la base fait foi, même pour un texte enregistré à la réception
+        if (lotNum !== null)
+          aRanger.push({
+            agent,
+            famille: agent.typeTexte === 'DECRET' ? 'DECRET' : 'ARRETE',
+            numero: lotNum,
+          });
       }
     }
 
     for (let i = 0; i < aSauver.length; i += 500)
       await this.agents.save(aSauver.slice(i, i + 500));
 
-    // Rangement : paquet (date de réception, dates isolées rapprochées) puis lot
-    const { items } = this.lotsReception.datesDePaquet(
-      aRanger.map((x) => ({ id: x.agent.id, groupe: x.groupe, date: x.date })),
+    // Rangement : lot de publication écrit dans le fichier (arrêtés et décrets à part)
+    await this.lotsReception.rangerParFichier(
+      aRanger.map((x) => ({
+        id: x.agent.id,
+        famille: x.famille,
+        numero: x.numero,
+      })),
     );
-    await this.lotsReception.ranger(items);
     await this.lotsReception.nettoyer();
 
     rapport.affectationsCreees = await this.creerAffectations(deps, regles);
-    rapport.lots = await this.agents.query<
-      { numero: number; libelle: string; agents: number }[]
-    >(
-      `SELECT l.numero, ${sqlLibelleLot('l')} AS libelle, count(*)::int AS agents
-         FROM agent a JOIN lot_publication l ON l.id = a."lotPublicationId"
-         GROUP BY l.id ORDER BY l.numero`,
+    rapport.lots = await this.agents.query<RapportImport['lots']>(
+      `SELECT l.numero, ${sqlLibelleLot('l')} AS libelle, count(*)::int AS agents,
+         count(*) FILTER (WHERE g = 'MEPPSA')::int AS meppsa,
+         count(*) FILTER (WHERE g = 'AUTRES_AVEC')::int AS "autresAvec",
+         count(*) FILTER (WHERE g = 'AUTRES_SANS')::int AS "autresSans"
+       FROM (SELECT a."lotPublicationId", ${sqlGroupeQuota('a')} AS g FROM agent a
+             WHERE a.id = ANY($1)) x
+       JOIN lot_publication l ON l.id = x."lotPublicationId"
+       GROUP BY l.id ORDER BY l."typeTexte", l."numeroFichier", l.numero`,
+      [aSauver.map((a) => a.id)],
     );
+    rapport.anciennesFichesEcartees = await this.ecarterAnciennesFiches();
     const signalements = await this.signalerDoublons();
     rapport.doublons = signalements.doublons;
     rapport.textesPartages = signalements.textesPartages;
@@ -266,7 +468,65 @@ export class ImportBaseService {
   }
 
   /**
-   * Après l'import, toute la base est comparée (pas seulement le fichier) :
+   * Même personne enregistrée deux fois par une base précédente (DG, 30/10/2026) : même feuille,
+   * même nom, même n° de texte, l'une des fiches sans date de naissance (illisible dans l'ancien
+   * fichier). Si celle-ci n'est dans aucune note, son affectation est écartée (motif écrit, on peut
+   * la réintégrer) et la ressemblance est déclarée vérifiée : la fiche complète n'est pas bloquée.
+   */
+  async ecarterAnciennesFiches(): Promise<number> {
+    const paires = await this.agents.query<
+      {
+        garde: string;
+        gardeNom: string;
+        ecarte: string;
+        ecarteNom: string;
+        affectation: string | null;
+      }[]
+    >(`
+      SELECT DISTINCT ON (b.id) a.id AS garde, a."nomComplet" AS "gardeNom",
+        b.id AS ecarte, b."nomComplet" AS "ecarteNom", fb.id AS affectation
+      FROM agent a
+      JOIN agent b ON b.feuille = a.feuille AND b."nomNormalise" = a."nomNormalise" AND b.id <> a.id
+      LEFT JOIN affectation fa ON fa."agentId" = a.id
+      LEFT JOIN affectation fb ON fb."agentId" = b.id
+      WHERE a."dateNaissance" IS NOT NULL AND b."dateNaissance" IS NULL
+        AND a."numeroTexte" IS NOT NULL
+        AND upper(replace(a."numeroTexte", ' ', '')) = upper(replace(b."numeroTexte", ' ', ''))
+        AND (fa.statut IS NULL OR fa.statut <> 'EXCLU')
+        AND (fb.id IS NULL OR (fb.statut = 'A_TRAITER' AND fb."noteId" IS NULL))
+      ORDER BY b.id, a."lotPublicationId" DESC NULLS LAST`);
+    if (!paires.length) return 0;
+    const ids = paires
+      .map((p) => p.affectation)
+      .filter((x): x is string => !!x);
+    for (let i = 0; i < ids.length; i += 500)
+      await this.affectations.update(
+        { id: In(ids.slice(i, i + 500)) },
+        {
+          statut: 'EXCLU',
+          motifExclusion:
+            "Fiche en double d'une base précédente (même nom, même texte, sans date de naissance) : la personne est suivie sur sa fiche complète",
+          traitePar: 'Import de la base',
+        },
+      );
+    // « Ressemble à … » vérifiée sur les deux fiches : la fiche complète n'est plus bloquée
+    for (const p of paires)
+      for (const [id, autre] of [
+        [p.garde, p.ecarteNom],
+        [p.ecarte, p.gardeNom],
+      ])
+        await this.agents.query(
+          `UPDATE agent SET "anomaliesVerifiees" = "anomaliesVerifiees" || to_jsonb($2::text),
+             anomalies = (SELECT coalesce(jsonb_agg(x), '[]'::jsonb) FROM jsonb_array_elements_text(anomalies) x
+                          WHERE x NOT LIKE $3)
+           WHERE id = $1 AND NOT "anomaliesVerifiees" ? $2`,
+          [id, `${RESSEMBLE}${autre}`, `${RESSEMBLE}${autre}%`],
+        );
+    return paires.length;
+  }
+
+  /**
+   * Après l'import, toute la base est comparée (pas seulement le fichier ; les fiches écartées non) :
    * - même personne enregistrée deux fois : « Ressemble à NOM (né(e) le …) », avec la même
    *   règle que la saisie (même date de naissance et nom concordant, ou nom complet repris) ;
    * - même n° de texte pour plusieurs personnes : « N° de texte partagé (6758, avec NOM) ».
@@ -276,18 +536,30 @@ export class ImportBaseService {
     doublons: number;
     textesPartages: number;
   }> {
-    const fiches = await this.agents.find({
-      select: [
-        'id',
-        'nomComplet',
-        'nomNormalise',
-        'dateNaissance',
-        'numeroTexte',
-        'anomalies',
-        'anomaliesVerifiees',
-      ],
-      loadEagerRelations: false,
-    });
+    // Fiches écartées (affectation exclue : doublon d'une base précédente…) : hors comparaison
+    const ecartees = new Set(
+      (
+        await this.affectations.find({
+          where: { statut: 'EXCLU' },
+          select: ['agentId'],
+          loadEagerRelations: false,
+        })
+      ).map((f) => f.agentId),
+    );
+    const fiches = (
+      await this.agents.find({
+        select: [
+          'id',
+          'nomComplet',
+          'nomNormalise',
+          'dateNaissance',
+          'numeroTexte',
+          'anomalies',
+          'anomaliesVerifiees',
+        ],
+        loadEagerRelations: false,
+      })
+    ).filter((f) => !ecartees.has(f.id));
     const mots = new Map(fiches.map((f) => [f.id, motsDuNom(f.nomNormalise)]));
     const ajouts = new Map<string, Set<string>>();
     const ajouter = (id: string, anomalie: string) =>
@@ -331,7 +603,6 @@ export class ImportBaseService {
       const k = cleTexte(f.numeroTexte);
       if (k) (parTexte.get(k) ?? parTexte.set(k, []).get(k)!).push(f);
     }
-    let textesPartages = 0;
     for (const liste of parTexte.values()) {
       if (liste.length < 2) continue;
       for (const f of liste) {
@@ -342,7 +613,6 @@ export class ImportBaseService {
           f.id,
           `${TEXTE_PARTAGE} (${f.numeroTexte}, avec ${autres.slice(0, 2).join(', ')}${autres.length > 2 ? '…' : ''})`,
         );
-        textesPartages++;
       }
     }
 
@@ -361,7 +631,19 @@ export class ImportBaseService {
           anomalies: [...actuelles, ...manquantes],
         });
     }
-    return { doublons: signalees.size, textesPartages };
+    // Seules les ressemblances qui restent à vérifier sont comptées
+    const aVerifier = (f: Agent, debut: string) =>
+      [...(ajouts.get(f.id) ?? [])].some(
+        (x) =>
+          x.startsWith(debut) &&
+          !(f.anomaliesVerifiees ?? []).includes(motif(x)),
+      );
+    return {
+      doublons: fiches.filter(
+        (f) => signalees.has(f.id) && aVerifier(f, RESSEMBLE),
+      ).length,
+      textesPartages: fiches.filter((f) => aVerifier(f, TEXTE_PARTAGE)).length,
+    };
   }
 
   private lireLigne(
@@ -369,7 +651,7 @@ export class ImportBaseService {
     quotaAutres: boolean,
     deps: Map<string, Departement>,
     regles: Map<string, RegleDiplome>,
-  ): Partial<Agent> & { lotPublicationNumero: number | null } {
+  ): LigneLue {
     const anomalies: string[] = [];
     const nomComplet = nettoyer(champ(l, 'NOMSETPRENOMS'))!;
     const nomNormalise = normaliser(nomComplet);
@@ -460,6 +742,8 @@ export class ImportBaseService {
       lieuServiceBrut: nettoyer(champ(l, 'LIEUDESERVICE')),
       origineBrute: nettoyer(champ(l, 'ORIGINE')),
       observation: nettoyer(champ(l, 'OBS', 'OBSERVATION')),
+      qualification: nettoyer(champ(l, 'QUALIFICATION')),
+      specialite: nettoyer(champ(l, 'SPECIALITE')),
       typeTexte: tt,
       numeroTexte,
       dateSignatureTexte: lireDate(
@@ -488,7 +772,13 @@ export class ImportBaseService {
 
     const sans = await this.agents.find({
       where: { lotPublicationId: Not(IsNull()) },
-      select: ['id', 'diplomeCode', 'departementId', 'lotPublicationId'],
+      select: [
+        'id',
+        'diplomeCode',
+        'departementId',
+        'lotPublicationId',
+        'specialite',
+      ],
       loadEagerRelations: false,
     });
     const avec = new Set(
@@ -514,6 +804,7 @@ export class ImportBaseService {
           departementId: a.departementId,
           structure:
             typeNote === 'PERS_ADM' && dep ? `DDEPPSA ${dep.nom}` : null,
+          specialite: a.specialite,
           statut: 'A_TRAITER',
         });
       });

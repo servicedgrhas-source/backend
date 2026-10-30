@@ -339,17 +339,23 @@ export class PilotageService {
   /* -------------- Répartition automatique du quota « Autres » -------------- */
 
   /** Personnes du quota « Autres » sans département, pas encore dans une note validée. */
-  private async eligibles(texteRecu: boolean, lot?: number) {
+  private async eligibles(texteRecu: boolean, lot?: number | number[]) {
     const q = this.agents
       .createQueryBuilder('a')
       .leftJoinAndSelect('a.lotPublication', 'l')
       .leftJoin(Affectation, 'f', 'f."agentId" = a.id')
       .where("a.feuille = 'QUOTA_AUTRES'")
       .andWhere('a.departementId IS NULL')
+      // Déjà placée (répartition précédente, département retenu saisi) : pas reproposée
+      .andWhere('a.repartitionId IS NULL')
+      .andWhere('f.departementId IS NULL')
       .andWhere("(a.contentieuxAge IS NULL OR a.contentieuxAge = 'APPROUVE')")
       .andWhere("(f.statut IS NULL OR f.statut = 'A_TRAITER')");
     if (texteRecu) q.andWhere('a.lotPublicationId IS NOT NULL');
-    if (lot) q.andWhere('l.numero = :lot', { lot });
+    // Un lot, ou les lots choisis ensemble à l'écran des affectations
+    if (Array.isArray(lot))
+      q.andWhere('l.numero IN (:...lots)', { lots: lot.length ? lot : [-1] });
+    else if (lot) q.andWhere('l.numero = :lot', { lot });
     return q.getMany();
   }
 
@@ -374,7 +380,7 @@ export class PilotageService {
     );
   }
 
-  async etatRepartition(texteRecu: boolean, lot?: number) {
+  async etatRepartition(texteRecu: boolean, lot?: number | number[]) {
     const liste = await this.eligibles(texteRecu, lot);
     const types = await this.types(liste);
     const parType: Record<string, number> = {};
@@ -407,7 +413,7 @@ export class PilotageService {
   async proposer(
     quotas: Record<string, number>,
     texteRecu: boolean,
-    lot?: number,
+    lot?: number | number[],
   ) {
     const deps = new Map(
       (await this.deps.find()).map((d) => [String(d.id), d]),
@@ -500,7 +506,12 @@ export class PilotageService {
     });
     const libres = new Set(
       agents
-        .filter((a) => a.feuille === 'QUOTA_AUTRES' && a.departementId === null)
+        .filter(
+          (a) =>
+            a.feuille === 'QUOTA_AUTRES' &&
+            a.departementId === null &&
+            a.repartitionId === null,
+        )
         .map((a) => a.id),
     );
     const valides = lignes.filter(

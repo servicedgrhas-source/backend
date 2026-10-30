@@ -34,14 +34,76 @@ export function libelleQuota(l: { quota: number | null; autres: boolean }) {
       : 'sans quota';
 }
 
-/** « Arrêtés quota 2024 — lot 3 » (ancien lot pas encore rangé : « Lot 3 »). */
+/** Chiffres romains des lots de la base (« VIII ») ; au-delà, le nombre. */
+export function romain(n: number) {
+  const t: [number, string][] = [
+    [10, 'X'],
+    [9, 'IX'],
+    [5, 'V'],
+    [4, 'IV'],
+    [1, 'I'],
+  ];
+  if (n <= 0 || n >= 40) return String(n);
+  let r = '';
+  for (const [v, x] of t)
+    while (n >= v) {
+      r += x;
+      n -= v;
+    }
+  return r;
+}
+
+/** Famille d'un lot du fichier : arrêtés ou décrets, chacun sa numérotation. */
+export type FamilleLot = 'ARRETE' | 'DECRET';
+export const NOM_FAMILLE: Record<FamilleLot, string> = {
+  ARRETE: 'Arrêtés',
+  DECRET: 'Décrets',
+};
+
+/**
+ * Groupe de quota d'une personne, tel que la DGRHAS compte un lot (DG, 30/10/2026) : quota MEPPSA,
+ * quota « Autres » arrivé avec son département, quota « Autres » sans département (donné ensuite
+ * par la DGRHAS : il reste « sans département » d'origine).
+ */
+export type GroupeQuota = 'MEPPSA' | 'AUTRES_AVEC' | 'AUTRES_SANS';
+export const GROUPES_QUOTA: GroupeQuota[] = [
+  'MEPPSA',
+  'AUTRES_AVEC',
+  'AUTRES_SANS',
+];
+export const NOM_GROUPE: Record<GroupeQuota, string> = {
+  MEPPSA: 'Quota MEPPSA',
+  AUTRES_AVEC: 'Quota Autres avec département',
+  AUTRES_SANS: 'Quota Autres sans département',
+};
+export function groupeQuota(a: {
+  feuille: string;
+  departementId: number | null;
+  repartitionId?: string | null;
+}): GroupeQuota {
+  if (a.feuille !== 'QUOTA_AUTRES') return 'MEPPSA';
+  return a.departementId && !a.repartitionId ? 'AUTRES_AVEC' : 'AUTRES_SANS';
+}
+/** Même règle en SQL (alias de la table agent). */
+export const sqlGroupeQuota = (a: string) =>
+  `CASE WHEN ${a}.feuille <> 'QUOTA_AUTRES' THEN 'MEPPSA'
+    WHEN ${a}."departementId" IS NOT NULL AND ${a}."repartitionId" IS NULL THEN 'AUTRES_AVEC'
+    ELSE 'AUTRES_SANS' END`;
+
+/**
+ * « Arrêtés — lot VIII » (lot du fichier), « Arrêtés quota 2024 — lot 3 » (lot rangé par date),
+ * « Lot 3 » (ancien lot pas encore rangé).
+ */
 export function libelleLot(l: {
   numero: number;
   typeTexte?: string | null;
   quota?: number | null;
   autres?: boolean | null;
   rang?: number | null;
+  numeroFichier?: number | null;
 }) {
+  if (l.numeroFichier)
+    return `${NOM_FAMILLE[l.typeTexte as FamilleLot] ?? 'Textes'} — lot ${romain(l.numeroFichier)}`;
   if (!l.typeTexte || !l.rang) return `Lot ${l.numero}`;
   return `${NOM_TYPE_LOT[l.typeTexte as TypeLot]} ${libelleQuota({
     quota: l.quota ?? null,
@@ -56,7 +118,10 @@ export function repereLot(l: {
   quota?: number | null;
   autres?: boolean | null;
   rang?: number | null;
+  numeroFichier?: number | null;
 }) {
+  if (l.numeroFichier)
+    return `${l.typeTexte === 'DECRET' ? 'Déc' : 'Arr'}/L${romain(l.numeroFichier)}`;
   if (!l.typeTexte || !l.rang) return `Lot${l.numero}`;
   const t = { ARRETE: 'Arr', DECRET_PM: 'DécPM', DECRET_PR: 'DécPR' }[
     l.typeTexte as TypeLot
@@ -76,7 +141,10 @@ export function libellePaquet(p: {
 /** Même libellé que libelleLot, en SQL (alias de la table lot_publication). */
 export const sqlLibelleLot = (
   l: string,
-) => `CASE WHEN ${l}.rang IS NULL THEN 'Lot ' || ${l}.numero
+) => `CASE WHEN ${l}."numeroFichier" IS NOT NULL THEN
+    (CASE ${l}."typeTexte" WHEN 'DECRET' THEN 'Décrets' ELSE 'Arrêtés' END) || ' — lot '
+    || (CASE ${l}."numeroFichier" ${Array.from({ length: 39 }, (_, i) => `WHEN ${i + 1} THEN '${romain(i + 1)}'`).join(' ')} ELSE ${l}."numeroFichier"::text END)
+  WHEN ${l}.rang IS NULL THEN 'Lot ' || ${l}.numero
   ELSE (CASE ${l}."typeTexte" WHEN 'ARRETE' THEN 'Arrêtés' WHEN 'DECRET_PM' THEN 'Décrets PM' ELSE 'Décrets PR' END)
     || ' ' || (CASE WHEN ${l}.autres THEN 'quota « Autres »' WHEN ${l}.quota IS NULL THEN 'sans quota' ELSE 'quota ' || ${l}.quota END)
     || ' — lot ' || ${l}.rang END`;

@@ -165,8 +165,15 @@ export class LotPublication {
   /** N° technique unique (adresses des pages) ; l'agent voit le libellé. */
   @Index({ unique: true }) @Column({ type: 'int' }) numero: number;
   @Index() @Column({ type: 'int', nullable: true }) paquetId: number | null;
-  /** ARRETE, DECRET_PM ou DECRET_PR. */
+  /** ARRETE, DECRET_PM ou DECRET_PR (lot rangé par date) ; ARRETE ou DECRET (lot du fichier). */
   @Column({ type: 'varchar', nullable: true }) typeTexte: string | null;
+  /**
+   * Lot de publication écrit dans la base de la DGRHAS (« VIII », DG 30/10/2026) : les arrêtés et
+   * les décrets ont chacun leur numérotation ; tous les quotas (MEPPSA, Autres) y sont réunis.
+   */
+  @Column({ type: 'int', nullable: true }) numeroFichier: number | null;
+  /** Lot déjà traité (à la main ou dans le système) : plus proposé à l'affectation. */
+  @Column({ type: 'boolean', default: false }) archive: boolean;
   @Column({ type: 'int', nullable: true }) quota: number | null;
   /** Lot du quota « Autres ». */
   @Column({ type: 'boolean', default: false }) autres: boolean;
@@ -206,6 +213,9 @@ export class Agent {
   @Column({ type: 'varchar', nullable: true }) source: string | null;
   @Column({ type: 'varchar', nullable: true }) cycleBrut: string | null;
   @Column({ type: 'varchar', nullable: true }) lotCommission: string | null;
+  /** Colonnes ajoutées à la base du lot 8 (DG, 30/10/2026). */
+  @Column({ type: 'varchar', nullable: true }) qualification: string | null;
+  @Column({ type: 'varchar', nullable: true }) specialite: string | null;
   @Column({ type: 'varchar', nullable: true }) statut: string | null;
   @Column({ type: 'varchar', nullable: true }) transmission: string | null;
   @Column({ type: 'varchar', nullable: true }) parapheur: string | null;
@@ -323,6 +333,12 @@ export class Affectation {
   @Column({ type: 'text', nullable: true }) motifExclusion: string | null;
   @Column({ type: 'uuid', nullable: true }) noteId: string | null;
   @Column({ type: 'varchar', nullable: true }) traitePar: string | null;
+  /**
+   * Personne affectée (note signée) reportée dans la base du personnel, à la demande (DG,
+   * 30/10/2026) : les recrutés restent à part tant qu'on ne les a pas déportés.
+   */
+  @Column({ type: 'timestamptz', nullable: true }) deporteLe: Date | null;
+  @Column({ type: 'varchar', nullable: true }) deportePar: string | null;
   @CreateDateColumn() creeLe: Date;
   @UpdateDateColumn() modifieLe: Date;
 }
@@ -406,6 +422,11 @@ export class NoteService {
    * lotPublicationId.
    */
   @Column({ type: 'jsonb', default: () => "'[]'" }) lotsFusionnes: number[];
+  /**
+   * Quotas couverts par une note d'affectation (MEPPSA, AUTRES_AVEC, AUTRES_SANS) ; vide : tous.
+   * « Je traite le quota MEPPSA et le quota Autres avec département » (DG, 30/10/2026).
+   */
+  @Column({ type: 'jsonb', default: () => "'[]'" }) groupes: string[];
   /** Note d'enrôlement : campagne d'où viennent les volontaires. */
   @Column({ type: 'int', nullable: true }) campagneId: number | null;
   @Column() anneeScolaire: string;

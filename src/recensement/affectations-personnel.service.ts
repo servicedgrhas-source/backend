@@ -1,16 +1,20 @@
 import {
+  BadRequestException,
   Injectable,
   Logger,
   type OnApplicationBootstrap,
 } from '@nestjs/common';
+import type { UtilisateurConnecte } from '../auth/auth';
 import { InjectRepository } from '@nestjs/typeorm';
 import { In, Repository } from 'typeorm';
 import { AffectationService } from '../affectation/affectation.service';
 import { deriver } from '../affectation/calcul';
 import { IndexNoms } from '../common/index-noms';
+import { libelleLot } from '../common/lots';
 import { JournalService, ParametresService } from '../core/core.service';
 import {
   Affectation,
+  Agent,
   AgentRecense,
   Departement,
   NoteService,
@@ -48,6 +52,41 @@ const referenceComplete = (
 
 type LigneAffectation = { NOTE?: string; DATE?: string; LIEU?: string };
 
+/**
+ * Où va un recruté dans la base du personnel :
+ * - LIEE : sa fiche est déjà liée (commission, déport précédent) ;
+ * - MISE_A_JOUR : une seule fiche au même nom et à la même date de naissance (volontaire,
+ *   communautaire…) : elle est mise à jour ;
+ * - DOUBLON : des fiches ressemblent sans être sûres (nom proche, ou même nom et autre date de
+ *   naissance) : à trancher avant de déporter ;
+ * - CREATION : personne de semblable : une fiche est créée.
+ */
+export type Rapprochement =
+  | { type: 'LIEE' | 'MISE_A_JOUR'; fiche: AgentRecense }
+  | { type: 'DOUBLON'; candidats: AgentRecense[] }
+  | { type: 'CREATION' };
+
+function rapprocher(
+  ag: Pick<Agent, 'agentRecenseId' | 'nomComplet' | 'dateNaissance'>,
+  parId: Map<number, AgentRecense>,
+  index: IndexNoms<AgentRecense>,
+): Rapprochement {
+  const liee = ag.agentRecenseId ? parId.get(ag.agentRecenseId) : undefined;
+  if (liee) return { type: 'LIEE', fiche: liee };
+  const t = index.probables(ag.nomComplet, ag.dateNaissance);
+  const meme = t.filter(
+    (x) => !!ag.dateNaissance && x.dateNaissance === ag.dateNaissance,
+  );
+  if (meme.length === 1 && t.length === 1)
+    return { type: 'MISE_A_JOUR', fiche: meme[0] };
+  if (t.length) return { type: 'DOUBLON', candidats: t.slice(0, 5) };
+  // Même nom complet, autre date de naissance : homonyme ou date mal saisie, à trancher
+  const homonymes = index.memesNoms(ag.nomComplet);
+  if (homonymes.length)
+    return { type: 'DOUBLON', candidats: homonymes.slice(0, 5) };
+  return { type: 'CREATION' };
+}
+
 @Injectable()
 export class AffectationsPersonnelService implements OnApplicationBootstrap {
   private readonly log = new Logger('Personnel');
@@ -79,6 +118,33 @@ export class AffectationsPersonnelService implements OnApplicationBootstrap {
     }, 8000);
   }
 
+  /**
+   * Notes signées déjà reportées automatiquement avant le 30/10/2026 (leur clé est dans une fiche) :
+   * leurs affectés comptent comme déportés. Sans effet pour les notes signées depuis.
+   */
+  private async marquerDejaDeportes() {
+    // Une seule fois (au premier démarrage après la mise à jour) : ensuite, seul le déport décide
+    const MARQUE = 'MIGRATION_DEPORT_PERSONNEL_20261030';
+    const [fait] = await this.affectations.query<unknown[]>(
+      `SELECT 1 FROM parametre WHERE cle = $1`,
+      [MARQUE],
+    );
+    if (fait) return;
+    await this.affectations.query(`
+      UPDATE affectation f SET "deporteLe" = now(), "deportePar" = 'Report automatique (avant le 30/10/2026)'
+      WHERE f."deporteLe" IS NULL AND f.statut = 'AFFECTE' AND f."noteId" IS NOT NULL
+        AND EXISTS (SELECT 1 FROM agent_recense r
+                    WHERE r.liaison->'notes' ? ('AFFECTATION:' || f."noteId"::text))`);
+    await this.affectations.query(
+      `INSERT INTO parametre (cle, valeur, description) VALUES ($1, $2, $3) ON CONFLICT (cle) DO NOTHING`,
+      [
+        MARQUE,
+        new Date().toISOString(),
+        'Affectés déjà reportés dans la base du personnel marqués « déportés »',
+      ],
+    );
+  }
+
   /** Un seul passage à la fois. */
   async synchroniser() {
     while (this.enCours) await this.enCours.catch(() => undefined);
@@ -92,7 +158,9 @@ export class AffectationsPersonnelService implements OnApplicationBootstrap {
   }
 
   private async passage() {
+    await this.marquerDejaDeportes();
     const enrolement = await this.notesEnrolement();
+    // Les recrutés n'entrent dans la base du personnel que déportés (DG, 30/10/2026)
     const affectation = await this.notesAffectation();
     const bilan = { ...enrolement, ...affectation };
     if (Object.values(bilan).some((n) => n > 0))
@@ -205,13 +273,17 @@ export class AffectationsPersonnelService implements OnApplicationBootstrap {
    * FP) est reportée dans la fiche de la personne, retrouvée par le lien de la commission ou par son
    * nom et sa date de naissance ; une personne absente de la base y entre.
    */
-  private async notesAffectation() {
-    const bilan = { affectes: 0, integres: 0, crees: 0 };
+  private async notesAffectation(
+    choix: Map<string, number | 'NOUVELLE'> = new Map(),
+  ) {
+    const bilan = { affectes: 0, integres: 0, crees: 0, doublons: 0 };
     const notes = await this.notes.find({
       where: { module: 'AFFECTATION', statut: 'SIGNEE' },
       order: { dateSignature: 'ASC' },
     });
     if (!notes.length) return bilan;
+    // Fiches créées pour un recruté : son lien est gardé sur sa fiche de recrutement
+    const liens: { agentId: string; fiche: AgentRecense }[] = [];
     const regles = await this.affSvc.reglesParCode();
     const p = this.affSvc.parametresCalcul();
     const deps = new Map((await this.deps.find()).map((d) => [d.id, d]));
@@ -248,7 +320,9 @@ export class AffectationsPersonnelService implements OnApplicationBootstrap {
         } | null
       )?.sections ?? [])
         for (const l of s.lignes ?? []) if (l.grade) grades.set(l.id, l.grade);
-      const affs = await this.affectations.find({ where: { noteId: n.id } });
+      const affs = (
+        await this.affectations.find({ where: { noteId: n.id } })
+      ).filter((x) => x.deporteLe);
       for (const aff of affs) {
         const ag = aff.agent;
         if (!ag) continue;
@@ -269,20 +343,25 @@ export class AffectationsPersonnelService implements OnApplicationBootstrap {
           : 'Arrêté';
         const texte = d.reference ? `${typeTexte} n° ${d.reference}` : null;
 
+        // Choix fait à l'écran du déport (doublon possible), sinon le rapprochement
+        const c = choix.get(aff.id);
+        const r = rapprocher(ag, parId, index);
         let a: AgentRecense | undefined =
-          (ag.agentRecenseId ? parId.get(ag.agentRecenseId) : undefined) ??
-          (() => {
-            const t = index.probables(ag.nomComplet, ag.dateNaissance);
-            const meme = t.filter(
-              (x) => !!ag.dateNaissance && x.dateNaissance === ag.dateNaissance,
-            );
-            return meme.length === 1
-              ? meme[0]
-              : t.length === 1
-                ? t[0]
+          c === 'NOUVELLE'
+            ? undefined
+            : typeof c === 'number'
+              ? parId.get(c)
+              : r.type === 'LIEE' || r.type === 'MISE_A_JOUR'
+                ? r.fiche
                 : undefined;
-          })();
+        // Doublon possible non tranché : rien n'est écrit (il reste à déporter)
+        if (!a && c === undefined && r.type === 'DOUBLON') {
+          bilan.doublons++;
+          continue;
+        }
         if (a && this.dejaFait(a, cle, note)) continue;
+        if (a && ag.agentRecenseId !== a.id)
+          liens.push({ agentId: ag.id, fiche: a });
         if (!a) {
           // Recruté qui n'était pas encore dans la base du personnel
           a = this.agents.create({
@@ -305,6 +384,7 @@ export class AffectationsPersonnelService implements OnApplicationBootstrap {
           }
           nouvelles.push(a);
           index.ajouter(ag.nomComplet, ag.dateNaissance, a);
+          liens.push({ agentId: ag.id, fiche: a });
           bilan.crees++;
         } else if (['VOLONTAIRE', 'COMMUNAUTAIRE'].includes(a.statut)) {
           // Même personne, nouveau statut : nouvelle prise de service à renseigner
@@ -351,6 +431,11 @@ export class AffectationsPersonnelService implements OnApplicationBootstrap {
       }
     }
     await this.enregistrer([...modifiees.values(), ...nouvelles]);
+    for (const l of liens)
+      if (l.fiche.id)
+        await this.affectations.manager.update(Agent, l.agentId, {
+          agentRecenseId: l.fiche.id,
+        });
     if (bilan.affectes)
       await this.journal.log(
         null,
@@ -360,5 +445,131 @@ export class AffectationsPersonnelService implements OnApplicationBootstrap {
         bilan,
       );
     return bilan;
+  }
+
+  /** Affectés (note signée) pas encore déportés, des lots donnés (tous si vide). */
+  private async aDeporter(lots: number[], ids?: string[]) {
+    const q = this.affectations
+      .createQueryBuilder('f')
+      .leftJoinAndSelect('f.agent', 'a')
+      .leftJoinAndSelect('a.lotPublication', 'l')
+      .innerJoin(NoteService, 'n', 'n.id = f."noteId"')
+      .where("f.statut = 'AFFECTE' AND n.statut = 'SIGNEE'")
+      .andWhere('f.deporteLe IS NULL');
+    if (lots.length) q.andWhere('l.numero IN (:...lots)', { lots });
+    if (ids) q.andWhere('f.id IN (:...ids)', { ids: ids.length ? ids : [''] });
+    const affs = await q.orderBy('a.nomNormalise').getMany();
+    const notes = new Map(
+      (
+        await this.notes.find({
+          where: { id: In([...new Set(affs.map((f) => f.noteId!))]) },
+          select: ['id', 'numero', 'dateSignature'],
+        })
+      ).map((n) => [n.id, n]),
+    );
+    return { affs, notes };
+  }
+
+  /**
+   * Aperçu du déport dans la base du personnel (DG, 30/10/2026) : pour chaque affecté dont la note
+   * est signée, la fiche mise à jour, créée, ou les fiches qui lui ressemblent (doublon possible, à
+   * trancher). C'est le seul moment où l'on compare les recrutés à la base du personnel.
+   */
+  async apercuDeport(lots: number[]) {
+    const { affs, notes } = await this.aDeporter(lots);
+    const toutes = await this.agents.find();
+    const parId = new Map(toutes.map((a) => [a.id, a]));
+    const index = new IndexNoms<AgentRecense>();
+    for (const a of toutes) index.ajouter(a.nomComplet, a.dateNaissance, a);
+    const fiche = (x: AgentRecense) => ({
+      id: x.id,
+      numeroFiche: x.numeroFiche,
+      nomComplet: x.nomComplet,
+      dateNaissance: x.dateNaissance,
+      statut: x.statut,
+    });
+    const lignes = affs.map((f) => {
+      const r = rapprocher(f.agent, parId, index);
+      const n = notes.get(f.noteId!);
+      return {
+        id: f.id,
+        nomComplet: f.agent.nomComplet,
+        dateNaissance: f.agent.dateNaissance,
+        lot: f.agent.lotPublication ? libelleLot(f.agent.lotPublication) : null,
+        note: n
+          ? `Note n° ${n.numero ?? '?'}${n.dateSignature ? ` du ${dateFr(n.dateSignature)}` : ''}`
+          : null,
+        action: r.type,
+        fiche:
+          r.type === 'LIEE' || r.type === 'MISE_A_JOUR' ? fiche(r.fiche) : null,
+        candidats: r.type === 'DOUBLON' ? r.candidats.map(fiche) : [],
+      };
+    });
+    const compte = (t: string) => lignes.filter((l) => l.action === t).length;
+    return {
+      total: lignes.length,
+      creations: compte('CREATION'),
+      misesAJour: compte('MISE_A_JOUR') + compte('LIEE'),
+      doublons: compte('DOUBLON'),
+      lignes,
+    };
+  }
+
+  /**
+   * Déport : les affectés choisis entrent dans la base du personnel. Chaque doublon possible doit
+   * être tranché : `choix[id]` = n° de la fiche (même personne) ou « NOUVELLE » (autre personne).
+   */
+  async deporter(
+    u: UtilisateurConnecte,
+    ids: string[],
+    choix: Record<string, number | 'NOUVELLE'>,
+  ) {
+    if (!ids.length) throw new BadRequestException('Aucune personne choisie.');
+    const { affs } = await this.aDeporter([], ids);
+    if (!affs.length)
+      throw new BadRequestException(
+        "Ces personnes sont déjà déportées, ou leur note n'est pas encore signée.",
+      );
+    const toutes = await this.agents.find();
+    const parId = new Map(toutes.map((a) => [a.id, a]));
+    const index = new IndexNoms<AgentRecense>();
+    for (const a of toutes) index.ajouter(a.nomComplet, a.dateNaissance, a);
+    const sansChoix = affs.filter(
+      (f) =>
+        rapprocher(f.agent, parId, index).type === 'DOUBLON' &&
+        choix[f.id] === undefined,
+    );
+    if (sansChoix.length)
+      throw new BadRequestException(
+        `${sansChoix.length} doublon(s) possible(s) à trancher avant de déporter : même personne ou personne différente.`,
+      );
+    for (const v of Object.values(choix))
+      if (v !== 'NOUVELLE' && !parId.has(Number(v)))
+        throw new BadRequestException(`Fiche n° ${v} introuvable.`);
+    const retenus = affs.map((f) => f.id);
+    while (this.enCours) await this.enCours.catch(() => undefined);
+    await this.affectations.update(
+      { id: In(retenus) },
+      { deporteLe: new Date(), deportePar: u.nom },
+    );
+    const p = this.notesAffectation(
+      new Map(
+        Object.entries(choix)
+          .filter(([k]) => retenus.includes(k))
+          .map(([k, v]) => [k, v === 'NOUVELLE' ? 'NOUVELLE' : Number(v)]),
+      ),
+    );
+    this.enCours = p;
+    let bilan: Awaited<typeof p>;
+    try {
+      bilan = await p;
+    } finally {
+      this.enCours = null;
+    }
+    await this.journal.log(u, 'DEPORT_PERSONNEL', 'affectation', null, {
+      personnes: retenus.length,
+      ...bilan,
+    });
+    return { personnes: retenus.length, ...bilan };
   }
 }

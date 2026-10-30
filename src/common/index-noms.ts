@@ -53,6 +53,21 @@ export class IndexNoms<T> {
         }
     return res;
   }
+
+  /** Même nom complet (au mot près), quelle que soit la date de naissance : homonyme ou date à vérifier. */
+  memesNoms(nom: string): T[] {
+    const mots = motsDuNom(nom);
+    const vus = new Set<T>();
+    const res: T[] = [];
+    for (const m of new Set(mots.filter((x) => x.length >= 4)))
+      for (const e of this.parMot.get(m) ?? [])
+        if (!vus.has(e.item)) {
+          vus.add(e.item);
+          if (ressemblance(mots, null, e.mots, null) === 'PROBABLE')
+            res.push(e.item);
+        }
+    return res;
+  }
 }
 
 function pousser<T>(m: Map<string, Entree<T>[]>, cle: string, e: Entree<T>) {

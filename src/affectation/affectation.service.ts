@@ -1,6 +1,13 @@
 import { anomaliesAJour, nomRessemblant, RESSEMBLE } from '../common/anomalies';
 import { LotsReceptionService } from './lots-reception.service';
-import { libelleLot, libellePaquet, sqlLibelleLot } from '../common/lots';
+import {
+  GROUPES_QUOTA,
+  groupeQuota,
+  libelleLot,
+  libellePaquet,
+  sqlGroupeQuota,
+  sqlLibelleLot,
+} from '../common/lots';
 import {
   BadRequestException,
   Injectable,
@@ -37,6 +44,10 @@ export interface FiltreAffectations {
   lot?: number;
   /** Plusieurs lots à la fois (identifiants des lots de publication). */
   lotsIds?: number[];
+  /** Plusieurs lots à la fois (n° des lots, comme `lot`). */
+  lots?: number[];
+  /** Groupes de quota : MEPPSA, AUTRES_AVEC, AUTRES_SANS (vide : tous). */
+  groupes?: string[];
   typeNote?: string;
   departementId?: number;
   statut?: string;
@@ -127,6 +138,17 @@ export class AffectationService {
         WHERE module = 'AFFECTATION' AND statut IN ('BROUILLON', 'SOUMISE')`),
       this.requete({ statut: 'A_TRAITER' }).getMany(),
     ]);
+    // Groupes de quota de chaque lot (MEPPSA, Autres avec / sans département) et déport
+    const groupes = await this.agents.query<
+      { lot: number; g: string; statut: string | null; n: number }[]
+    >(`
+      SELECT a."lotPublicationId" AS lot, ${sqlGroupeQuota('a')} AS g, f.statut, count(*)::int AS n
+      FROM agent a LEFT JOIN affectation f ON f."agentId" = a.id
+      WHERE a."lotPublicationId" IS NOT NULL GROUP BY 1, 2, 3`);
+    const aDeporter = await this.agents.query<{ lot: number; n: number }[]>(`
+      SELECT f."lotPublicationId" AS lot, count(*)::int AS n FROM affectation f
+      JOIN note_service n ON n.id = f."noteId" AND n.statut = 'SIGNEE'
+      WHERE f.statut = 'AFFECTE' AND f."deporteLe" IS NULL GROUP BY 1`);
     const paquets = new Map(paquetsListe.map((p) => [p.id, p]));
     const enCours = await this.enrichir(aTraiter);
     const detail = new Map<
@@ -205,6 +227,24 @@ export class AffectationService {
         },
         exclus: s('EXCLU'),
         affectes: s('AFFECTE'),
+        groupes: Object.fromEntries(
+          GROUPES_QUOTA.map((g) => {
+            const ici = groupes.filter((x) => x.lot === l.id && x.g === g);
+            const somme = (st?: string) =>
+              ici
+                .filter((x) => !st || x.statut === st)
+                .reduce((n, x) => n + x.n, 0);
+            return [
+              g,
+              {
+                total: somme(),
+                aTraiter: somme('A_TRAITER'),
+                affectes: somme('AFFECTE'),
+              },
+            ];
+          }),
+        ),
+        aDeporter: aDeporter.find((x) => x.lot === l.id)?.n ?? 0,
       };
     });
   }
@@ -219,6 +259,7 @@ export class AffectationService {
         | 'dateSignatureDecrets'
         | 'dateReception'
         | 'observation'
+        | 'archive'
       >
     >,
   ) {
@@ -467,6 +508,14 @@ export class AffectationService {
       .leftJoinAndSelect('a.departement', 'ad')
       .leftJoinAndSelect('f.departement', 'd');
     if (f.lot) q.andWhere('l.numero = :lot', { lot: f.lot });
+    if (f.lots)
+      q.andWhere('l.numero IN (:...lots)', {
+        lots: f.lots.length ? f.lots : [-1],
+      });
+    if (f.groupes?.length)
+      q.andWhere(`(${sqlGroupeQuota('a')}) IN (:...groupes)`, {
+        groupes: f.groupes,
+      });
     if (f.lotsIds)
       q.andWhere('a.lotPublicationId IN (:...lotsIds)', {
         lotsIds: f.lotsIds.length ? f.lotsIds : [-1],
@@ -632,6 +681,52 @@ export class AffectationService {
       else t.prets++;
     }
     return parType;
+  }
+
+  /**
+   * Résumé de lots choisis ensemble (« Décrets lots III et IV ») et de groupes de quota : par
+   * groupe et par type de note, les personnes prêtes, à compléter (avec la raison), affectées.
+   */
+  async resumeSelection(lots: number[], groupes: string[]) {
+    const liste = await this.listeAffectations({ lots, groupes });
+    const vide = () => ({
+      total: 0,
+      prets: 0,
+      bloques: 0,
+      exclus: 0,
+      affectes: 0,
+    });
+    const parType: Record<string, ReturnType<typeof vide>> = {};
+    const parGroupe: Record<string, ReturnType<typeof vide>> = {};
+    const raisons: Record<string, number> = {};
+    let aDeporter = 0;
+    let aRepartir = 0;
+    for (const x of liste) {
+      const t = (parType[x.typeNote] ??= vide());
+      const g = (parGroupe[groupeQuota(x.agent)] ??= vide());
+      for (const c of [t, g]) {
+        c.total++;
+        if (x.statut === 'EXCLU') c.exclus++;
+        else if (x.statut === 'AFFECTE') c.affectes++;
+        else if (x.derive.bloquants.length) c.bloques++;
+        else c.prets++;
+      }
+      if (x.statut === 'A_TRAITER')
+        for (const r of x.derive.bloquants) {
+          const k = r.split(' (')[0];
+          raisons[k] = (raisons[k] ?? 0) + 1;
+        }
+      if (x.statut === 'AFFECTE' && !x.deporteLe) aDeporter++;
+      // Quota « Autres » sans département retenu : à répartir (DG, 30/10/2026)
+      if (
+        x.statut === 'A_TRAITER' &&
+        x.agent.feuille === 'QUOTA_AUTRES' &&
+        !x.departementId &&
+        !x.agent.departementId
+      )
+        aRepartir++;
+    }
+    return { parType, parGroupe, raisons, aDeporter, aRepartir };
   }
 
   async obtenir(id: string) {

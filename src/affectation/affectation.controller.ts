@@ -13,10 +13,12 @@ import {
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import {
+  ArrayNotEmpty,
   IsArray,
   IsBoolean,
   IsIn,
   IsInt,
+  IsObject,
   IsOptional,
   IsString,
   Matches,
@@ -34,6 +36,7 @@ import { ControleAffectationsService } from './controle.service';
 import { StatistiquesService } from './statistiques.service';
 import { ImportBaseService } from './import.service';
 import { LotsReceptionService } from './lots-reception.service';
+import { AffectationsPersonnelService } from '../recensement/affectations-personnel.service';
 
 const DATE = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -42,6 +45,8 @@ class LotDto {
   @IsOptional() @Matches(DATE) dateSignatureDecrets?: string | null;
   @IsOptional() @Matches(DATE) dateReception?: string | null;
   @IsOptional() @IsString() observation?: string | null;
+  /** Lot déjà traité : plus proposé à l'affectation. */
+  @IsOptional() @IsBoolean() archive?: boolean;
 }
 
 class AgentDto {
@@ -80,6 +85,23 @@ class MotifDto {
 }
 
 const optInt = (v?: string) => (v ? Number(v) : undefined);
+/** « 3,4 » -> [3, 4] */
+const listeInt = (v?: string) =>
+  v
+    ? v
+        .split(',')
+        .map(Number)
+        .filter((n) => Number.isInteger(n))
+    : undefined;
+const GROUPES = ['MEPPSA', 'AUTRES_AVEC', 'AUTRES_SANS'];
+const listeGroupes = (v?: string) =>
+  v ? v.split(',').filter((g) => GROUPES.includes(g)) : undefined;
+
+class DeportDto {
+  @IsArray() @ArrayNotEmpty() @IsString({ each: true }) ids: string[];
+  /** Doublons possibles tranchés : n° de fiche du personnel, ou « NOUVELLE ». */
+  @IsOptional() @IsObject() choix?: Record<string, number | 'NOUVELLE'>;
+}
 
 @Controller()
 export class AffectationController {
@@ -90,7 +112,23 @@ export class AffectationController {
     private readonly journal: JournalService,
     private readonly controle: ControleAffectationsService,
     private readonly statsSuivi: StatistiquesService,
+    private readonly personnel: AffectationsPersonnelService,
   ) {}
+
+  /* ------------- Déport des affectés dans la base du personnel ------------- */
+
+  /** Affectés (note signée) pas encore déportés : fiche créée, mise à jour, doublon possible. */
+  @Roles(...ROLES_TRAITEMENT)
+  @Get('deport/apercu')
+  apercuDeport(@Query('lots') lots?: string) {
+    return this.personnel.apercuDeport(listeInt(lots) ?? []);
+  }
+
+  @Roles(...ROLES_TRAITEMENT)
+  @Post('deport')
+  deporter(@Utilisateur() u: UtilisateurConnecte, @Body() dto: DeportDto) {
+    return this.personnel.deporter(u, dto.ids, dto.choix ?? {});
+  }
 
   /* ------------- Statistiques de suivi et contrôle des affectations ------------- */
 
@@ -151,16 +189,36 @@ export class AffectationController {
   async importerBase(
     @Utilisateur() u: UtilisateurConnecte,
     @UploadedFile() fichier?: Express.Multer.File,
+    @Body('groupe') groupe?: string,
+    @Body('feuilles') feuilles?: string,
   ) {
     if (!fichier) throw new BadRequestException('Fichier Excel manquant');
     if (!/\.xlsx$/i.test(fichier.originalname))
       throw new BadRequestException('Seuls les fichiers .xlsx sont acceptés');
-    const rapport = await this.importation.importer(fichier.buffer);
+    if (groupe && !['MEPPSA', 'AUTRES'].includes(groupe))
+      throw new BadRequestException('Bloc inconnu (MEPPSA ou AUTRES)');
+    const rapport = await this.importation.importer(fichier.buffer, {
+      groupe: groupe as 'MEPPSA' | 'AUTRES' | undefined,
+      feuilles: feuilles ? (JSON.parse(feuilles) as string[]) : undefined,
+    });
     await this.journal.log(u, 'IMPORT_BASE_RECRUTEMENT', 'agent', null, {
       fichier: fichier.originalname,
       ...rapport,
     });
     return rapport;
+  }
+
+  /** Feuilles du classeur, leurs lignes et leurs lots, avant l'import (aucun nom). */
+  @Roles('CHEF_SERVICE', 'DG')
+  @Post('import/base/apercu')
+  @UseInterceptors(
+    FileInterceptor('fichier', { limits: { fileSize: 40 * 1024 * 1024 } }),
+  )
+  apercuBase(@UploadedFile() fichier?: Express.Multer.File) {
+    if (!fichier) throw new BadRequestException('Fichier Excel manquant');
+    if (!/\.xlsx$/i.test(fichier.originalname))
+      throw new BadRequestException('Seuls les fichiers .xlsx sont acceptés');
+    return this.importation.apercu(fichier.buffer);
   }
 
   @Get('lots')
@@ -189,6 +247,18 @@ export class AffectationController {
     @Query('essai') essai?: string,
   ) {
     return this.lotsReception.reorganiser(u, essai === '1');
+  }
+
+  /** Plusieurs lots et groupes de quota à la fois : « ?lots=3,4&groupes=MEPPSA,AUTRES_AVEC ». */
+  @Get('lots/selection/resume')
+  resumeSelection(
+    @Query('lots') lots?: string,
+    @Query('groupes') groupes?: string,
+  ) {
+    return this.service.resumeSelection(
+      listeInt(lots) ?? [],
+      listeGroupes(groupes) ?? [],
+    );
   }
 
   @Get('lots/:numero/resume')
@@ -252,9 +322,13 @@ export class AffectationController {
     @Query('statut') statut?: string,
     @Query('recherche') recherche?: string,
     @Query('probleme') probleme?: 'bloquant' | 'avertissement',
+    @Query('lots') lots?: string,
+    @Query('groupes') groupes?: string,
   ) {
     return this.service.listeAffectations({
       lot: optInt(lot),
+      lots: listeInt(lots),
+      groupes: listeGroupes(groupes),
       typeNote,
       departementId: optInt(departementId),
       statut,

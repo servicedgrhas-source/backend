@@ -25,7 +25,12 @@ import {
 } from '../common/referentiels';
 import { entierVersRomain, normaliser } from '../common/texte';
 import { JournalService, ParametresService } from '../core/core.service';
-import { libelleLot, repereLot } from '../common/lots';
+import {
+  GROUPES_QUOTA,
+  groupeQuota,
+  libelleLot,
+  repereLot,
+} from '../common/lots';
 import {
   Affectation,
   Alerte,
@@ -260,16 +265,49 @@ export class NotesService {
 
   /* ======================== Notes d'affectation ======================== */
 
-  /** Lignes éligibles : non exclues, sans blocage, pas encore dans une note validée. */
-  private async lignesAffectation(lotsIds: number[], typeNote: string) {
+  /**
+   * Lignes éligibles : non exclues, sans blocage, pas encore dans une note validée, des groupes de
+   * quota choisis (vide : tous). Une personne qu'une note ouverte plus ancienne couvre déjà (mêmes
+   * lots, même type, même groupe) n'est pas reprise : jamais deux notes pour la même personne.
+   */
+  private async lignesAffectation(
+    lotsIds: number[],
+    typeNote: string,
+    groupes: string[] = [],
+    note?: NoteService,
+  ) {
     const liste = await this.affSvc.listeAffectations({
       lotsIds,
       typeNote,
       statut: 'A_TRAITER',
+      groupes,
     });
+    const autres = (
+      await this.notes
+        .createQueryBuilder('n')
+        .where("n.module = 'AFFECTATION' AND n.typeNote = :typeNote", {
+          typeNote,
+        })
+        .andWhere("n.statut IN ('BROUILLON', 'SOUMISE')")
+        .getMany()
+    ).filter(
+      (n) =>
+        !note ||
+        (n.id !== note.id &&
+          new Date(n.creeLe).getTime() < new Date(note.creeLe).getTime()),
+    );
+    const couverte = (x: (typeof liste)[number]) =>
+      autres.some(
+        (n) =>
+          [n.lotPublicationId, ...(n.lotsFusionnes ?? [])].includes(
+            x.agent.lotPublicationId,
+          ) &&
+          (!n.groupes?.length || n.groupes.includes(groupeQuota(x.agent))),
+      );
+    const libres = liste.filter((x) => !couverte(x));
     return {
-      prets: liste.filter((x) => !x.derive.bloquants.length),
-      bloques: liste.filter((x) => x.derive.bloquants.length),
+      prets: libres.filter((x) => !x.derive.bloquants.length),
+      bloques: libres.filter((x) => x.derive.bloquants.length),
     };
   }
 
@@ -286,6 +324,8 @@ export class NotesService {
     const { prets, bloques } = await this.lignesAffectation(
       [lot!.id, ...reunis.map((l) => l.id)],
       note.typeNote,
+      note.groupes ?? [],
+      note,
     );
     const deps = await this.deps.find({ order: { ordre: 'ASC' } });
 
@@ -397,27 +437,38 @@ export class NotesService {
   }
 
   async preparerAffectation(u: UtilisateurConnecte, lotNumero: number) {
-    const lot = await this.lots.findOne({ where: { numero: lotNumero } });
-    if (!lot) throw new NotFoundException('Lot introuvable');
+    return this.preparerSelection(u, [lotNumero], []);
+  }
+
+  /**
+   * Notes de lots choisis ensemble (« Décrets lots III et IV ») et de groupes de quota choisis
+   * (« quota MEPPSA et quota Autres avec département », DG 30/10/2026) : une note par type de note,
+   * pour les personnes prêtes que n'a pas déjà une note ouverte.
+   */
+  async preparerSelection(
+    u: UtilisateurConnecte,
+    lotNumeros: number[],
+    groupes: string[],
+  ) {
+    const lots = await this.lots.find({
+      where: { numero: In(lotNumeros) },
+      order: { numero: 'ASC' },
+    });
+    if (!lots.length) throw new NotFoundException('Lot introuvable');
+    const ids = lots.map((l) => l.id);
+    // Les trois groupes choisis : la note les couvre tous (comme une note d'avant les groupes)
+    const choisis = GROUPES_QUOTA.every((g) => groupes.includes(g))
+      ? []
+      : GROUPES_QUOTA.filter((g) => groupes.includes(g));
     const creees: NoteService[] = [];
     for (const type of TYPES_NOTE_AFFECTATION) {
-      const ouverte = await this.notes
-        .createQueryBuilder('n')
-        .where("n.module = 'AFFECTATION' AND n.typeNote = :type", { type })
-        .andWhere("n.statut IN ('BROUILLON', 'SOUMISE')")
-        .andWhere(
-          '(n.lotPublicationId = :lot OR n.lotsFusionnes @> to_jsonb(:lot::int))',
-          { lot: lot.id },
-        )
-        .getOne();
-      if (ouverte) continue;
-      const { prets } = await this.lignesAffectation([lot.id], type);
+      const { prets } = await this.lignesAffectation(ids, type, choisis);
       if (!prets.length) continue;
       const rang =
         (await this.notes.count({
           where: {
             module: 'AFFECTATION',
-            lotPublicationId: lot.id,
+            lotPublicationId: lots[0].id,
             typeNote: type,
           },
         })) + 1;
@@ -425,7 +476,9 @@ export class NotesService {
         await this.notes.save({
           module: 'AFFECTATION',
           typeNote: type,
-          lotPublicationId: lot.id,
+          lotPublicationId: lots[0].id,
+          lotsFusionnes: ids.slice(1),
+          groupes: choisis,
           anneeScolaire: this.annee(),
           rang,
           introduction: NOTES_AFFECTATION[type].introduction,
@@ -438,8 +491,12 @@ export class NotesService {
       u,
       'PREPARATION_NOTES_AFFECTATION',
       'lot_publication',
-      lot.id,
-      { notes: creees.map((n) => n.typeNote) },
+      lots[0].id,
+      {
+        lots: lots.map((l) => l.numero),
+        groupes: choisis,
+        notes: creees.map((n) => n.typeNote),
+      },
     );
     return creees;
   }

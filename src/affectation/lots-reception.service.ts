@@ -3,6 +3,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { EntityManager, In, Repository } from 'typeorm';
 import type { UtilisateurConnecte } from '../auth/auth';
 import {
+  type FamilleLot,
   libelleLot,
   libellePaquet,
   TYPES_LOT,
@@ -36,6 +37,100 @@ export class LotsReceptionService {
     private readonly paquets: Repository<PaquetReception>,
     private readonly journal: JournalService,
   ) {}
+
+  /**
+   * Range des personnes dans le lot de publication écrit dans la base (DG, 30/10/2026) :
+   * « Arrêtés — lot VIII », « Décrets — lot III » ; tous les quotas d'un même lot ensemble. Le lot
+   * est créé au besoin. Une personne déjà affectée y figure aussi (« déjà affectée ») : sa note,
+   * figée, ne change pas. Renvoie le nombre de personnes rangées par lot.
+   */
+  async rangerParFichier(
+    items: { id: string; famille: FamilleLot; numero: number }[],
+    m: EntityManager = this.lots.manager,
+  ) {
+    if (!items.length) return [];
+    const L = m.getRepository(LotPublication);
+    const lots = await L.find();
+    let maxLot = Math.max(0, ...lots.map((l) => l.numero));
+    const parId = new Map(lots.map((l) => [l.id, l]));
+    // Lot actuel de chaque personne : la date de signature qu'il lui donnait la suit
+    const actuels = new Map<
+      string,
+      {
+        lot: number | null;
+        date: string | null;
+        typeTexte: string | null;
+      }
+    >();
+    const tous = items.map((i) => i.id);
+    for (let i = 0; i < tous.length; i += 1000)
+      for (const a of await m.query<
+        {
+          id: string;
+          lot: number | null;
+          date: string | null;
+          typeTexte: string | null;
+        }[]
+      >(
+        `SELECT id, "lotPublicationId" AS lot, "dateSignatureTexte"::text AS date, "typeTexte"
+         FROM agent WHERE id = ANY($1)`,
+        [tous.slice(i, i + 1000)],
+      ))
+        actuels.set(a.id, a);
+    const datesPropres: { id: string; date: string }[] = [];
+    const parLot = new Map<number, string[]>();
+    for (const it of items) {
+      let l = lots.find(
+        (x) => x.numeroFichier === it.numero && x.typeTexte === it.famille,
+      );
+      if (!l) {
+        l = await L.save(
+          L.create({
+            numero: ++maxLot,
+            paquetId: null,
+            typeTexte: it.famille,
+            quota: null,
+            autres: false,
+            // rang renseigné : la réorganisation par date ne touche pas ces lots
+            rang: it.numero,
+            numeroFichier: it.numero,
+          }),
+        );
+        lots.push(l);
+      }
+      (parLot.get(l.id) ?? parLot.set(l.id, []).get(l.id)!).push(it.id);
+      // Date de signature donnée par l'ancien lot : gardée sur la fiche (le fichier n'en a pas)
+      const a = actuels.get(it.id);
+      const ancien = a?.lot && a.lot !== l.id ? parId.get(a.lot) : undefined;
+      if (ancien && !a?.date) {
+        const d =
+          a?.typeTexte === 'DECRET'
+            ? ancien.dateSignatureDecrets
+            : ancien.dateSignatureArretes;
+        if (d) datesPropres.push({ id: it.id, date: d });
+      }
+    }
+    for (const x of datesPropres)
+      await m.query(
+        `UPDATE agent SET "dateSignatureTexte" = $2 WHERE id = $1 AND "dateSignatureTexte" IS NULL`,
+        [x.id, x.date],
+      );
+    for (const [lotId, liste] of parLot)
+      for (let i = 0; i < liste.length; i += 1000) {
+        const ids = liste.slice(i, i + 1000);
+        await m
+          .getRepository(Agent)
+          .update({ id: In(ids) }, { lotPublicationId: lotId });
+        await m.query(
+          `UPDATE affectation SET "lotPublicationId" = $1 WHERE "agentId" = ANY($2)`,
+          [lotId, ids],
+        );
+      }
+    return [...parLot].map(([id, liste]) => ({
+      lot: lots.find((x) => x.id === id)!,
+      n: liste.length,
+    }));
+  }
 
   /**
    * Range des personnes (dont le texte est déjà enregistré sur la fiche) : paquet de la

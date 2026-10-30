@@ -37,7 +37,7 @@ export const RUBRIQUES_API: Record<string, string[]> = {
   '/commission': ['commission'],
   '/pilotage': ['pilotage'],
   '/lots': ['lots'],
-  '/affectations': ['affectations'],
+  '/affectations': ['affectations', 'deport'],
   '/recommandations': ['recommandations'],
   '/statistiques': ['statistiques', 'agents/statistiques'],
   '/enrolement/campagne': ['enrolement/campagnes', 'enrolement/membres'],

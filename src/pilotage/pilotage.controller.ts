@@ -49,6 +49,7 @@ class PropositionDto {
   @IsObject() quotas: Record<string, number>;
   @IsOptional() @IsBoolean() texteRecu?: boolean;
   @IsOptional() @IsInt() lot?: number;
+  @IsOptional() @IsArray() @IsInt({ each: true }) lots?: number[];
 }
 
 class ApplicationDto {
@@ -171,16 +172,24 @@ export class PilotageController {
   }
 
   @Get('repartition')
-  etat(@Query('texteRecu') texteRecu?: string, @Query('lot') lot?: string) {
+  etat(
+    @Query('texteRecu') texteRecu?: string,
+    @Query('lot') lot?: string,
+    @Query('lots') lots?: string,
+  ) {
     return this.service.etatRepartition(
       texteRecu !== '0',
-      lot ? Number(lot) : undefined,
+      lots ? lots.split(',').map(Number) : lot ? Number(lot) : undefined,
     );
   }
 
   @Post('repartition/proposer')
   proposer(@Body() dto: PropositionDto) {
-    return this.service.proposer(dto.quotas, dto.texteRecu !== false, dto.lot);
+    return this.service.proposer(
+      dto.quotas,
+      dto.texteRecu !== false,
+      dto.lots ?? dto.lot,
+    );
   }
 
   @Post('repartition/appliquer')
