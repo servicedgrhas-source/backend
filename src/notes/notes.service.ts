@@ -43,7 +43,12 @@ import { MutationService } from '../mutation/mutation.service';
 import { AffectationsPersonnelService } from '../recensement/affectations-personnel.service';
 import { DIPLOMES_ENROLEMENT } from '../enrolement/enrolement.service';
 import { noteWord } from './note-word';
-import { CATEGORIE as CATEGORIE_NOMINATION } from '../nominations/categories';
+import {
+  CATEGORIE as CATEGORIE_NOMINATION,
+  echelonBase,
+  gradeAbrege,
+  repereNomination,
+} from '../nominations/categories';
 import { NominationsService } from '../nominations/nominations.service';
 
 export interface Colonne {
@@ -643,11 +648,15 @@ export class NotesService {
       n,
       nom: x.nomComplet,
       vague: x.vague,
+      // Grade en abrégé (« Inst. C. 1er ») : réunion du 29/10/2026
       ge: [
-        x.grade,
-        x.echelon
-          ? `${x.echelon}${/^\d+$/.test(x.echelon) ? (x.echelon === '1' ? 'er' : 'e') : ''}`
-          : null,
+        gradeAbrege(x.grade),
+        (() => {
+          const e = echelonBase(x.echelon);
+          return e
+            ? `${e}${/^\d+$/.test(e) ? (e === '1' ? 'er' : 'e') : ''}`
+            : null;
+        })(),
       ]
         .filter(Boolean)
         .join(' '),
@@ -705,12 +714,16 @@ export class NotesService {
         nbDeps,
         liste.length,
       ),
+      // Une seule personne : « L'intéressé(e) percevra » (réunion du 29/10/2026 : deux modèles)
       mentions: [
-        'Les intéressés percevront les indemnités prévues par les textes en vigueur.',
+        liste.length === 1
+          ? `${liste[0].genre === 'F' ? 'L’intéressée percevra' : liste[0].genre === 'M' ? 'L’intéressé percevra' : 'L’intéressé(e) percevra'} les indemnités prévues par les textes en vigueur.`
+          : 'Les intéressés percevront les indemnités prévues par les textes en vigueur.',
         'La présente note de service prend effet à compter de la date de signature.',
       ],
       piedDePage: `Note de nomination des ${cat?.formule ?? note.typeNote}/MEPPSA/${note.anneeScolaire}`,
-      repere: 'Nom.',
+      // « 29/10/2026/Nomm. Provis. » : on sait d'un coup d'œil qui la note nomme
+      repere: repereNomination(note.typeNote),
     };
   }
 
@@ -1731,14 +1744,17 @@ export class NotesService {
   }
 
   /** La note au format Word : même mise en page que la version imprimée, modifiable. */
-  async word(id: string): Promise<{ nom: string; contenu: Buffer }> {
+  async word(
+    id: string,
+    avecVisas = true,
+  ): Promise<{ nom: string; contenu: Buffer }> {
     const n = await this.obtenir(id);
     return {
       nom: `${n.libelle
         .replace(/[^\p{L}\p{N} ()-]+/gu, ' ')
         .replace(/\s+/g, ' ')
         .trim()}.docx`,
-      contenu: await noteWord(n),
+      contenu: await noteWord(n, avecVisas),
     };
   }
 
@@ -1782,21 +1798,28 @@ export class NotesService {
             .map((x) => x.cle),
         ]
       : ['n', ...c.colonnes.map((x) => x.cle)];
-    ws.columns = cles.map((k) => ({
-      width:
-        k === 'nom'
-          ? 34
-          : k === 'n'
-            ? 5
-            : [
-                  'reference',
-                  'ancienPoste',
-                  'structure',
-                  'etablissement',
-                ].includes(k)
-              ? 24
-              : 11,
-    }));
+    // Chaque colonne à la largeur de son contenu (bornée) : rien ne déborde sur la voisine (DG, 29/10/2026)
+    const longues = [
+      'reference',
+      'ancienPoste',
+      'nouveauPoste',
+      'structure',
+      'etablissement',
+      'specialite',
+      'lieu',
+    ];
+    const largeurs = cles.map((k, i) => {
+      const max = k === 'nom' ? 38 : longues.includes(k) ? 30 : 16;
+      const min = k === 'n' ? 4 : k === 'nom' ? 24 : 6;
+      const contenu = Math.max(
+        ...colonnes[i].split(/\s+/).map((m) => m.length + 1),
+        ...c.sections.flatMap((x) =>
+          x.lignes.map((l) => String(l[k] ?? '').length + 1),
+        ),
+      );
+      return Math.min(max, Math.max(min, contenu));
+    });
+    ws.columns = largeurs.map((width) => ({ width }));
     const texte = (v: string, gras = false, taille = 10) => {
       const r = ws.addRow([v]);
       ws.mergeCells(r.number, 1, r.number, cles.length);
@@ -1837,10 +1860,30 @@ export class NotesService {
       });
       for (const l of sec.lignes) {
         const r = ws.addRow(cles.map((k) => l[k] ?? null));
+        // La hauteur suit la cellule qui passe le plus à la ligne
+        r.height = Math.max(
+          15,
+          12.5 *
+            Math.max(
+              1,
+              ...cles.map((k, i) =>
+                Math.ceil(
+                  String(l[k] ?? '').length / Math.max(1, largeurs[i] - 1),
+                ),
+              ),
+            ),
+        );
         r.eachCell({ includeEmpty: true }, (cell, i) => {
           if (i > cles.length) return;
           cell.font = { size: 9 };
           cell.border = bord;
+          cell.alignment = {
+            vertical: 'middle',
+            wrapText: true,
+            horizontal: ['nom', 'ancienPoste'].includes(cles[i - 1])
+              ? 'left'
+              : 'center',
+          };
         });
       }
     }
@@ -1852,9 +1895,15 @@ export class NotesService {
     texte(n.entete.signataireNom, true);
     texte('');
     texte('Ampliations :', true);
+    // Ampliations : le libellé sur toute la largeur sauf la dernière colonne (le nombre) : rien ne déborde
     for (const a of c.ampliations) {
-      const r = ws.addRow([a.libelle, null, a.nombre]);
+      const r = ws.addRow([a.libelle]);
+      r.getCell(cles.length).value = a.nombre;
+      if (cles.length > 2)
+        ws.mergeCells(r.number, 1, r.number, cles.length - 1);
       r.font = { size: 9 };
+      r.getCell(1).alignment = { wrapText: true, vertical: 'top' };
+      r.getCell(cles.length).alignment = { horizontal: 'center' };
     }
     return {
       nom: `${n.libelle

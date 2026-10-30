@@ -33,6 +33,41 @@ export interface NoteWord {
   anneeScolaire: string;
   contenu: ContenuNote;
   entete: Entete;
+  /** Avis de conformité (bureau, service, direction) et validation du DG : les visas de l'en-tête. */
+  conformite?: { niveau: string; par: string; le: string; conforme: boolean }[];
+  valideePar?: string | null;
+}
+
+/** « Jean Paul MOUKOKO » → « JPM » */
+const initiales = (nom: string) =>
+  nom
+    .split(/[\s-]+/)
+    .filter(Boolean)
+    .map((m) => m[0].toUpperCase())
+    .join('')
+    .slice(0, 3);
+
+/**
+ * Spécimen de visa à droite d'une ligne de l'en-tête (DG, 30/10/2026), un tracé par responsable :
+ * le service (initiales soulignées d'une vague), la direction (initiales et flèche), la direction
+ * générale (trait, initiales et point). Provisoire, en attendant les vrais spécimens.
+ */
+function runVisa(style: 'SERVICE' | 'DIRECTION' | 'DG', nom: string) {
+  const ini = initiales(nom);
+  const encre = '1E3A8A';
+  const ecriture = (t: string) =>
+    new TextRun({
+      text: t,
+      font: 'Segoe Script',
+      size: 22,
+      color: encre,
+      italics: true,
+    });
+  const signe = (t: string) =>
+    new TextRun({ text: t, font: POLICE, size: 22, color: encre, bold: true });
+  if (style === 'SERVICE') return [signe('   '), ecriture(ini), signe(' ~~')];
+  if (style === 'DIRECTION') return [signe('   '), ecriture(ini), signe(' ↗')];
+  return [signe('   / '), ecriture(ini), signe(' •')];
 }
 
 /** Largeur des colonnes (mm), comme la version imprimée ; le nom prend la place restante. */
@@ -150,9 +185,32 @@ const cellule = (
     margins: { left: 60, right: 60, top: 20, bottom: 20 },
   });
 
-export async function noteWord(n: NoteWord): Promise<Buffer> {
+export async function noteWord(n: NoteWord, avecVisas = true): Promise<Buffer> {
   const c = n.contenu;
   const e = n.entete;
+  // Visas de l'en-tête : service (chef de service, sinon de bureau), direction, direction générale
+  const avis = (niv: string) =>
+    (n.conformite ?? []).find((x) => x.niveau === niv && x.conforme)?.par ??
+    null;
+  const visa = {
+    SERVICE: avecVisas ? (avis('SERVICE') ?? avis('BUREAU')) : null,
+    DIRECTION: avecVisas ? avis('DIRECTION') : null,
+    DG: avecVisas ? (n.valideePar ?? null) : null,
+  };
+  /** Une ligne de l'en-tête, avec le visa de son responsable juste à droite. */
+  const ligneVisa = (
+    t: string,
+    style: 'SERVICE' | 'DIRECTION' | 'DG',
+  ): Paragraph =>
+    visa[style]
+      ? p(
+          [
+            new TextRun({ text: t, font: POLICE, size: 20, bold: true }),
+            ...runVisa(style, visa[style]),
+          ],
+          { centre: true },
+        )
+      : p(t, { centre: true, gras: true, taille: 10 });
   const avecGrade = c.colonnes.some((x) => x.cle === 'grade');
   const refCol = c.colonnes.find((x) => x.cle === 'reference');
   const autres = c.colonnes.filter(
@@ -290,33 +348,18 @@ export async function noteWord(n: NoteWord): Promise<Buffer> {
                   gras: true,
                   taille: 10,
                 }),
-                p('ET DE L’ADMINISTRATION SCOLAIRE', {
-                  centre: true,
-                  gras: true,
-                  taille: 10,
-                }),
+                ligneVisa('ET DE L’ADMINISTRATION SCOLAIRE', 'DG'),
                 sep(),
                 p('DIRECTION DES RECRUTEMENTS', {
                   centre: true,
                   gras: true,
                   taille: 10,
                 }),
-                p('ET DU SUIVI DES CARRIERES', {
-                  centre: true,
-                  gras: true,
-                  taille: 10,
-                }),
+                ligneVisa('ET DU SUIVI DES CARRIERES', 'DIRECTION'),
                 sep(),
                 // Le service suit le numéro : « …-DRSC-SR » (une note signée avant garde son en-tête)
                 ...(/-SR$/.test(e.reference)
-                  ? [
-                      p('SERVICE DES RECRUTEMENTS', {
-                        centre: true,
-                        gras: true,
-                        taille: 10,
-                      }),
-                      sep(),
-                    ]
+                  ? [ligneVisa('SERVICE DES RECRUTEMENTS', 'SERVICE'), sep()]
                   : []),
                 p(
                   `N°${n.numero ? ` ${n.numero}` : '__________'}/${e.reference}`,

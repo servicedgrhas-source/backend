@@ -84,6 +84,20 @@ export class NominationsController {
     return this.service.candidats(u, q ?? '', categorie);
   }
 
+  /** Circonscriptions déjà écrites dans les nominations du département (pour les choisir). */
+  @Get('circonscriptions')
+  circonscriptions(
+    @Utilisateur() u: UtilisateurConnecte,
+    @Query('departement') departement?: string,
+    @Query('annee') annee?: string,
+  ) {
+    return this.service.circonscriptions(
+      u,
+      Number(departement) || undefined,
+      annee,
+    );
+  }
+
   @Post('import')
   @UseInterceptors(
     FileInterceptor('fichier', { limits: { fileSize: 40 * 1024 * 1024 } }),

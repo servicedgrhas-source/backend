@@ -19,6 +19,10 @@ import {
   CATEGORIE,
   CATEGORIES_NOMINATION,
   categorieDe,
+  cycleBase,
+  echelonBase,
+  fonctionBase,
+  gradeAbrege,
   gradeEchelon,
   OBSERVATIONS,
   type Observation,
@@ -103,7 +107,7 @@ export class NominationsService {
 
   /* ------------------------------ Lecture ------------------------------ */
 
-  async liste(u: UtilisateurConnecte, f: FiltresNominations) {
+  async liste(u: UtilisateurConnecte, f: FiltresNominations, limite = 1500) {
     const dep = this.perimetre(u);
     const annee =
       f.annee && ANNEE.test(f.annee) ? f.annee : await this.anneeCourante();
@@ -183,8 +187,8 @@ export class NominationsService {
       departement: dep,
       peutDecider: this.dgrhas(u),
       total: vues.length,
-      lignes: vues.slice(0, 1500),
-      tronque: vues.length > 1500,
+      lignes: vues.slice(0, limite),
+      tronque: vues.length > limite,
       compteurs: {
         tous: tous.length,
         proposees: compter((n) => n.statut === 'PROPOSEE'),
@@ -561,7 +565,18 @@ export class NominationsService {
       throw new ForbiddenException(
         'Vous ne proposez que dans votre département.',
       );
+    const ancien = {
+      poste: n.ancienPoste,
+      circonscription: n.circonscription,
+      departementId: n.departementId,
+    };
     const changes = this.proposer(n, dto);
+    // Permutation avec un autre cadre de la même fonction : chacun prend le poste de l'autre
+    const partenaire =
+      n.observation === 'PERMUTE' && Number(dto.permuteAvec)
+        ? await this.permuter(u, n, ancien, Number(dto.permuteAvec))
+        : null;
+    if (partenaire) changes.push('nouveauPoste');
     if (!changes.length) return n;
     // Ce qui n'est pas « reconduit au même poste » se justifie (DGRHAS, 26/10/2026)
     if (n.observation !== 'RECONDUIT' && !n.motif)
@@ -592,8 +607,84 @@ export class NominationsService {
   }
 
   /**
-   * Agents de la base du personnel à nommer (DGRHAS, 26/10/2026 : on ne nomme qu'un agent qui est
-   * sur le terrain, enseignant à la base, du cycle). Avec ce qui pose question pour la fonction.
+   * Permutation (réunion du 29/10/2026 : « il échange son poste avec un autre cadre de la même
+   * fonction ; mettre la nouvelle personne et aussi l'ancienne ») : la personne prend le poste du
+   * partenaire, et le partenaire, à la même fonction et la même année, prend le sien (« Permuté »).
+   */
+  private async permuter(
+    u: UtilisateurConnecte,
+    n: Partial<Nomination>,
+    ancien: {
+      poste: string | null | undefined;
+      circonscription: string | null | undefined;
+      departementId: number | null | undefined;
+    },
+    partenaireId: number,
+  ) {
+    const p = await this.charger(u, partenaireId);
+    if (p.id === n.id)
+      throw new BadRequestException('On ne permute pas avec soi-même.');
+    if (p.annee !== n.annee)
+      throw new BadRequestException(
+        'La permutation se fait entre deux cadres de la même année.',
+      );
+    if (p.categorie !== n.categorie)
+      throw new BadRequestException(
+        `On permute avec un cadre de la même fonction (${CATEGORIE.get(n.categorie ?? '')?.libelle ?? n.categorie}).`,
+      );
+    if (p.statut !== 'PROPOSEE')
+      throw new BadRequestException(
+        `${p.nomComplet} : sa nomination est ${p.statut === 'VALIDEE' ? 'validée' : 'rejetée'} ; remettez-la d’abord en proposition.`,
+      );
+    if (!ancien.poste)
+      throw new BadRequestException(
+        'Indiquez le poste actuel : c’est celui que prendra l’autre cadre.',
+      );
+    n.nouveauPoste = p.ancienPoste ?? p.nouveauPoste;
+    n.circonscription = p.circonscription ?? n.circonscription;
+    n.departementId = p.departementId ?? n.departementId;
+    p.observation = 'PERMUTE';
+    p.nouveauPoste = ancien.poste;
+    p.circonscription = ancien.circonscription ?? p.circonscription;
+    p.departementId = ancien.departementId ?? p.departementId;
+    p.motif = p.motif || n.motif || null;
+    p.modifie = true;
+    await this.noms.save(p);
+    await this.journal.log(
+      u,
+      'NOMINATION_PERMUTATION',
+      'nomination',
+      String(p.id),
+      {
+        avec: n.nomComplet,
+      },
+    );
+    return p;
+  }
+
+  /** Circonscriptions déjà écrites dans les nominations d'un département (pour choisir, pas retaper). */
+  async circonscriptions(
+    u: UtilisateurConnecte,
+    departementId?: number,
+    annee?: string,
+  ) {
+    const dep = this.perimetre(u) ?? departementId ?? null;
+    return (
+      await this.noms.query<{ c: string; n: number }[]>(
+        `SELECT circonscription AS c, count(*)::int AS n FROM nomination
+          WHERE circonscription IS NOT NULL AND circonscription <> ''
+            ${dep ? 'AND "departementId" = $1' : ''}
+            ${annee && ANNEE.test(annee) ? `AND annee = '${annee}'` : ''}
+          GROUP BY 1 ORDER BY 1`,
+        dep ? [dep] : [],
+      )
+    ).map((x) => x.c);
+  }
+
+  /**
+   * Agents de la base du personnel à nommer (DGRHAS, 26/10/2026 : on nomme d'abord un agent qui est
+   * sur le terrain ; réunion du 29/10/2026 : rarement un communautaire, quand la localité n'a pas
+   * de fonctionnaire). Avec sa fonction actuelle d'après sa fiche et ce qui pose question.
    */
   async candidats(u: UtilisateurConnecte, q: string, categorie?: string) {
     this.perimetre(u);
@@ -617,7 +708,7 @@ export class NominationsService {
     >(
       `SELECT a.id, a."nomComplet", a.statut, a.matricule, a."departementId", d.nom AS departement,
               s.nom AS structure, s.cycle,
-              jsonb_build_object('FONCTION', a.donnees->'FONCTION', 'GRADE', a.donnees->'GRADE', 'ECHELON', a.donnees->'ECHELON',
+              jsonb_build_object('FONCTION', a.donnees->'FONCTION', 'FONCTION_STRUCTURE', a.donnees->'FONCTION_STRUCTURE', 'GRADE', a.donnees->'GRADE', 'ECHELON', a.donnees->'ECHELON',
                                  'CATEGORIE', a.donnees->'CATEGORIE', 'ECHELLE', a.donnees->'ECHELLE', 'SPECIALITE', a.donnees->'SPECIALITE',
                                  'GENRE', a.donnees->'GENRE', 'CYCLE', a.donnees->'CYCLE') AS donnees
          FROM agent_recense a
@@ -638,18 +729,22 @@ export class NominationsService {
         normaliser(d.CYCLE).match(/PRESCO|PRIMAIRE|COLLEGE|LYCEE|ALPHA/)?.[0] ??
         null;
       const remarques: string[] = [];
+      // Réunion du 29/10/2026 : un administratif peut être nommé sans être passé par l'enseignement ;
+      // un communautaire rarement (une localité sans fonctionnaire) : on le signale, sans bloquer
       if (!['FONCTIONNAIRE', 'CONTRACTUEL'].includes(a.statut))
         remarques.push(
-          `${a.statut.toLowerCase()} : seuls les fonctionnaires et contractuels sont nommés`,
+          `${a.statut.toLowerCase()} : on nomme rarement un agent qui n’est ni fonctionnaire ni contractuel (possible si la localité n’en a pas)`,
         );
+      const fonctionStructure = enTexte(d.FONCTION_STRUCTURE);
       if (
-        fonction &&
-        !/ENSEIGN|INSTITUT|PROFESS|MAITRE|INSPECT|CONSEILL|DIRECT|ECONOM|SURVEILL|PROVISEUR|CENSEUR|INTENDANT/.test(
-          normaliser(fonction),
+        cat &&
+        fonctionStructure &&
+        !normaliser(cat.libelle).includes(
+          normaliser(fonctionStructure).split(' ')[0],
         )
       )
         remarques.push(
-          `fonction « ${fonction} » : un cadre de gestion est d’abord un enseignant`,
+          `dans sa fiche, il est « ${fonctionStructure} » : vérifiez que la fonction choisie (${cat.libelle.toLowerCase()}) est bien la bonne`,
         );
       if (
         cat &&
@@ -660,9 +755,13 @@ export class NominationsService {
         remarques.push(
           `travaille au ${String(cycleAgent).toLowerCase()} : la fonction est au ${cat.cycle.toLowerCase()}`,
         );
+      // Grade en abrégé, comme dans la base et les notes (« Inst. C. 1 »)
       const ge = {
-        grade: enTexte(d.GRADE) || null,
-        echelon: enTexte(d.ECHELON) || null,
+        grade: gradeAbrege(enTexte(d.GRADE), {
+          statut: a.statut,
+          qualification: fonction,
+        }),
+        echelon: echelonBase(enTexte(d.ECHELON)),
       };
       return {
         id: a.id,
@@ -673,6 +772,7 @@ export class NominationsService {
         departement: a.departement,
         structure: a.structure,
         fonction: fonction || null,
+        fonctionStructure: fonctionStructure || null,
         grade: ge.grade,
         echelon: ge.echelon,
         categorieAgent: enTexte(d.CATEGORIE) || null,
@@ -714,8 +814,11 @@ export class NominationsService {
         agentId,
         nomComplet: a.nomComplet,
         nomNormalise: normaliser(a.nomComplet),
-        grade: enTexte(d.GRADE) || null,
-        echelon: enTexte(d.ECHELON) || null,
+        grade: gradeAbrege(enTexte(d.GRADE), {
+          statut: a.statut,
+          qualification: enTexte(d.FONCTION),
+        }),
+        echelon: echelonBase(enTexte(d.ECHELON)),
         categorieAgent: enTexte(d.CATEGORIE) || null,
         echelle: enTexte(d.ECHELLE) || null,
         specialite: enTexte(d.SPECIALITE) || null,
@@ -739,6 +842,20 @@ export class NominationsService {
       throw new BadRequestException(
         'Choisissez la fonction (catégorie de nomination).',
       );
+    if (n.observation === 'PERMUTE' && Number(dto.permuteAvec)) {
+      if (!n.motif)
+        throw new BadRequestException('Écrivez le motif de la proposition.');
+      await this.permuter(
+        u,
+        n,
+        {
+          poste: n.ancienPoste,
+          circonscription: n.circonscription,
+          departementId: n.departementId,
+        },
+        Number(dto.permuteAvec),
+      );
+    }
     if (dep) n.departementId = dep;
     if (!n.departementId)
       throw new BadRequestException('Choisissez le département.');
@@ -874,103 +991,239 @@ export class NominationsService {
 
   /* ------------------------------ Export ------------------------------ */
 
-  /** Fiche de validation (Excel) : celle que l'on envoie aux DDEPPSA et à la commission. */
+  /**
+   * Fiche de validation (Excel), comme la base de la DGRHAS (« MEPPSA_Nominations 2026-2027_Base de
+   * données.xlsx », 29/10/2026) : l'en-tête du ministère, la feuille « COMPIL » (tous les
+   * départements) puis une feuille par département (« COMPIL BOUENZA »…), les mêmes colonnes dans le
+   * même ordre (N°, DEPARTEMENT, CIRCONSC., CYCLE, FONCTION, NOMS ET PRENOMS, GENRE, GRAD/ ECHELON,
+   * VAGUE, ANCIEN POSTE, NOUVEAU POSTE, OBS., MOTIF, AVIS DIR PED., AVIS DU DGRHAS, DECISION DU
+   * MINISTRE) et les mêmes écritures (« 2-Primaire », « 1-Directeur », « Inst. C. 1 », « A Muter »).
+   * Chaque colonne prend la largeur de son contenu, le texte long passe à la ligne et la hauteur de
+   * la ligne suit : rien ne déborde sur la colonne voisine. En jaune, ce que la DDEPPSA a changé.
+   */
   async excel(u: UtilisateurConnecte, f: FiltresNominations) {
-    const r = await this.liste(u, f);
+    const r = await this.liste(u, f, 100000);
     const wb = new ExcelJS.Workbook();
-    wb.creator = 'SIRHAS';
-    const ws = wb.addWorksheet('Nominations', {
-      pageSetup: {
-        orientation: 'landscape',
-        paperSize: 9,
-        fitToPage: true,
-        fitToWidth: 1,
-        fitToHeight: 0,
-      },
-    });
-    for (const t of [
-      'MINISTERE DE L’ENSEIGNEMENT PRESCOLAIRE, PRIMAIRE, SECONDAIRE ET DE L’ALPHABETISATION',
-      'DIRECTION GENERALE DES RESSOURCES HUMAINES ET DE L’ADMINISTRATION SCOLAIRE',
-      '',
-      `FICHE DE VALIDATION DES NOMINATIONS ${r.annee}`,
-      'CONSIGNE : pour chaque ligne, dites ce que l’on fait (reconduire, muter, promouvoir, permuter, relever), avec le motif.',
-      '',
-    ])
-      ws.addRow([t]).font = { bold: !!t && !t.startsWith('CONSIGNE') };
-    const entetes = [
+    wb.creator = 'SIGRHAS-MEPPSA';
+    const ENTETES = [
       'N°',
       'DEPARTEMENT',
       'CIRCONSC.',
-      'GROUPE',
+      'CYCLE',
       'FONCTION',
       'NOMS ET PRENOMS',
       'GENRE',
-      'GRADE/ECHELON',
+      'GRAD/ ECHELON',
       'VAGUE',
       'ANCIEN POSTE',
       'NOUVEAU POSTE',
       'OBS.',
       'MOTIF',
-      'AVIS DDEPPSA',
+      'AVIS DIR PED.',
       'AVIS DU DGRHAS',
-      'DECISION',
+      'DECISION DU MINISTRE',
     ];
-    const e = ws.addRow(entetes);
-    e.font = { bold: true };
-    e.eachCell((c) => {
-      c.fill = {
-        type: 'pattern',
-        pattern: 'solid',
-        fgColor: { argb: 'FFE5E7EB' },
-      };
-      c.border = {
-        top: { style: 'thin' },
-        bottom: { style: 'thin' },
-        left: { style: 'thin' },
-        right: { style: 'thin' },
-      };
-      c.alignment = { wrapText: true, vertical: 'middle' };
-    });
-    r.lignes.forEach((n, i) => {
-      const row = ws.addRow([
+    // Largeur mini et maxi de chaque colonne (au-delà du maxi, le texte passe à la ligne)
+    const BORNES: [number, number][] = [
+      [4, 6],
+      [9, 16],
+      [10, 24],
+      [9, 14],
+      [9, 20],
+      [22, 40],
+      [6, 7],
+      [9, 14],
+      [6, 7],
+      [16, 32],
+      [16, 32],
+      [9, 13],
+      [14, 40],
+      [10, 24],
+      [10, 24],
+      [10, 14],
+    ];
+    const departement = (nom: string | null) =>
+      !nom
+        ? ''
+        : normaliser(nom) === 'CUVETTE-OUEST'
+          ? 'CUV. OUEST'
+          : normaliser(nom);
+    const valeurs = (n: (typeof r.lignes)[number], i: number) => {
+      const c = CATEGORIE.get(n.categorie);
+      const ge = [gradeAbrege(n.grade), echelonBase(n.echelon)]
+        .filter(Boolean)
+        .join(' ');
+      return [
         i + 1,
-        n.departement,
-        n.circonscription,
-        n.groupe,
-        n.categorieLibelle,
+        departement(n.departement),
+        n.circonscription ?? '',
+        cycleBase(c),
+        fonctionBase(c, n.genre),
         n.nomComplet,
-        n.genre,
-        [n.grade, n.echelon].filter(Boolean).join(' '),
-        n.vague,
-        n.ancienPoste,
-        n.nouveauPoste,
+        n.genre ?? '',
+        ge,
+        n.vague ?? '',
+        n.ancienPoste ?? '',
+        n.nouveauPoste ?? '',
         n.statut === 'PROPOSEE'
-          ? OBSERVATIONS[n.observation as Observation]?.proposer
+          ? (
+              OBSERVATIONS[n.observation as Observation]?.proposer ?? ''
+            ).replace('À ', 'A ')
           : NominationsService.obsImprimee(n),
-        n.motif,
-        n.avisDdeppsa,
-        n.avisDgrhas,
+        n.motif ?? '',
+        n.avisDdeppsa ?? '',
+        n.avisDgrhas ?? '',
         n.statut === 'VALIDEE'
           ? 'Validée'
           : n.statut === 'REJETEE'
             ? 'Rejetée'
-            : 'Proposée',
-      ]);
-      // Ce que la DDEPPSA a changé : en jaune, comme dans la consigne
-      if (n.modifie)
-        row.eachCell(
-          (c) =>
-            (c.fill = {
+            : '',
+      ] as (string | number)[];
+    };
+    const bord: Partial<ExcelJS.Borders> = {
+      top: { style: 'thin' },
+      left: { style: 'thin' },
+      bottom: { style: 'thin' },
+      right: { style: 'thin' },
+    };
+    const feuille = (
+      nom: string,
+      sousTitre: string,
+      lignes: typeof r.lignes,
+    ) => {
+      const ws = wb.addWorksheet(nom.slice(0, 31), {
+        pageSetup: {
+          orientation: 'landscape',
+          paperSize: 9,
+          fitToPage: true,
+          fitToWidth: 1,
+          fitToHeight: 0,
+          margins: {
+            left: 0.3,
+            right: 0.3,
+            top: 0.4,
+            bottom: 0.4,
+            header: 0.2,
+            footer: 0.2,
+          },
+        },
+      });
+      // En-tête du ministère (à gauche) et de la République (à droite), comme la base
+      const gauche = [
+        'MINISTERE DE L’ENSEIGNEMENT PRESCOLAIRE,',
+        'PRIMAIRE, SECONDAIRE ET DE L’ALPHABETISATION',
+        '----------',
+        'CABINET',
+        '----------',
+        'DIRECTION GENERALE DES RESSOURCES HUMAINES ET',
+        'DE L’ADMINISTRATION SCOLAIRE',
+        '----------',
+      ];
+      const droite = [
+        'REPUBLIQUE DU CONGO',
+        'Unité-Travail-Progrès',
+        '----------',
+      ];
+      gauche.forEach((t, k) => {
+        const row = ws.getRow(k + 1);
+        row.getCell(1).value = t;
+        ws.mergeCells(k + 1, 1, k + 1, 6);
+        row.getCell(1).font = { bold: true, size: 9 };
+        row.getCell(1).alignment = { horizontal: 'center' };
+        if (droite[k]) {
+          row.getCell(12).value = droite[k];
+          ws.mergeCells(k + 1, 12, k + 1, 16);
+          row.getCell(12).font = { bold: k === 0, italic: k === 1, size: 9 };
+          row.getCell(12).alignment = { horizontal: 'center' };
+        }
+      });
+      const titre = (ligne: number, t: string, taille = 12) => {
+        ws.getRow(ligne).getCell(1).value = t;
+        ws.mergeCells(ligne, 1, ligne, 16);
+        ws.getRow(ligne).getCell(1).font = { bold: true, size: taille };
+        ws.getRow(ligne).getCell(1).alignment = { horizontal: 'center' };
+      };
+      titre(10, `FICHE DE VALIDATION DES NOMINATIONS ${r.annee}`, 13);
+      titre(12, sousTitre, 11);
+      titre(14, `TABLEAU DES PROPOSITIONS DE NOMINATION (${r.annee})`, 11);
+      const e = ws.getRow(15);
+      e.values = ENTETES;
+      e.height = 42.6;
+      e.eachCell((c) => {
+        c.font = { bold: true, size: 9 };
+        c.border = bord;
+        c.alignment = {
+          horizontal: 'center',
+          vertical: 'middle',
+          wrapText: true,
+        };
+        c.fill = {
+          type: 'pattern',
+          pattern: 'solid',
+          fgColor: { argb: 'FFE5E7EB' },
+        };
+      });
+      const donnees = lignes.map((n, i) => ({ n, v: valeurs(n, i) }));
+      // Largeur de chaque colonne : son contenu le plus long, entre ses bornes
+      const largeurs = BORNES.map(([min, max], k) =>
+        Math.min(
+          max,
+          Math.max(
+            min,
+            ...ENTETES[k].split(/\s+/).map((m) => m.length + 1),
+            ...donnees.map(({ v }) => String(v[k] ?? '').length + 1),
+          ),
+        ),
+      );
+      largeurs.forEach((w, k) => (ws.getColumn(k + 1).width = w));
+      donnees.forEach(({ n, v }) => {
+        const row = ws.addRow(v);
+        // Hauteur : la cellule qui a le plus de lignes une fois passée à la ligne
+        const lignesTexte = Math.max(
+          1,
+          ...v.map((x, k) =>
+            Math.ceil(String(x ?? '').length / Math.max(1, largeurs[k] - 1)),
+          ),
+        );
+        row.height = Math.max(14.1, lignesTexte * 12.5);
+        row.eachCell({ includeEmpty: true }, (c, k) => {
+          if (k > ENTETES.length) return;
+          c.font = { size: [2, 13].includes(k) ? 9 : 10 };
+          c.border = bord;
+          c.alignment = {
+            vertical: 'middle',
+            wrapText: true,
+            horizontal: [1, 2, 4, 7, 8, 9].includes(k) ? 'center' : 'left',
+          };
+          if (n.modifie)
+            c.fill = {
               type: 'pattern',
               pattern: 'solid',
               fgColor: { argb: 'FFFEF3C7' },
-            }),
+            };
+        });
+      });
+      ws.views = [{ state: 'frozen', ySplit: 15 }];
+      ws.autoFilter = {
+        from: { row: 15, column: 1 },
+        to: { row: 15, column: 16 },
+      };
+      ws.pageSetup.printTitlesRow = '15:15';
+    };
+    feuille('COMPIL', 'COMPILATION DES DEPARTEMENTS', r.lignes);
+    // Une feuille par département, dans l'ordre de la liste (comme « COMPIL BOUENZA »…)
+    const parDep = new Map<string, typeof r.lignes>();
+    for (const n of r.lignes) {
+      const k = n.departement ?? 'SANS DEPARTEMENT';
+      parDep.set(k, [...(parDep.get(k) ?? []), n]);
+    }
+    if (parDep.size > 1)
+      for (const [dep, l] of parDep)
+        feuille(
+          `COMPIL ${departement(dep) || dep}`,
+          `DEPARTEMENT : ${departement(dep) || dep}`,
+          l,
         );
-    });
-    [5, 14, 16, 14, 30, 30, 6, 12, 8, 24, 24, 14, 28, 18, 18, 11].forEach(
-      (w, i) => (ws.getColumn(i + 1).width = w),
-    );
-    ws.views = [{ state: 'frozen', ySplit: e.number }];
     return Buffer.from(await wb.xlsx.writeBuffer());
   }
 }

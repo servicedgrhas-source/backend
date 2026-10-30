@@ -190,8 +190,13 @@ export class NotesController {
 
   /** La note au format Word, modifiable (réunion DG du 26/10/2026). */
   @Get(':id/word')
-  async word(@Param('id') id: string, @Res() res: Response) {
-    const { nom, contenu } = await this.service.word(id);
+  async word(
+    @Param('id') id: string,
+    @Res() res: Response,
+    // « ?visas=0 » : sans les spécimens de visa de l'en-tête
+    @Query('visas') visas?: string,
+  ) {
+    const { nom, contenu } = await this.service.word(id, visas !== '0');
     res.setHeader(
       'Content-Type',
       'application/vnd.openxmlformats-officedocument.wordprocessingml.document',

@@ -525,3 +525,148 @@ export function gradeEchelon(brut: unknown): {
     ? { grade: m[1].replace(/[.\s]+$/, '') || null, echelon: m[2] }
     : { grade: t, echelon: null };
 }
+
+/* ------------------------------ Écritures de la base des nominations (DGRHAS, 29/10/2026) ------------------------------ */
+
+/**
+ * Grade abrégé, comme dans la base des nominations et les notes (« Inst. 1 », « Inst. C. 1 »,
+ * « PCEG 3 », « PCL 4 ») : réunion du 29/10/2026, « il faut que ça apparaisse en abrégé, sinon
+ * c'est trop long ». Un contractuel dont la fiche ne dit que « Contractuel catég. C échelle 8 »
+ * prend sa qualification (« Instituteur » → « Inst. C. »). Un grade déjà abrégé reste tel quel.
+ */
+export function gradeAbrege(
+  grade: string | null | undefined,
+  o: { statut?: string | null; qualification?: string | null } = {},
+): string | null {
+  const brut = enTexte(grade).replace(/\s+/g, ' ').trim();
+  const contractuel =
+    o.statut === 'CONTRACTUEL' || /CONTRACTUEL|\bCATEG/.test(normaliser(brut));
+  // « Contractuel catég. C échelle 8 » : la qualification de la fiche dit le métier
+  const metier = /CONTRACTUEL|\bCATEG/.test(normaliser(brut))
+    ? enTexte(o.qualification)
+    : brut;
+  const t = normaliser(metier).replace(/[’']/g, ' ');
+  if (!t) return brut ? (contractuel ? 'Contr.' : brut) : null;
+  const ABREGES: [RegExp, string][] = [
+    [/INSTITUTEUR ADJOINT|^INST\.? ?A\b/, 'Inst. A.'],
+    [/INSTITUTEUR PRINCIPAL|^INST\.? ?P\b/, 'Inst. P.'],
+    [/INSTITUTEUR|^INST\b/, 'Inst.'],
+    [/PROFESSEUR TECHNIQUE ADJOINT|^PTA\b/, 'PTA'],
+    [/PROFESSEUR TECHNIQUE|^PT\b/, 'PT'],
+    [/PROFESSEUR (ADJOINT|ADJ) D ?E\.?P\.?S/, 'PA EPS'],
+    [/PROF(ESSEUR)? CERTIFIE D ?E\.?P\.?S/, 'PC EPS'],
+    [/MAITRE D ?E\.?P\.?S|^MEPS\b/, 'MEPS'],
+    [/PROFESSEUR (CERTIFIE )?(DE |DES )?LYCEE|^PCL\b/, 'PCL'],
+    [/PROFESSEUR (DE |DES )?C\.?E\.?G|^PCEG\b/, 'PCEG'],
+    [/INSPECTEUR/, 'Insp.'],
+    [/ECONOME|^ECON\b/, 'Econ.'],
+    [/ATTACHE/, 'Att.'],
+    [/SECRETAIRE PRINCIPAL/, 'SP'],
+    [/SECRETAIRE/, 'Secr.'],
+    [/CONSEILLER PEDAGOGIQUE/, 'CP'],
+  ];
+  // Déjà abrégé (« Inst. C. », « PCL ») : on garde l'écriture de la base
+  const deja =
+    /^[A-Z][A-Za-z]{0,5}\.?( [A-Z]\.)*$|^(PCL|PCEG|PTA|PCS|PL|MEPS)\b/.test(
+      metier.trim(),
+    );
+  let a =
+    (deja ? metier.trim() : ABREGES.find(([r]) => r.test(t))?.[1]) ??
+    (metier.length <= 12 ? metier.trim() : metier.trim().slice(0, 12));
+  if (contractuel && !/\bC\.$|\bC\.\s|Contr/.test(a))
+    a = `${a.replace(/\.$/, '.')} C.`.replace(/\s+/g, ' ');
+  return a;
+}
+
+/** Échelon comme dans la base : « 1 », « 4 », « HC 2 » (sans « er » ni « e »). */
+export const echelonBase = (e: string | null | undefined) => {
+  const t = enTexte(e).trim();
+  const n = /^(\d{1,2})\s*(?:er|e|ème|eme)?$/i.exec(t);
+  return n ? n[1] : t || null;
+};
+
+/** Le cycle comme dans la base (« 2-Primaire », « 4-Collège ») ; administration : « Administration ». */
+export const cycleBase = (c: CategorieNomination | undefined) =>
+  !c
+    ? ''
+    : {
+        PRESCOLAIRE: '1-Préscolaire',
+        PRIMAIRE: '2-Primaire',
+        ALPHABETISATION: '3-Alphab.',
+        COLLEGE: '4-Collège',
+        LYCEE: '5-Lycée',
+        ADMINISTRATION: 'Administration',
+      }[c.cycle];
+
+/** La fonction comme dans la base (« 1-Directeur », « 1-Directrice », « 2-D.E. », « 3-SURGE », « 4-Econome »). */
+export function fonctionBase(
+  c: CategorieNomination | undefined,
+  genre?: string | null,
+) {
+  if (!c) return '';
+  const k = c.code;
+  const f = genre === 'F';
+  if (/_ECONOME_INSP$/.test(k)) return '4-Econome Insp';
+  if (/_ECONOME$/.test(k)) return '4-Econome';
+  if (k === 'LYCEE_INTENDANT') return '4-Intendant Lycée';
+  if (k === 'LYCEE_PROVISEUR') return '1-Proviseur';
+  if (/_DIRECTEUR$/.test(k)) return f ? '1-Directrice' : '1-Directeur';
+  if (/_DE$/.test(k)) return '2-D.E.';
+  if (/_SG$/.test(k)) return '3-SURGE';
+  if (/_ICCS$/.test(k)) return '1-ICCS';
+  if (/_ICAP$/.test(k)) return '2-ICAP';
+  if (/_IDCAP$/.test(k)) return '2-IDCAP';
+  if (/_ICOORD$/.test(k)) return '1-Insp. Coord.';
+  if (k === 'LYCEE_IDELEGUE') return '2-Insp. Délégué';
+  if (/_CP$/.test(k)) return 'CP';
+  if (k === 'ALPHA_CTAR') return 'CTAR';
+  if (k === 'ALPHA_CDAR') return 'CDAR';
+  if (/^ITIN_/.test(k)) return 'Insp. Itinérant';
+  if (k === 'DDEPPSA_CHEF_SERVICE') return 'Chef de service';
+  return c.libelle;
+}
+
+/**
+ * Abrégé de la fonction pour le repère en bas de la note (réunion du 29/10/2026 : « 29/10/2026/Nomm.
+ * Provis. », pour savoir d'un coup d'œil qui la note nomme).
+ */
+export function repereNomination(code: string) {
+  const R: Record<string, string> = {
+    PRESCO_DIRECTEUR: 'Dir. CEP',
+    PRESCO_ECONOME: 'Econ. CEP',
+    PRIMAIRE_DIRECTEUR: 'Dir. EP',
+    PRIMAIRE_ECONOME: 'Econ. EP',
+    COLLEGE_DIRECTEUR: 'Dir. CEG',
+    COLLEGE_DE: 'DE CEG',
+    COLLEGE_SG: 'SG CEG',
+    COLLEGE_ECONOME: 'Econ. CEG',
+    LYCEE_PROVISEUR: 'Provis.',
+    LYCEE_DE: 'DE Lycée',
+    LYCEE_SG: 'SG Lycée',
+    LYCEE_INTENDANT: 'Intend. Lycée',
+    ALPHA_DIRECTEUR: 'Dir. CAR',
+    ALPHA_CTAR: 'CTAR',
+    ALPHA_CDAR: 'CDAR',
+    PRESCO_ICCS: 'ICCS Presco',
+    PRESCO_ICAP: 'ICAP Presco',
+    PRESCO_CP: 'CP Presco',
+    PRESCO_ECONOME_INSP: 'Econ. Insp. Presco',
+    PRIMAIRE_ICCS: 'ICCS',
+    PRIMAIRE_ICAP: 'ICAP',
+    PRIMAIRE_CP: 'CP',
+    PRIMAIRE_ECONOME_INSP: 'Econ. Insp.',
+    COLLEGE_ICOORD: 'Insp. Coord. CEG',
+    COLLEGE_ICAP: 'ICAP CEG',
+    COLLEGE_IDCAP: 'IDCAP CEG',
+    COLLEGE_ECONOME_INSP: 'Econ. Insp. CEG',
+    LYCEE_ICOORD: 'Insp. Coord. Lycées',
+    LYCEE_IDELEGUE: 'Insp. Dél. Lycées',
+    LYCEE_ECONOME_INSP: 'Econ. Insp. Lycées',
+    ITIN_INRAP: 'Insp. Itin. INRAP',
+    ITIN_IAFP: 'Insp. Itin. IAFP',
+    ITIN_IPA: 'Insp. Itin. IPA',
+    ITIN_DFC: 'Insp. Itin. DFC',
+    DDEPPSA_CHEF_SERVICE: 'CS DD',
+  };
+  return `Nomm. ${R[code] ?? code}`;
+}
