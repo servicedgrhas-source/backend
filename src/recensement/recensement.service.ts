@@ -25,6 +25,7 @@ import {
   Departement,
   type EtapeStatut,
   EvenementCarriere,
+  ModificationRecensement,
   PieceRecensement,
   Structure,
 } from '../entities';
@@ -39,9 +40,13 @@ import {
   estVide,
   evaluer,
   echellesDe,
+  echelonHorsGrille,
+  rangEchelon,
+  trouverEchelle,
   formaterNom,
   lireValeur,
   prochainAvancement,
+  valeurLisible,
 } from './valeurs';
 import { createHash } from 'crypto';
 import { IndexNoms } from '../common/index-noms';
@@ -61,6 +66,8 @@ export interface FiltresAgents {
   complet?: 'oui' | 'non';
   manque?: string;
   controle?: string;
+  /** Toutes les fiches qui présentent au moins une anomalie (doublon, valeur fausse, incohérence…). */
+  anomalies?: boolean;
   /** Agents ajoutés au recensement : A_CONTROLER, A_DECIDER, ACCEPTES ou REJETES. */
   ajout?: string;
   page?: number;
@@ -73,6 +80,8 @@ export interface FicheDto {
   forcer?: boolean;
   /** Agent rencontré au recensement, absent des bases : la fiche est mise en contentieux. */
   contentieux?: boolean;
+  /** Modification faite depuis le Recensement : elle part au contrôle (DG, 30/10/2026). */
+  recensement?: boolean;
 }
 
 export interface ChangementStatutDto {
@@ -84,6 +93,8 @@ export interface ChangementStatutDto {
 }
 
 const PAR_PAGE = 50;
+/** Contrôles qui sont des problèmes de fiche (l'avancement dû est une échéance, pas une erreur). */
+const ANOMALIES_FICHE = (code: string) => code !== 'AVANCEMENT_DU';
 /** Bottin imprimé en une fois : au-delà, on filtre (par département, par type d'agent). */
 const BOTTIN_MAX = 20000;
 const jourIso = () => new Date().toISOString().slice(0, 10);
@@ -355,16 +366,34 @@ export class RecensementService {
         );
       else ajouter(`a.manques->'champs' ? $X`, f.manque);
     }
-    if (f.controle) {
-      const ids =
-        (await this.controles(u)).ids.get(f.controle) ?? new Set<number>();
+    let ctl: Awaited<ReturnType<RecensementService['controles']>> | null = null;
+    if (f.controle || f.anomalies) {
+      ctl = await this.controles(u);
+      const ids = f.controle
+        ? (ctl.ids.get(f.controle) ?? new Set<number>())
+        : new Set(
+            [...ctl.ids]
+              .filter(([code]) => ANOMALIES_FICHE(code))
+              .flatMap(([, s]) => [...s]),
+          );
       ajouter('a.id = ANY($X)', [...ids]);
     }
-    return { where: conds.join(' AND ') || 'TRUE', params };
+    return { where: conds.join(' AND ') || 'TRUE', params, ctl };
+  }
+
+  /** Les fiches d'une liste filtrée, dans son ordre (export Excel), en une seule requête. */
+  async idsFiltres(u: UtilisateurConnecte, f: FiltresAgents, limite: number) {
+    const { where, params } = await this.filtres(u, f);
+    return (
+      await this.agents.query<{ id: number }[]>(
+        `SELECT a.id FROM agent_recense a WHERE ${where} ORDER BY a."nomNormalise", a.id LIMIT ${Math.max(1, Math.floor(limite))}`,
+        params,
+      )
+    ).map((x) => x.id);
   }
 
   async liste(u: UtilisateurConnecte, f: FiltresAgents) {
-    const { where, params } = await this.filtres(u, f);
+    const { where, params, ctl } = await this.filtres(u, f);
     const page = Math.max(1, f.page ?? 1);
     const [{ n }] = await this.agents.query<{ n: number }[]>(
       `SELECT count(*)::int AS n FROM agent_recense a WHERE ${where}`,
@@ -384,7 +413,29 @@ export class RecensementService {
         LIMIT ${PAR_PAGE} OFFSET ${(page - 1) * PAR_PAGE}`,
       params,
     );
-    return { total: n, page, parPage: PAR_PAGE, lignes };
+    if (!ctl) return { total: n, page, parPage: PAR_PAGE, lignes };
+    // Fiches présentant des anomalies : leurs problèmes, et combien de fiches par problème
+    const parFiche = await this.anomaliesDe(
+      ctl,
+      lignes.map((l) => Number(l.id)),
+    );
+    return {
+      total: n,
+      page,
+      parPage: PAR_PAGE,
+      lignes: lignes.map((l) => ({
+        ...l,
+        anomalies: parFiche.get(Number(l.id)) ?? [],
+      })),
+      parAnomalie: [...ctl.ids]
+        .filter(([code, s]) => ANOMALIES_FICHE(code) && s.size)
+        .map(([code, s]) => ({
+          code,
+          libelle: ctl.libelles[code] ?? code,
+          n: s.size,
+        }))
+        .sort((a, b) => b.n - a.n),
+    };
   }
 
   /**
@@ -649,6 +700,77 @@ export class RecensementService {
       d.CYCLE = s.cycle;
   }
 
+  /**
+   * Échelon saisi qui n'existe pas (DG, 29/10/2026 : « l'échelon de plus de 16 n'existe pas, après 16
+   * c'est hors classe ») : refusé avec ce qu'il faut écrire. Une valeur déjà là et non modifiée ne
+   * bloque pas l'enregistrement (elle reste signalée dans les anomalies).
+   */
+  private async verifierEchelon(
+    statut: string,
+    donnees: Record<string, unknown>,
+    avant?: Record<string, unknown>,
+  ) {
+    this.verifierAnnees(donnees, avant);
+    if (!['FONCTIONNAIRE', 'CONTRACTUEL'].includes(statut)) return;
+    const v = enTexte(donnees.ECHELON);
+    if (!v) return;
+    if (
+      avant &&
+      enTexte(avant.ECHELON) === v &&
+      enTexte(avant.ECHELLE) === enTexte(donnees.ECHELLE)
+    )
+      return;
+    const echelles = echellesDe(
+      await this.agents.query(
+        `SELECT code, libelle, donnees FROM referentiel WHERE type = 'ECHELLE' AND actif`,
+      ),
+    );
+    const erreur = echelonHorsGrille(
+      v,
+      trouverEchelle(echelles, donnees.ECHELLE),
+    );
+    if (erreur) throw new BadRequestException(`Échelon : ${erreur}.`);
+  }
+
+  /**
+   * Années d'obtention (diplôme professionnel, autres diplômes) : une année de quatre chiffres, entre
+   * 1940 et cette année (DG, 30/10/2026). Une valeur déjà là et non modifiée ne bloque pas.
+   */
+  private verifierAnnees(
+    donnees: Record<string, unknown>,
+    avant?: Record<string, unknown>,
+  ) {
+    const fin = new Date().getFullYear();
+    const fausse = (v: unknown) => {
+      const t = enTexte(v).trim();
+      return !!t && (!/^\d{4}$/.test(t) || +t < 1940 || +t > fin);
+    };
+    const message = (t: unknown) =>
+      `« ${enTexte(t)} » n’est pas une année d’obtention : écrivez l’année sur quatre chiffres (ex. 2015), au plus ${fin}`;
+    if (
+      fausse(donnees.PROMOTION_FORMATION) &&
+      enTexte(donnees.PROMOTION_FORMATION) !==
+        enTexte(avant?.PROMOTION_FORMATION)
+    )
+      throw new BadRequestException(
+        `Année d’obtention : ${message(donnees.PROMOTION_FORMATION)}.`,
+      );
+    const lignes = (v: unknown) =>
+      Array.isArray(v)
+        ? (v as unknown[]).map((l) =>
+            l && typeof l === 'object'
+              ? (l as Record<string, unknown>).ANNEE
+              : null,
+          )
+        : [];
+    const anciennes = new Set(lignes(avant?.AUTRES_DIPLOMES).map(enTexte));
+    const f = lignes(donnees.AUTRES_DIPLOMES).find(
+      (a) => fausse(a) && !anciennes.has(enTexte(a)),
+    );
+    if (f !== undefined)
+      throw new BadRequestException(`Autres diplômes : ${message(f)}.`);
+  }
+
   async creer(u: UtilisateurConnecte, dto: FicheDto) {
     const c = this.config.get();
     const p = await this.perimetre(u);
@@ -658,6 +780,7 @@ export class RecensementService {
         'Choisissez le type d’agent (fonctionnaire, contractuel, volontaire…).',
       );
     const donnees = this.lireDonnees(c, dto.donnees ?? {});
+    await this.verifierEchelon(statut.code, donnees);
     const col = await this.colonnes(donnees);
     if (!col.nomComplet)
       throw new BadRequestException('Écrivez les noms et prénoms de l’agent.');
@@ -768,6 +891,11 @@ export class RecensementService {
       // Les rubriques envoyées vides sont effacées ; celles qui ne sont pas envoyées restent
       for (const k of Object.keys(dto.donnees))
         if (!(k in donnees)) delete a.donnees[k];
+      await this.verifierEchelon(
+        a.statut,
+        { ...a.donnees, ...donnees },
+        a.donnees,
+      );
       a.donnees = { ...a.donnees, ...donnees };
     }
     let col = await this.colonnes(a.donnees);
@@ -821,6 +949,30 @@ export class RecensementService {
     );
     if (avant._statut !== a.statut) changes.unshift('TYPE_AGENT');
     if (avant._structure !== a.structureId) changes.push('STRUCTURE');
+    // Modifiée au recensement : au contrôle, avec l'ancienne et la nouvelle valeur (un agent ajouté
+    // encore à contrôler ou à décider est contrôlé en entier : pas de contrôle à part)
+    if (
+      dto.recensement &&
+      changes.length &&
+      !['EN_COURS', 'CONTROLE'].includes(a.contentieux?.etat ?? '')
+    )
+      await this.agents.manager.save(ModificationRecensement, {
+        agentId: a.id,
+        faitePar: u.nom,
+        champs: Object.fromEntries(
+          changes.map((k) => [
+            k,
+            k === 'TYPE_AGENT'
+              ? { avant: avant._statut, apres: a.statut }
+              : k === 'STRUCTURE'
+                ? { avant: avant._structure ?? null, apres: a.structureId }
+                : {
+                    avant: (avant as Record<string, unknown>)[k] ?? null,
+                    apres: a.donnees[k] ?? null,
+                  },
+          ]),
+        ),
+      });
     await this.journal.log(
       u,
       'RECENSEMENT_MODIFICATION',
@@ -839,6 +991,163 @@ export class RecensementService {
       },
     );
     return a;
+  }
+
+  /* ------------------------------ Contrôle des modifications du recensement ------------------------------ */
+
+  /**
+   * Modifications faites au recensement qui attendent le contrôle, dans le périmètre du compte :
+   * l'agent, qui a modifié et quand, et chaque rubrique avec son ancienne et sa nouvelle valeur.
+   */
+  async modificationsAControler(u: UtilisateurConnecte) {
+    const p = await this.perimetre(u);
+    const fp = this.filtrePerimetre(p);
+    let i = 0;
+    const where = fp.sql.replace(/\$X/g, () => `$${++i}`);
+    const lignes = await this.agents.query<
+      {
+        id: number;
+        agentId: number;
+        champs: Record<string, { avant: unknown; apres: unknown }>;
+        faitePar: string | null;
+        faiteLe: string;
+        nomComplet: string;
+        numeroFiche: string;
+        statut: string;
+        structure: string | null;
+      }[]
+    >(
+      `SELECT m.id, m."agentId", m.champs, m."faitePar", m."faiteLe", a."nomComplet", a."numeroFiche", a.statut, s.nom AS structure
+         FROM modification_recensement m
+         JOIN agent_recense a ON a.id = m."agentId"
+         LEFT JOIN structure s ON s.id = a."structureId"
+        WHERE m.etat = 'A_CONTROLER' AND ${where || 'TRUE'}
+        ORDER BY m."faiteLe" LIMIT 500`,
+      fp.params,
+    );
+    const c = this.config.get();
+    const deps = await this.departements();
+    const nomDep = (code: string) =>
+      deps.parId.get(deps.parCode.get(code) ?? -1)?.nom;
+    const ids = [
+      ...new Set(
+        lignes.flatMap((l) =>
+          l.champs.STRUCTURE
+            ? [l.champs.STRUCTURE.avant, l.champs.STRUCTURE.apres]
+            : [],
+        ),
+      ),
+    ].filter((x): x is number => typeof x === 'number');
+    const structures = new Map(
+      (ids.length
+        ? await this.structures.find({ where: { id: In(ids) } })
+        : []
+      ).map((s) => [s.id, s.nom]),
+    );
+    const lisible = (k: string, v: unknown) => {
+      if (v === null || v === undefined || v === '') return '';
+      if (k === 'TYPE_AGENT')
+        return this.config.statut(enTexte(v))?.libelle ?? enTexte(v);
+      if (k === 'STRUCTURE')
+        return structures.get(Number(v)) ?? `n° ${enTexte(v)}`;
+      const ch = c.champs.find((x) => x.code === k);
+      return ch ? valeurLisible(ch, v, nomDep) : enTexte(v);
+    };
+    const libelle = (k: string) =>
+      k === 'TYPE_AGENT'
+        ? 'Type d’agent'
+        : k === 'STRUCTURE'
+          ? 'Établissement de rattachement'
+          : (c.champs.find((x) => x.code === k)?.libelle ?? k);
+    return {
+      total: lignes.length,
+      lignes: lignes.map((l) => ({
+        ...l,
+        champs: Object.entries(l.champs).map(([k, x]) => ({
+          code: k,
+          libelle: libelle(k),
+          avant: lisible(k, x.avant),
+          apres: lisible(k, x.apres),
+        })),
+      })),
+    };
+  }
+
+  /**
+   * Contrôle d'une ou plusieurs modifications : validée (elle reste), ou rejetée (la fiche reprend
+   * l'ancienne valeur de chaque rubrique, sauf celles modifiées à nouveau depuis).
+   */
+  async controlerModifications(
+    u: UtilisateurConnecte,
+    ids: number[],
+    decision: string,
+    note?: string,
+  ) {
+    if (!['VALIDER', 'REJETER'].includes(decision))
+      throw new BadRequestException('Décision attendue : valider ou rejeter.');
+    const n = note?.replace(/\s+/g, ' ').trim().slice(0, 500) || null;
+    if (decision === 'REJETER' && !n)
+      throw new BadRequestException(
+        'Dites pourquoi la modification est rejetée : la personne qui l’a faite le lira.',
+      );
+    const liste = (ids ?? []).length
+      ? await this.agents.manager.find(ModificationRecensement, {
+          where: { id: In(ids), etat: 'A_CONTROLER' },
+          order: { faiteLe: 'DESC' },
+        })
+      : [];
+    if (!liste.length)
+      throw new BadRequestException(
+        'Aucune modification à contrôler dans la sélection.',
+      );
+    let restaurees = 0;
+    let gardees = 0;
+    const eq = (x: unknown, y: unknown) =>
+      JSON.stringify(x ?? null) === JSON.stringify(y ?? null);
+    for (const m of liste) {
+      const a = await this.trouver(u, m.agentId);
+      if (decision === 'REJETER') {
+        for (const [k, x] of Object.entries(m.champs)) {
+          if (k === 'TYPE_AGENT') {
+            if (a.statut === x.apres && typeof x.avant === 'string') {
+              a.statut = x.avant;
+              restaurees++;
+            } else gardees++;
+          } else if (k === 'STRUCTURE') {
+            if (eq(a.structureId, x.apres)) {
+              a.structureId = typeof x.avant === 'number' ? x.avant : null;
+              restaurees++;
+            } else gardees++;
+          } else if (eq(a.donnees[k], x.apres)) {
+            if (x.avant === null || x.avant === undefined) delete a.donnees[k];
+            else a.donnees[k] = x.avant;
+            restaurees++;
+          } else gardees++;
+        }
+        a.donnees = { ...a.donnees };
+        Object.assign(a, await this.colonnes(a.donnees), { modifiePar: u.nom });
+        this.appliquerEvaluation(
+          a,
+          (await this.piecesFournies([a.id])).get(a.id) ?? {},
+        );
+        await this.agents.save(a);
+      }
+      m.etat = decision === 'VALIDER' ? 'VALIDEE' : 'REJETEE';
+      m.controlePar = u.nom;
+      m.controleLe = new Date();
+      m.note = n;
+      await this.agents.manager.save(m);
+      await this.journal.log(
+        u,
+        decision === 'VALIDER'
+          ? 'RECENSEMENT_MODIFICATION_VALIDEE'
+          : 'RECENSEMENT_MODIFICATION_REJETEE',
+        'agent_recense',
+        m.agentId,
+        { champs: Object.keys(m.champs), note: n },
+      );
+    }
+    return { controlees: liste.length, restaurees, gardees };
   }
 
   async supprimer(u: UtilisateurConnecte, id: number) {
@@ -1552,6 +1861,14 @@ export class RecensementService {
       s.add(id);
       ids.set(code, s);
     };
+    // Les autres fiches du même problème (même matricule, même personne…) : « code|id » → ids
+    const liens = new Map<string, Set<number>>();
+    const lier = (code: string, id: number, autres: number[]) => {
+      const k = `${code}|${id}`;
+      const s = liens.get(k) ?? new Set<number>();
+      for (const x of autres) if (x !== id) s.add(x);
+      liens.set(k, s);
+    };
     const groupes = (
       cle: (l: (typeof lignes)[number]) => string | null,
       min: number,
@@ -1563,7 +1880,11 @@ export class RecensementService {
         if (k) m.set(k, [...(m.get(k) ?? []), l.id]);
       }
       for (const g of m.values())
-        if (g.length >= min) g.forEach((id) => ajouter(code, id));
+        if (g.length >= min)
+          g.forEach((id) => {
+            ajouter(code, id);
+            lier(code, id, g);
+          });
     };
     groupes(
       (l) => (l.dateNaissance ? `${l.nomNormalise}|${l.dateNaissance}` : null),
@@ -1612,7 +1933,12 @@ export class RecensementService {
       if (MEMES_PERSONNES.size > 8 && ancienne)
         MEMES_PERSONNES.delete(ancienne);
     }
-    for (const id of memes) ajouter('MEME_PERSONNE', id);
+    for (let i = 0; i + 1 < memes.length; i += 2) {
+      ajouter('MEME_PERSONNE', memes[i]);
+      ajouter('MEME_PERSONNE', memes[i + 1]);
+      lier('MEME_PERSONNE', memes[i], [memes[i + 1]]);
+      lier('MEME_PERSONNE', memes[i + 1], [memes[i]]);
+    }
     for (const l of lignes) {
       if (l.contentieux === 'EN_COURS') ajouter('CONTENTIEUX', l.id);
       if (l.contentieux === 'CONTROLE') ajouter('CONTENTIEUX_DG', l.id);
@@ -1682,8 +2008,15 @@ export class RecensementService {
         (!l.contentieux || l.contentieux === 'CONFIRME')
           ? prochainAvancement(c, l.statut, l.carriere ?? {}, echelles)
           : null;
+      // Échelon impossible : au-delà du 16e, c'est hors classe (DG, 29/10/2026)
+      const echelle = trouverEchelle(echelles, l.carriere?.ECHELLE);
+      if (
+        ['FONCTIONNAIRE', 'CONTRACTUEL'].includes(l.statut) &&
+        echelonHorsGrille(l.carriere?.ECHELON, echelle)
+      )
+        ajouter('ECHELON_HORS_GRILLE', l.id);
       // Échelon au-delà du 1er sans date de dernière promotion : la date manque (DG, 27/10/2026)
-      const echelon = Number(enTexte(l.carriere?.ECHELON)) || 0;
+      const echelon = rangEchelon(l.carriere?.ECHELON, echelle) ?? 0;
       if (av && av.origine === 'ENTREE' && echelon > 1)
         ajouter('DATE_PROMOTION_MANQUANTE', l.id);
       else if (av && !av.fin && av.prochain <= aujourdhui)
@@ -1692,17 +2025,23 @@ export class RecensementService {
         ajouter(v.startsWith('REGLE:') ? v : 'VALEUR_HORS_LISTE', l.id);
     }
     const libelles: Record<string, string> = {
-      DOUBLON: 'Même nom et même date de naissance (recensé deux fois ?)',
-      MATRICULE_DOUBLE: 'Même matricule pour plusieurs agents',
-      TELEPHONE_PARTAGE: `Même téléphone pour ${c.telephonePartage} agents ou plus`,
-      AGE_MINIMUM: `Moins de ${c.ageMinimum} ans (date de naissance à vérifier)`,
+      // Des phrases qui se lisent seules (DG, 30/10/2026 : « pas facile à comprendre »)
+      DOUBLON:
+        'Agents enregistrés deux fois : deux fiches au même nom et à la même date de naissance',
+      MATRICULE_DOUBLE:
+        'Matricule écrit sur plusieurs fiches : un des matricules est faux',
+      TELEPHONE_PARTAGE: `Même numéro de téléphone sur ${c.telephonePartage} fiches ou plus (souvent celui de l’école, pas celui de l’agent)`,
+      AGE_MINIMUM: `Agents qui auraient moins de ${c.ageMinimum} ans : leur date de naissance est sans doute mal écrite`,
       AGE_RETRAITE: c.ageRetraite
-        ? `Âge de la retraite atteint et encore en activité (âge de sa catégorie, sinon ${c.ageRetraite} ans)`
-        : 'Âge de la retraite de sa catégorie atteint et encore en activité',
-      AVANCEMENT_DU: `Promotion (fonctionnaire, tous les ${duree(c.delaiPromotionMois)}) ou avancement (contractuel, tous les ${duree(c.delaiAvancementMois)}) dû`,
+        ? `Agents qui ont l’âge de la retraite (celui de leur catégorie, sinon ${c.ageRetraite} ans) mais sont encore « en activité » sur la fiche`
+        : 'Agents qui ont l’âge de la retraite de leur catégorie mais sont encore « en activité » sur la fiche',
+      AVANCEMENT_DU: `Agents qui devraient déjà être passés à l’échelon suivant : la promotion (fonctionnaire, tous les ${duree(c.delaiPromotionMois)}) ou l’avancement (contractuel, tous les ${duree(c.delaiAvancementMois)}) est arrivé à date`,
       DATE_PROMOTION_MANQUANTE:
         'Échelon au-delà du 1er sans date de dernière promotion (ou du dernier avancement) : la date est à renseigner',
-      VALEUR_HORS_LISTE: 'Valeur hors des listes de la fiche (à vérifier)',
+      ECHELON_HORS_GRILLE:
+        'Échelon qui n’existe pas (au-delà du dernier : c’est hors classe, HC 1 à HC 4)',
+      VALEUR_HORS_LISTE:
+        'Une rubrique à choix contient une valeur qui n’est pas dans sa liste (à vérifier)',
       VOLONTAIRE_AGENT_ETAT:
         'Volontaire encore payé qui figure aussi comme fonctionnaire ou contractuel',
       MEME_PERSONNE:
@@ -1714,7 +2053,67 @@ export class RecensementService {
     };
     for (const r of c.regles)
       libelles[`REGLE:${r.code}`] = `Incohérence : ${r.libelle}`;
-    return { ids, libelles, total: lignes.length };
+    return { ids, libelles, liens, total: lignes.length };
+  }
+
+  /**
+   * Problèmes d'une liste de fiches (DG, 29/10/2026 : « nous montrer quels sont les gens qui ont des
+   * problèmes avec leur fiche, et où corriger ») : pour chaque fiche, ses contrôles et les autres
+   * fiches concernées (même matricule, même personne…). L'avancement dû n'est pas une erreur de fiche.
+   */
+  private async anomaliesDe(
+    ctl: Awaited<ReturnType<RecensementService['controles']>>,
+    fiches: number[],
+  ) {
+    const parFiche = new Map<
+      number,
+      { code: string; libelle: string; avec: number[] }[]
+    >();
+    for (const [code, s] of ctl.ids) {
+      if (!ANOMALIES_FICHE(code)) continue;
+      for (const id of fiches)
+        if (s.has(id))
+          parFiche.set(id, [
+            ...(parFiche.get(id) ?? []),
+            {
+              code,
+              libelle: ctl.libelles[code] ?? code,
+              avec: [...(ctl.liens.get(`${code}|${id}`) ?? [])].slice(0, 10),
+            },
+          ]);
+    }
+    const autres = [
+      ...new Set(
+        [...parFiche.values()].flatMap((l) => l.flatMap((x) => x.avec)),
+      ),
+    ];
+    const noms = new Map(
+      (autres.length
+        ? await this.agents.query<
+            { id: number; numeroFiche: string; nomComplet: string }[]
+          >(
+            `SELECT id, "numeroFiche", "nomComplet" FROM agent_recense WHERE id = ANY($1)`,
+            [autres],
+          )
+        : []
+      ).map((x) => [x.id, x]),
+    );
+    return new Map(
+      [...parFiche].map(([id, l]) => [
+        id,
+        l.map((x) => ({
+          ...x,
+          avec: x.avec.map((a) => noms.get(a)).filter((a) => !!a),
+        })),
+      ]),
+    );
+  }
+
+  /** Les problèmes d'une fiche (carte « Problèmes de cette fiche »). */
+  async anomaliesAgent(u: UtilisateurConnecte, id: number) {
+    await this.trouver(u, id);
+    const ctl = await this.controles(u);
+    return { anomalies: (await this.anomaliesDe(ctl, [id])).get(id) ?? [] };
   }
 
   async tableau(u: UtilisateurConnecte) {

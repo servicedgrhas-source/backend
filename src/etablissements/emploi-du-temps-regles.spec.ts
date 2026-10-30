@@ -211,4 +211,147 @@ describe('Emploi du temps (DG, 24/10/2026)', () => {
       siennes.filter((s) => s.jour === 2).every((s) => s.creneau <= 1),
     ).toBe(true);
   });
+  describe('plages horaires saisies par l’école (DG, 28/10/2026)', () => {
+    const classes = [1, 2, 3].map((id) => ({
+      id,
+      nom: `6ème ${id}`,
+      niveau: '6EME',
+      salleId: 10 + id,
+    }));
+    const base = {
+      classes,
+      programme,
+      libelles,
+      jours: [1, 2, 3, 4, 5, 6],
+      creneaux,
+      heuresEnseignant: 20,
+    };
+    // Prof 101 : la 6ème 2 le lundi aux deux premiers créneaux et le mardi au 4e, puis la 6ème 1
+    // le jeudi au 1er ; chaque classe a 5 h de maths au programme
+    const plages101 = [
+      { classeId: 2, jour: 1, creneau: 0 },
+      { classeId: 2, jour: 1, creneau: 1 },
+      { classeId: 2, jour: 2, creneau: 3 },
+      { classeId: 2, jour: 3, creneau: 0 },
+      { classeId: 2, jour: 5, creneau: 2 },
+      { classeId: 1, jour: 4, creneau: 0 },
+    ];
+    const x = genererEmploiDuTemps({
+      ...base,
+      enseignants: [
+        { ...prof(101, 'MATH'), plages: plages101 },
+        prof(102, 'MATH'),
+        prof(100, 'FR'),
+      ],
+    });
+    const de = (agent: number) => x.seances.filter((s) => s.agentId === agent);
+
+    it('chaque plage est placée telle quelle : même classe, même jour, même créneau, marquée « saisie »', () => {
+      const places = de(101)
+        .map((s) => `${s.classeId}:${s.jour}:${s.creneau}:${s.fixe}`)
+        .sort();
+      expect(places).toEqual(
+        plages101
+          .map((p) => `${p.classeId}:${p.jour}:${p.creneau}:true`)
+          .sort(),
+      );
+      expect(de(101).every((s) => s.matiere === 'MATH')).toBe(true);
+    });
+    it('un enseignant qui a des plages n’a rien d’autre : la 6ème 3 va à l’enseignant sans plages', () => {
+      expect(de(101)).toHaveLength(6);
+      const maths3 = new Set(
+        x.seances
+          .filter((s) => s.classeId === 3 && s.matiere === 'MATH')
+          .map((s) => s.agentId),
+      );
+      expect([...maths3]).toEqual([102]);
+    });
+    it('5 h saisies en 6ème 2 : le programme est couvert, rien d’autre n’y est ajouté', () => {
+      expect(
+        x.seances.filter((s) => s.classeId === 2 && s.matiere === 'MATH'),
+      ).toHaveLength(5);
+    });
+    it('1 h saisie en 6ème 1 sur 5 : les 4 h manquantes ne vont pas à un autre enseignant, c’est dit', () => {
+      const maths1 = x.seances.filter(
+        (s) => s.classeId === 1 && s.matiere === 'MATH',
+      );
+      expect(maths1).toHaveLength(5);
+      expect(maths1.filter((s) => s.agentId === 102)).toHaveLength(0);
+      expect(maths1.filter((s) => s.agentId === null)).toHaveLength(4);
+      expect(
+        x.nonPlaces.some(
+          (n) =>
+            n.classe === '6ème 1' &&
+            n.heures === 4 &&
+            /complétez ses plages/.test(n.raison),
+        ),
+      ).toBe(true);
+    });
+    it('les autres cours se placent autour des plages, sans conflit', () => {
+      const cles = new Set<string>();
+      for (const s of x.seances)
+        for (const k of [
+          `C${s.classeId}:${s.jour}:${s.creneau}`,
+          ...(s.agentId ? [`A${s.agentId}:${s.jour}:${s.creneau}`] : []),
+        ]) {
+          expect(cles.has(k)).toBe(false);
+          cles.add(k);
+        }
+      expect(x.heuresTotal).toBe(42);
+      expect(x.heuresPlacees).toBe(42);
+    });
+    it('deux enseignants sur la même classe au même créneau : la seconde plage est refusée et signalée', () => {
+      const y = genererEmploiDuTemps({
+        ...base,
+        enseignants: [
+          {
+            ...prof(101, 'MATH'),
+            plages: [{ classeId: 1, jour: 1, creneau: 0 }],
+          },
+          {
+            ...prof(100, 'FR'),
+            plages: [{ classeId: 1, jour: 1, creneau: 0 }],
+          },
+        ],
+      });
+      const lundi = y.seances.filter(
+        (s) => s.classeId === 1 && s.jour === 1 && s.creneau === 0,
+      );
+      expect(lundi).toHaveLength(1);
+      expect(
+        y.nonPlaces.some((n) => /a déjà cours avec Prof 101/.test(n.raison)),
+      ).toBe(true);
+    });
+    it('plus d’heures saisies que le programme, ou hors des créneaux : c’est dit', () => {
+      const y = genererEmploiDuTemps({
+        ...base,
+        enseignants: [
+          {
+            ...prof(103, 'ANG'),
+            plages: [0, 1, 2, 3].map((creneau) => ({
+              classeId: 1,
+              jour: 2,
+              creneau,
+            })),
+          },
+          {
+            ...prof(104, 'FR'),
+            plages: [{ classeId: 2, jour: 1, creneau: -1 }],
+          },
+        ],
+      });
+      expect(
+        y.nonPlaces.some(
+          (n) =>
+            n.classe === '6ème 1' &&
+            /4 h saisies .* pour 3 h au programme/.test(n.raison),
+        ),
+      ).toBe(true);
+      expect(
+        y.nonPlaces.some((n) =>
+          /hors des jours ou des créneaux/.test(n.raison),
+        ),
+      ).toBe(true);
+    });
+  });
 });

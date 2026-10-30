@@ -416,6 +416,31 @@ export class VolontairesController {
     res.send(contenu);
   }
 
+  /** Payés deux fois : inscrits deux fois, ou payés aussi sur l'autre liste (une ligne par paire). */
+  @Roles(...ROLES_TRAITEMENT)
+  @Get('bourse/:id/payes-deux-fois')
+  payesDeuxFois(@Param('id', ParseIntPipe) id: number) {
+    return this.bourse.payesDeuxFois(id);
+  }
+
+  @Roles(...ROLES_TRAITEMENT)
+  @Get('bourse/:id/payes-deux-fois/excel')
+  async payesDeuxFoisExcel(
+    @Param('id', ParseIntPipe) id: number,
+    @Res() res: Response,
+  ) {
+    const { nom, contenu } = await this.bourse.payesDeuxFoisExcel(id);
+    res.setHeader(
+      'Content-Type',
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    );
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename="${nom}"; filename*=UTF-8''${encodeURIComponent(nom)}`,
+    );
+    res.send(contenu);
+  }
+
   @Roles(...ROLES_TRAITEMENT)
   @Get('bourse/:id/excel')
   async excel(@Param('id', ParseIntPipe) id: number, @Res() res: Response) {

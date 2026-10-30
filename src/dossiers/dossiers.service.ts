@@ -294,6 +294,27 @@ export class DossiersService {
 
   /* ------------------------------ Un dossier ------------------------------ */
 
+  /**
+   * La fiche de la Base du personnel d'un candidat : même nom (les mots dans n'importe quel ordre)
+   * et même date de naissance ; sans date, le même nom s'il n'y a qu'une fiche à ce nom.
+   */
+  private async ficheDuPersonnel(nom: string, naissance: string | null) {
+    const mots = (v: string) => normaliser(v).split(' ').sort().join(' ');
+    const cle = mots(nom);
+    const lignes = await this.agents.query<
+      { id: number; nomComplet: string }[]
+    >(
+      naissance
+        ? `SELECT id, "nomComplet" FROM agent_recense WHERE "dateNaissance" = $1::date`
+        : `SELECT id, "nomComplet" FROM agent_recense WHERE "nomNormalise" = $1`,
+      [naissance ?? normaliser(nom)],
+    );
+    const memes = lignes.filter((l) => mots(l.nomComplet) === cle);
+    return memes.length === 1 || (naissance && memes.length)
+      ? memes[0].id
+      : null;
+  }
+
   async dossier(id: string, voirInterne: boolean) {
     const a = await this.agents.findOne({ where: { id } });
     if (!a) throw new NotFoundException('Dossier introuvable');
@@ -368,6 +389,8 @@ export class DossiersService {
     const etape = etapes.filter((e) => e.fait).at(-1)?.titre ?? 'Saisi';
     return {
       id: a.id,
+      // Sa fiche dans la Base du personnel (bouton « Voir sa fiche »)
+      ficheId: await this.ficheDuPersonnel(a.nomComplet, a.dateNaissance),
       etape:
         horsSysteme.length && aff?.statut !== 'AFFECTE'
           ? 'Affecté (note signée hors du système)'

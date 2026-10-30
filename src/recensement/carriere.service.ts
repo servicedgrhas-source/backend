@@ -22,7 +22,10 @@ import {
   prochainAvancement,
   valeurLisible,
   echellesDe,
+  echelonHorsGrille,
+  libelleEchelon,
   promotionsAttendues,
+  rangEchelon,
   trouverEchelle,
   natureEnEntier,
 } from './valeurs';
@@ -753,7 +756,8 @@ export class CarriereService {
     const ech = trouverEchelle(echelles, d.ECHELLE);
     const duree = ech?.dureeEchelonMois ?? null;
     const nombre = ech?.nombreEchelons ?? null;
-    const echelon = Number(texte(d.ECHELON)) || null;
+    // Rang de l'échelon : « HC 2 » vient après le dernier échelon (DG, 29/10/2026)
+    const echelon = rangEchelon(d.ECHELON, ech);
     const dernierEchelon = !!av?.fin;
     // Promotions (ou avancements) attendues depuis la dernière, échelon par échelon, en respectant
     // l'échelle de l'agent (durée d'un échelon, dernier échelon, échelle suivante). Seulement celles
@@ -797,10 +801,28 @@ export class CarriereService {
             libelle: echelle.libelle,
             dureeEchelonMois: duree,
             nombreEchelons: nombre,
+            echelonsHorsClasse: echelle.echelonsHorsClasse,
+            libelleHorsClasse: echelle.libelleHorsClasse,
           }
         : null,
       prochainEchelon:
         av && !dernierEchelon && !dateManquante ? av.prochain : null,
+      // L'échelon qui vient (« 5 », « HC 1 ») : celui de la prochaine promotion
+      echelonSuivant:
+        av && !dernierEchelon && !dateManquante && echelon !== null
+          ? (promotionsAttendues({
+              depuis: av.depuis,
+              delaiMois:
+                av.nature === 'PROMOTION'
+                  ? conf.delaiPromotionMois
+                  : conf.delaiAvancementMois,
+              dureeEchelle: av.nature === 'PROMOTION',
+              echelon,
+              echelle: ech,
+              echelles,
+              aujourdhui: av.depuis,
+            })[0]?.echelonLibelle ?? libelleEchelon(echelon + 1, ech))
+          : null,
       attendues,
       dateManquante,
       dernierEchelon,
@@ -950,9 +972,29 @@ export class CarriereService {
     });
   }
 
+  /**
+   * Nouvel échelon d'un événement : il doit exister dans l'échelle de l'agent (après le 16e, hors
+   * classe HC 1 à HC 4 ; DG, 29/10/2026).
+   */
+  private async verifierEchelon(
+    a: AgentRecense,
+    nouveau: Record<string, unknown>,
+  ) {
+    if (estVide(nouveau.ECHELON)) return;
+    const echelles = echellesDe(
+      await this.refs.find({ where: { type: 'ECHELLE', actif: true } }),
+    );
+    const erreur = echelonHorsGrille(
+      nouveau.ECHELON,
+      trouverEchelle(echelles, nouveau.ECHELLE ?? a.donnees.ECHELLE),
+    );
+    if (erreur) throw new BadRequestException(`Échelon : ${erreur}.`);
+  }
+
   async ajouter(u: UtilisateurConnecte, id: number, dto: EvenementDto) {
     const a = await this.rec.trouver(u, id);
     const v = this.lire(dto);
+    await this.verifierEchelon(a, v.nouveau);
     const autres = await this.evenements.find({ where: { agentId: id } });
     const e = this.evenements.create({
       ...v,
@@ -987,6 +1029,7 @@ export class CarriereService {
     const a = await this.rec.trouver(u, id);
     const e = await this.evenement(id, evId);
     const v = this.lire(dto);
+    await this.verifierEchelon(a, v.nouveau);
     const autres = await this.evenements.find({ where: { agentId: id } });
     const touches = this.defaire(a, e, autres);
     Object.assign(e, v);

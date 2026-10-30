@@ -694,18 +694,7 @@ export class MiseEnRouteService {
     ]).font = { italic: true };
     ws.addRow([]);
     ws.addRow(['', '', '', '', '', '', '', '', '', 'Fait à Brazzaville, le']);
-    ws.addRow([
-      '',
-      '',
-      '',
-      '',
-      '',
-      '',
-      '',
-      '',
-      '',
-      c.signatairePaiementTitre,
-    ]).font = { bold: true };
+    ws.addRow(['', '', '', '', '', '', '', '', '', c.signatairePaiementTitre]);
     ws.addRow([]);
     ws.addRow([]);
     ws.addRow([
@@ -719,7 +708,7 @@ export class MiseEnRouteService {
       '',
       '',
       c.signatairePaiementNom,
-    ]).font = { bold: true, underline: true };
+    ]).font = { bold: true };
     [5, 32, 11, 14, 12, 18, 14, 26, 12, 11, 11, 12, 10, 14, 14].forEach(
       (w, i) => (ws.getColumn(i + 1).width = w),
     );

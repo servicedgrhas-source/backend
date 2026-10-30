@@ -3,7 +3,13 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { In, Repository } from 'typeorm';
 import type { UtilisateurConnecte } from '../auth/auth';
 import { JournalService, ParametresService } from '../core/core.service';
-import { Classe, EmploiDuTemps, HoraireAgent, Structure } from '../entities';
+import {
+  Classe,
+  EmploiDuTemps,
+  HoraireAgent,
+  Structure,
+  type PlageEnseignant,
+} from '../entities';
 import {
   genererEmploiDuTemps,
   lireCreneaux,
@@ -16,6 +22,15 @@ import { EtablissementsService } from './etablissements.service';
 
 /** Cycles qui ont un emploi du temps par matière (au primaire, un maître par classe). */
 const PAR_MATIERE = ['COLLEGE', 'LYCEE'];
+const NOMS_JOURS_EDT = [
+  '',
+  'Lundi',
+  'Mardi',
+  'Mercredi',
+  'Jeudi',
+  'Vendredi',
+  'Samedi',
+];
 
 /**
  * Emplois du temps (DG, 24/10/2026) : l'emploi du temps général de l'établissement (qui fait
@@ -110,13 +125,27 @@ export class EmploisDuTempsService {
     const e = await this.edt.findOne({
       where: { structureId, anneeScolaire: a },
     });
+    const parMatiere = PAR_MATIERE.includes(s.cycle ?? '');
+    const prog = parMatiere ? await this.etab.programmes(s.cycle!) : null;
+    const classes = await this.classes.find({
+      where: { structureId, anneeScolaire: a },
+      order: { nom: 'ASC' },
+    });
     return {
       structure: { id: s.id, nom: s.nom, cycle: s.cycle },
       annee: a,
-      parMatiere: PAR_MATIERE.includes(s.cycle ?? ''),
+      parMatiere,
       reglages: this.reglages(s),
-      // Enseignants et leurs jours de travail : ils se règlent depuis l'école (DG, 28/10/2026)
-      enseignants: await this.enseignantsEtJours(structureId),
+      // Enseignants, leur matière, leurs jours et leurs plages horaires (DG, 28/10/2026)
+      enseignants: await this.enseignantsEtJours(structureId, prog),
+      // Les classes de l'année et le programme de leur niveau : pour saisir les plages
+      classes: classes.map((c) => ({ id: c.id, nom: c.nom, niveau: c.niveau })),
+      programme: Object.fromEntries(
+        [...new Set(classes.map((c) => c.niveau))].map((n) => [
+          n,
+          (prog?.parNiveau.get(n) ?? []).filter((x) => x.heures > 0),
+        ]),
+      ),
       emploi: e,
       aRegenerer:
         e && PAR_MATIERE.includes(s.cycle ?? '')
@@ -125,8 +154,11 @@ export class EmploisDuTempsService {
     };
   }
 
-  /** Enseignants en poste de l'école, avec leurs jours et heures de travail (Présence). */
-  private async enseignantsEtJours(structureId: number) {
+  /** Enseignants en poste de l'école : leur matière, leurs jours (Présence) et leurs plages horaires. */
+  private async enseignantsEtJours(
+    structureId: number,
+    prog: { matieres: Map<string, string> } | null,
+  ) {
     const agents = (
       (await this.etab.agentsDe([structureId])).get(structureId) ?? []
     ).filter((x) => x.enseignant && x.enPoste);
@@ -137,14 +169,22 @@ export class EmploisDuTempsService {
             agentId: In(agents.length ? agents.map((x) => x.id) : [-1]),
           },
         })
-      ).map((h) => [h.agentId, h.jours]),
+      ).map((h) => [h.agentId, h]),
     );
-    return agents.map((x) => ({
-      id: x.id,
-      nom: x.nomComplet,
-      specialite: x.specialite,
-      jours: horaires.get(x.id) ?? null,
-    }));
+    return agents.map((x) => {
+      const matiere = prog ? this.etab.matiereAgent(x, prog.matieres) : null;
+      return {
+        id: x.id,
+        nom: x.nomComplet,
+        specialite: x.specialite,
+        matiere,
+        matiereLibelle: matiere
+          ? (prog?.matieres.get(matiere) ?? matiere)
+          : null,
+        jours: horaires.get(x.id)?.jours ?? null,
+        plages: horaires.get(x.id)?.plages ?? [],
+      };
+    });
   }
 
   /** Classes ouvertes, programme et enseignants (avec leur matière) d'aujourd'hui. */
@@ -157,7 +197,26 @@ export class EmploisDuTempsService {
     const agents = (
       (await this.etab.agentsDe([structureId])).get(structureId) ?? []
     ).filter((x) => x.enseignant && x.enPoste);
-    return { classes, prog, agents };
+    // Jours et plages horaires de chaque enseignant
+    const horaires = new Map(
+      (
+        await this.horaires.find({
+          where: {
+            agentId: In(agents.length ? agents.map((x) => x.id) : [-1]),
+          },
+        })
+      ).map((h) => [h.agentId, h]),
+    );
+    // Heures du programme des classes ouvertes (sans les plages)
+    const heuresProgramme = classes.reduce(
+      (t, c) =>
+        t +
+        (prog.parNiveau.get(c.niveau) ?? [])
+          .filter((p) => p.heures > 0)
+          .reduce((u, p) => u + Math.round(p.heures), 0),
+      0,
+    );
+    return { classes, prog, agents, horaires, heuresProgramme };
   }
 
   /**
@@ -206,19 +265,146 @@ export class EmploisDuTempsService {
       raisons.push(
         `matière changée ou ajoutée pour ${changes.length} enseignant(s)`,
       );
-    const heures = x.classes.reduce(
-      (t, c) =>
-        t +
-        (x.prog.parNiveau.get(c.niveau) ?? [])
-          .filter((p) => p.heures > 0)
-          .reduce((u, p) => u + Math.round(p.heures), 0),
-      0,
+    // Plages horaires ou jours d'un enseignant changés après la génération (Présence…)
+    const genere = new Date(e.genereLe).getTime();
+    const modifies = x.agents.filter(
+      (g) => (x.horaires.get(g.id)?.modifieLe?.getTime() ?? 0) > genere,
     );
-    if (heures !== e.heuresTotal)
+    if (modifies.length)
       raisons.push(
-        `quotas horaires changés (${heures} h par semaine au lieu de ${e.heuresTotal} h)`,
+        `plages horaires ou jours de ${modifies.length} enseignant(s) modifiés depuis`,
+      );
+    const programmeAvant = e.heuresProgramme ?? e.heuresTotal;
+    if (x.heuresProgramme !== programmeAvant)
+      raisons.push(
+        `quotas horaires changés (${x.heuresProgramme} h par semaine au programme au lieu de ${programmeAvant} h)`,
       );
     return raisons;
+  }
+
+  /**
+   * Plages horaires d'un enseignant (DG, 28/10/2026) : son emploi du temps tel que l'école le fait,
+   * créneau par créneau (le lundi 07:30-08:25 en 6ème 1, le mardi 10:30-11:25 en 5ème 2…), dans sa
+   * matière. Une classe ne peut pas avoir deux enseignants sur le même créneau. Ses jours de
+   * présence (Présence) suivent ses plages. L'emploi du temps est regénéré tout de suite.
+   */
+  async plagesEnseignant(
+    u: UtilisateurConnecte,
+    structureId: number,
+    agentId: number,
+    plages: unknown,
+  ) {
+    const s = await this.etab.structure(u, structureId);
+    if (!PAR_MATIERE.includes(s.cycle ?? ''))
+      throw new BadRequestException(
+        'Les plages horaires par matière concernent les collèges et les lycées.',
+      );
+    const a = this.etab.annee();
+    const r = this.reglages(s);
+    const agents = (
+      (await this.etab.agentsDe([structureId])).get(structureId) ?? []
+    ).filter((x) => x.enseignant && x.enPoste);
+    const agent = agents.find((x) => x.id === agentId);
+    if (!agent)
+      throw new BadRequestException(
+        'Cet enseignant n’est pas en poste dans cette école.',
+      );
+    const classes = new Map(
+      (
+        await this.classes.find({ where: { structureId, anneeScolaire: a } })
+      ).map((c) => [c.id, c]),
+    );
+    const nomJour = (j: number) => NOMS_JOURS_EDT[j] ?? `jour ${j}`;
+    const propres: PlageEnseignant[] = [];
+    const vues = new Set<string>();
+    for (const x of Array.isArray(plages) ? plages : []) {
+      const p = x as Partial<PlageEnseignant>;
+      const classe = classes.get(Number(p.classeId));
+      const jour = Number(p.jour);
+      const creneau = r.creneaux.find((c) => c.debut === p.debut);
+      if (!classe)
+        throw new BadRequestException(
+          `Une plage porte sur une classe qui n’est pas ouverte en ${a} dans cette école.`,
+        );
+      if (!r.jours.includes(jour))
+        throw new BadRequestException(
+          `${nomJour(jour)} n’est pas un jour de cours de l’école.`,
+        );
+      if (!creneau)
+        throw new BadRequestException(
+          `${nomJour(jour)} : ${p.debut ?? '?'} n’est pas un créneau de l’école (Réglages de l’école).`,
+        );
+      const k = `${jour}:${creneau.debut}`;
+      if (vues.has(k))
+        throw new BadRequestException(
+          `${nomJour(jour)} ${creneau.debut}-${creneau.fin} : deux classes au même moment pour lui.`,
+        );
+      vues.add(k);
+      propres.push({
+        classeId: classe.id,
+        jour,
+        debut: creneau.debut,
+        fin: creneau.fin,
+      });
+    }
+    // Une classe n'a qu'un enseignant à la fois : les plages des collègues sont vérifiées
+    const collegues = await this.horaires.find({
+      where: {
+        agentId: In(
+          agents.filter((x) => x.id !== agentId).map((x) => x.id).length
+            ? agents.filter((x) => x.id !== agentId).map((x) => x.id)
+            : [-1],
+        ),
+      },
+    });
+    for (const p of propres)
+      for (const h of collegues) {
+        const autre = (h.plages ?? []).find(
+          (q) =>
+            q.classeId === p.classeId &&
+            q.jour === p.jour &&
+            q.debut === p.debut,
+        );
+        if (autre)
+          throw new BadRequestException(
+            `${nomJour(p.jour)} ${p.debut}-${p.fin} : la ${classes.get(p.classeId)!.nom} a déjà cours avec ${agents.find((x) => x.id === h.agentId)?.nomComplet ?? 'un autre enseignant'}.`,
+          );
+      }
+    // Ses jours de présence suivent ses plages : chaque jour où il a cours, de la première à la
+    // dernière heure ; sans plages, ses jours ne changent pas
+    const h = await this.horaires.findOne({ where: { agentId } });
+    let jours = h?.jours ?? {};
+    if (propres.length) {
+      jours = {};
+      for (const p of propres) {
+        const j = jours[String(p.jour)];
+        jours[String(p.jour)] = {
+          debut: !j?.debut || p.debut < j.debut ? p.debut : j.debut,
+          fin: !j?.fin || p.fin > j.fin ? p.fin : j.fin,
+        };
+      }
+    }
+    await this.horaires.save({
+      agentId,
+      structureId,
+      jours,
+      plages: propres,
+      modifiePar: u.nom,
+    });
+    await this.journal.log(
+      u,
+      'ECOLE_PLAGES_ENSEIGNANT',
+      'agent_recense',
+      agentId,
+      { structureId, plages: propres.length },
+    );
+    // L'emploi du temps affiché reprend tout de suite les plages
+    let regenere = false;
+    if (classes.size && r.creneaux.length) {
+      await this.generer(u, structureId, a);
+      regenere = true;
+    }
+    return { plages: propres, jours, regenere };
   }
 
   /** Génère (ou regénère) l'emploi du temps de l'année à partir des classes et des enseignants. */
@@ -236,29 +422,25 @@ export class EmploisDuTempsService {
       throw new BadRequestException(
         'Aucun créneau de cours dans les paramètres (Administration › Paramètres › créneaux des emplois du temps).',
       );
-    const { classes, prog, agents } = await this.situation(
-      structureId,
-      a,
-      s.cycle!,
-    );
+    const { classes, prog, agents, horaires, heuresProgramme } =
+      await this.situation(structureId, a, s.cycle!);
     if (!classes.length)
       throw new BadRequestException(
         `Aucune classe ouverte en ${a} : ouvrez d’abord les classes de l’école.`,
       );
-    const horaires = new Map(
-      (
-        await this.horaires.find({
-          where: {
-            agentId: In(agents.length ? agents.map((x) => x.id) : [-1]),
-          },
-        })
-      ).map((h) => [h.agentId, h.jours]),
-    );
+    // Une plage se repère par l'heure de début de son créneau ; -1 : plus dans les réglages
+    const indice = (debut: string) =>
+      r.creneaux.findIndex((c) => c.debut === debut);
     const enseignants: EnseignantEdt[] = agents.map((x) => ({
       id: x.id,
       nom: x.nomComplet,
       matiere: this.etab.matiereAgent(x, prog.matieres),
-      horaire: horaires.get(x.id) ?? null,
+      horaire: horaires.get(x.id)?.jours ?? null,
+      plages: (horaires.get(x.id)?.plages ?? []).map((p) => ({
+        classeId: p.classeId,
+        jour: p.jour,
+        creneau: indice(p.debut),
+      })),
     }));
     const res = genererEmploiDuTemps({
       classes: classes.map((c) => ({
@@ -297,6 +479,7 @@ export class EmploisDuTempsService {
       charges: res.charges,
       heuresTotal: res.heuresTotal,
       heuresPlacees: res.heuresPlacees,
+      heuresProgramme,
       generePar: u.nom,
     });
     const sauve = await this.edt.save(e);

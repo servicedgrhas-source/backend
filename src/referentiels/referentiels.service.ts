@@ -232,6 +232,9 @@ export class ReferentielsService implements OnApplicationBootstrap {
    */
   async onApplicationBootstrap() {
     try {
+      // Orthographe reprise de l'ancien système : corrigée partout, même sans ses fichiers
+      await this.corrigerNiveaux();
+      await this.corrigerPostes();
       if (!existsSync(DOSSIER)) return;
       const aFaire =
         (await this.refs.count()) === 0 ||
@@ -249,7 +252,9 @@ export class ReferentielsService implements OnApplicationBootstrap {
         );
       }
       await this.assurerTypesMatiere();
+      // Un rechargement de l'ancien système remet son orthographe : corrigée à nouveau
       await this.corrigerNiveaux();
+      await this.corrigerPostes();
       // Fiches du personnel sans établissement : rattachées d'après leur lieu de service
       const n = await this.rec.rattacherAutomatiquement();
       if (n)
@@ -274,6 +279,29 @@ export class ReferentielsService implements OnApplicationBootstrap {
       await this.refs.query(
         `UPDATE referentiel SET libelle = $3, "libelleNormalise" = $4 WHERE type = 'NIVEAU' AND code = $1 AND libelle = $2`,
         [code, faux, juste, normaliser(juste)],
+      );
+  }
+
+  /**
+   * Postes repris de l'ancien système (DG, 28/10/2026) : « Chef de Sécratariat … » s'écrit
+   * « Chef de Secrétariat … ». Le code ne change pas : ce qui le cite reste valable.
+   */
+  private async corrigerPostes() {
+    for (const [code, juste] of [
+      ['CHEFDESECRATARIATDEPARTEMENTAL', 'Chef de Secrétariat départemental'],
+      [
+        'CHEFDESECRATARIATDIRECTIONCENTRALE',
+        'Chef de Secrétariat de Direction centrale',
+      ],
+      [
+        'CHEFDESECRATARIATDIRECTIONGENERALE',
+        'Chef de Secrétariat de Direction générale',
+      ],
+    ])
+      await this.refs.query(
+        `UPDATE referentiel SET libelle = $2, "libelleNormalise" = $3
+          WHERE type = 'POSTE' AND code = $1 AND libelle <> $2`,
+        [code, juste, normaliser(juste)],
       );
   }
 
@@ -303,6 +331,124 @@ export class ReferentielsService implements OnApplicationBootstrap {
 
   /* ------------------------------ Choix dans une liste ------------------------------ */
 
+  private suggestionsCache = new Map<string, { a: number; l: OptionChoix[] }>();
+
+  /**
+   * Suggestions des rubriques de la fiche du personnel (DG, 30/10/2026) : on propose, on n'oblige pas.
+   * Grades : ceux des règles (grades de départ) et ceux écrits sur au moins 3 fiches ; catégories et
+   * échelles : les référentiels ; échelons : 1 à 16 puis HC 1 à HC 4 ; lieux de naissance : villes,
+   * communes et districts du Congo ; spécialités : séries du baccalauréat et celles déjà écrites.
+   * `null` : pas une liste de la fiche.
+   */
+  private async suggestionsFiche(liste: string): Promise<OptionChoix[] | null> {
+    const LISTES = [
+      'GRADE',
+      'CATEGORIE',
+      'ECHELLE',
+      'ECHELON',
+      'LIEU_NAISSANCE',
+      'NATIONALITE',
+      'SPECIALITE',
+    ];
+    if (!LISTES.includes(liste)) return null;
+    const deja = this.suggestionsCache.get(liste);
+    if (deja && Date.now() - deja.a < 10 * 60_000) return deja.l;
+    const uniques = (l: OptionChoix[]) =>
+      l.filter(
+        (o, i) =>
+          o.libelle.trim() &&
+          l.findIndex(
+            (x) => cleCompacte(x.libelle) === cleCompacte(o.libelle),
+          ) === i,
+      );
+    let l: OptionChoix[] = [];
+    if (liste === 'NATIONALITE')
+      l = [{ valeur: 'Congolaise', libelle: 'Congolaise' }];
+    else if (liste === 'ECHELON')
+      l = [
+        ...Array.from({ length: 16 }, (_, i) => String(i + 1)),
+        ...Array.from({ length: 4 }, (_, i) => `HC ${i + 1}`),
+      ].map((v) => ({
+        valeur: v,
+        libelle: v,
+        detail: v.startsWith('HC') ? 'hors classe' : undefined,
+      }));
+    else if (liste === 'CATEGORIE' || liste === 'ECHELLE')
+      l = (
+        await this.refs.find({
+          where: {
+            type: liste === 'CATEGORIE' ? 'CATEGORIE_AGENT' : 'ECHELLE',
+            actif: true,
+          },
+          order: { ordre: 'ASC', code: 'ASC' },
+        })
+      ).map((r) => ({ valeur: r.code, libelle: r.libelle }));
+    else if (liste === 'LIEU_NAISSANCE')
+      l = uniques(
+        (
+          await this.refs.query<{ libelle: string; t: string | null }[]>(
+            `SELECT libelle, donnees->>'typeLocalite' AS t FROM referentiel
+              WHERE type IN ('VILLE', 'LOCALITE') AND actif
+                AND coalesce(donnees->>'typeLocalite', '') <> 'ARRONDISSEMENT'
+              ORDER BY (type = 'VILLE') DESC, libelle`,
+          )
+        ).map((r) => ({
+          valeur: r.libelle,
+          libelle: r.libelle,
+          detail:
+            r.t === 'DISTRICT'
+              ? 'district'
+              : r.t === 'COMMUNE'
+                ? 'commune'
+                : 'ville',
+        })),
+      );
+    else if (liste === 'GRADE')
+      l = uniques([
+        ...(
+          await this.refs.query<{ g: string }[]>(
+            `SELECT DISTINCT "gradeLibelle" AS g FROM regle_diplome WHERE "gradeLibelle" IS NOT NULL`,
+          )
+        ).map((r) => ({ valeur: r.g, libelle: r.g })),
+        ...(
+          await this.refs.query<{ g: string }[]>(
+            `SELECT donnees->>'GRADE' AS g FROM agent_recense
+              WHERE coalesce(donnees->>'GRADE', '') <> ''
+              GROUP BY 1 HAVING count(*) >= 3 ORDER BY count(*) DESC`,
+          )
+        ).map((r) => ({ valeur: r.g, libelle: r.g })),
+      ]);
+    else if (liste === 'SPECIALITE')
+      l = uniques([
+        ...[
+          'A',
+          'A4',
+          'B',
+          'C',
+          'D',
+          'E',
+          'F1',
+          'F2',
+          'F3',
+          'F4',
+          'G1',
+          'G2',
+          'G3',
+          'H',
+        ].map((x) => ({ valeur: `Série ${x}`, libelle: `Série ${x}` })),
+        ...(
+          await this.refs.query<{ g: string }[]>(
+            `SELECT x->>'SPECIALITE' AS g FROM agent_recense a,
+                    jsonb_array_elements(CASE WHEN jsonb_typeof(a.donnees->'AUTRES_DIPLOMES') = 'array' THEN a.donnees->'AUTRES_DIPLOMES' ELSE '[]'::jsonb END) x
+              WHERE jsonb_typeof(x) = 'object' AND coalesce(x->>'SPECIALITE', '') <> ''
+              GROUP BY 1 HAVING count(*) >= 3 ORDER BY count(*) DESC LIMIT 200`,
+          )
+        ).map((r) => ({ valeur: r.g, libelle: r.g })),
+      ]);
+    this.suggestionsCache.set(liste, { a: Date.now(), l });
+    return l;
+  }
+
   /**
    * Valeurs proposées dans un champ « à choisir » : les écoles, inspections et structures viennent
    * de l'organigramme, le reste des référentiels. Recherche sur tous les mots tapés.
@@ -318,6 +464,21 @@ export class ReferentielsService implements OnApplicationBootstrap {
       .filter((m) => m.length >= 1)
       .slice(0, 6);
     const n = Math.min(Math.max(limite, 1), 100);
+    const suggestions = await this.suggestionsFiche(liste);
+    if (suggestions) {
+      // Le début d'un mot suffit (« Dol » → Dolisie) ; les échelons, du début seulement (« 1 » → 1, 10…)
+      const debut = (t: string) =>
+        liste === 'ECHELON'
+          ? normaliser(t).startsWith(mots.join(' '))
+          : mots.every((m) =>
+              normaliser(t)
+                .split(/[\s'’().-]+/)
+                .some((x) => x.startsWith(m)),
+            );
+      return suggestions
+        .filter((o) => !mots.length || debut(`${o.libelle} ${o.valeur}`))
+        .slice(0, n);
+    }
     if (['ETABLISSEMENT', 'INSPECTION', 'STRUCTURE'].includes(liste)) {
       const types =
         liste === 'ETABLISSEMENT'

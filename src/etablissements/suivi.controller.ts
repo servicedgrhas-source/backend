@@ -107,6 +107,26 @@ export class SuiviController {
     });
   }
 
+  /** Retards, départs anticipés, cours manqués et absences de la période, et la journée d'aujourd'hui. */
+  @Get('presence/analyse')
+  analyse(
+    @Utilisateur() u: UtilisateurConnecte,
+    @Query() q: Record<string, string | undefined>,
+  ) {
+    return this.service.analyse(u, {
+      departement: nombre(q.departement),
+      structure: nombre(q.structure),
+      du: q.du,
+      au: q.au,
+    });
+  }
+
+  /** Marges et seuils de la présence (réglés dans les paramètres). */
+  @Get('presence/reglages')
+  reglages() {
+    return this.service.reglages();
+  }
+
   /* ------------------------------ Évaluation ------------------------------ */
 
   @Get('evaluations')

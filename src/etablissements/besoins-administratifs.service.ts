@@ -22,7 +22,6 @@ import { EtablissementsService } from './etablissements.service';
 /** Postes proposés quand le référentiel « Postes et fonctions » n'en donne pas assez. */
 const POSTES_COURANTS = [
   'Directeur',
-  'Directeur adjoint',
   'Chef de service',
   'Chef de bureau',
   'Collaborateur',

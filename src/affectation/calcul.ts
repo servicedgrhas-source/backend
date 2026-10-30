@@ -191,8 +191,14 @@ export function deriver(
     bloquants.push(
       `${NAISSANCE_IMPROBABLE} (${dateFr(agent.dateNaissance)} : ${age} ans au ${dateFr(dateAge)}) : statut contractuel à préciser`,
     );
-  if (def?.colonnes.includes('SPECIALITE') && !aff.specialite)
-    avertissements.push('Spécialité non renseignée');
+  // Spécialité absente : elle ne bloque pas la note, mais se signale à tous les cycles
+  // (DG, 28/10/2026), avec insistance au collège et au lycée où elle dit la matière enseignée
+  if (!aff.specialite)
+    avertissements.push(
+      regle?.cycle === 'COLLEGE' || regle?.cycle === 'LYCEE'
+        ? `Spécialité non renseignée (obligatoire au ${regle.cycle === 'LYCEE' ? 'lycée' : 'collège'} : la matière enseignée)`
+        : 'Spécialité non renseignée',
+    );
   // Seulement les anomalies encore vraies d'après la fiche telle qu'elle est
   for (const a of anomaliesAJour(agent)) avertissements.push(a);
 

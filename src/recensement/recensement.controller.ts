@@ -72,6 +72,7 @@ function filtres(q: Record<string, string | undefined>): FiltresAgents {
     complet: q.complet === 'oui' || q.complet === 'non' ? q.complet : undefined,
     manque: q.manque || undefined,
     controle: q.controle || undefined,
+    anomalies: q.anomalies === '1' || undefined,
     ajout: q.ajout || undefined,
     page: nombre(q.page),
   };
@@ -147,6 +148,15 @@ export class RecensementController {
     return this.rec.bottin(u, filtres(q));
   }
 
+  /** Les problèmes d'une fiche, avec les fiches liées (même matricule, même personne…). */
+  @Get('agents/:id/anomalies')
+  anomaliesAgent(
+    @Utilisateur() u: UtilisateurConnecte,
+    @Param('id', ParseIntPipe) id: number,
+  ) {
+    return this.rec.anomaliesAgent(u, id);
+  }
+
   @Get('agents/:id')
   fiche(
     @Utilisateur() u: UtilisateurConnecte,
@@ -195,6 +205,27 @@ export class RecensementController {
     @Body() dto: ChangementStatutDto,
   ) {
     return this.rec.changerStatut(u, id, dto);
+  }
+
+  /** Modifications faites au recensement qui attendent le contrôle (ancienne et nouvelle valeur). */
+  @Get('modifications')
+  modifications(@Utilisateur() u: UtilisateurConnecte) {
+    return this.rec.modificationsAControler(u);
+  }
+
+  /** Bureau du contrôle : valider ou rejeter une ou plusieurs modifications à la fois. */
+  @Roles('CHEF_SERVICE', 'DIRECTEUR', 'BUREAU_ETUDES', 'DG')
+  @Post('modifications/controle')
+  controlerModifications(
+    @Utilisateur() u: UtilisateurConnecte,
+    @Body() corps: { ids: number[]; decision: string; note?: string },
+  ) {
+    return this.rec.controlerModifications(
+      u,
+      (corps.ids ?? []).map(Number).filter(Number.isInteger),
+      corps.decision,
+      corps.note,
+    );
   }
 
   /** Bureau du contrôle : avis sur un agent ajouté au recensement, avant la décision du DG. */
@@ -468,7 +499,7 @@ export class RecensementController {
       annee: n(q.annee),
       categorie: q.categorie || undefined,
       cycle: q.cycle || undefined,
-      dus: q.dus || undefined,
+      attendu: q.attendu || undefined,
       statut: q.statut || undefined,
       recherche: q.recherche || undefined,
     };

@@ -20,7 +20,7 @@ import {
   WidthType,
 } from 'docx';
 import ExcelJS from 'exceljs';
-import { DataSource, LessThan, Not, Repository } from 'typeorm';
+import { DataSource, In, LessThan, Not, Repository } from 'typeorm';
 import type { UtilisateurConnecte } from '../auth/auth';
 import { IndexNoms } from '../common/index-noms';
 import { montantArrete } from '../common/lettres';
@@ -1006,7 +1006,6 @@ export class BourseService {
         para('', { taille: 22 }),
         para(e.signature.nom, {
           gras: true,
-          souligne: true,
           taille: 22,
           droite: true,
         }),
@@ -1024,6 +1023,164 @@ export class BourseService {
     return {
       nom: `${e.nomFichier}.docx`,
       contenu: await Packer.toBuffer(doc),
+    };
+  }
+
+  /**
+   * Payés deux fois (DG, 28/10/2026 : « il faut les identifier, les lister ») : les personnes
+   * inscrites deux fois sur la liste, ou payées aussi sur l'autre liste (volontaires et
+   * communautaires), une ligne par paire, pour les retirer à la prochaine bourse.
+   */
+  async payesDeuxFois(id: number) {
+    const etat = await this.etats.findOne({ where: { id } });
+    if (!etat) throw new NotFoundException('État de bourse introuvable');
+    const doubles = (etat.anomalies as Anomalie[]).filter(
+      (a) => a.code === 'DOUBLON' || a.code === 'AUTRE_LISTE',
+    );
+    const ids = [
+      ...new Set(
+        doubles
+          .flatMap((a) => [a.volontaireId, a.autreId ?? ''])
+          .filter(Boolean),
+      ),
+    ];
+    const lignes = new Map(
+      (ids.length
+        ? await this.lignes.find({
+            where: { etatId: id, volontaireId: In(ids) },
+          })
+        : []
+      ).map((l) => [l.volontaireId, l]),
+    );
+    const fiches = new Map(
+      (ids.length
+        ? await this.volontaires.find({ where: { id: In(ids) } })
+        : []
+      ).map((v) => [v.id, v]),
+    );
+    const deps = new Map((await this.deps.find()).map((d) => [d.id, d.nom]));
+    const personne = (vid: string) => {
+      const l = lignes.get(vid);
+      const v = fiches.get(vid);
+      return {
+        id: vid,
+        nomComplet: l?.nomComplet ?? v?.nomComplet ?? '—',
+        liste: LISTES[populationDe(v?.population ?? etat.population)],
+        etablissement: l?.etablissement ?? v?.etablissement ?? null,
+        departement: l?.departementId
+          ? (deps.get(l.departementId) ?? null)
+          : null,
+        categorie: l?.categorie ?? null,
+        // Montant de cet état (null : pas payé sur cette liste ce mois-ci)
+        paye: l ? l.total : null,
+      };
+    };
+    const vues = new Set<string>();
+    const paires: {
+      code: string;
+      controle: string;
+      a: ReturnType<typeof personne>;
+      b: ReturnType<typeof personne> | null;
+    }[] = [];
+    for (const d of doubles) {
+      // Le doublon est signalé des deux côtés (A ressemble à B, B à A) : une seule ligne
+      const cle = `${d.code}|${[d.volontaireId, d.autreId ?? ''].sort().join('|')}`;
+      if (vues.has(cle)) continue;
+      vues.add(cle);
+      paires.push({
+        code: d.code,
+        controle: CONTROLES[d.code].libelle,
+        a: personne(d.volontaireId),
+        b: d.autreId ? personne(d.autreId) : null,
+      });
+    }
+    paires.sort((x, y) => x.a.nomComplet.localeCompare(y.a.nomComplet));
+    return {
+      etat: { id: etat.id, mois: etat.mois, population: etat.population },
+      personnes: new Set(
+        paires.flatMap((x) => [x.a.id, ...(x.b ? [x.b.id] : [])]),
+      ).size,
+      paires,
+    };
+  }
+
+  async payesDeuxFoisExcel(
+    id: number,
+  ): Promise<{ nom: string; contenu: Buffer }> {
+    const r = await this.payesDeuxFois(id);
+    const wb = new ExcelJS.Workbook();
+    const ws = wb.addWorksheet('Payés deux fois', {
+      pageSetup: {
+        paperSize: 9,
+        orientation: 'landscape',
+        fitToPage: true,
+        fitToWidth: 1,
+        fitToHeight: 0,
+      },
+    });
+    ws.addRow([
+      `BOURSE DES ${LISTES[populationDe(r.etat.population)].toUpperCase()} — ${moisEnClair(r.etat.mois).toUpperCase()} : PAYÉS DEUX FOIS`,
+    ]).font = { bold: true, size: 13 };
+    ws.addRow([
+      `${r.paires.length} cas, ${r.personnes} personne(s) : à vérifier, puis à retirer de la prochaine bourse`,
+    ]);
+    ws.addRow([]);
+    const t = ws.addRow([
+      'N°',
+      'Contrôle',
+      'Nom et prénoms',
+      'Liste',
+      'Établissement',
+      'Département',
+      'Catégorie',
+      'Payé ce mois',
+      'Même personne probable',
+      'Liste',
+      'Établissement',
+      'Département',
+      'Catégorie',
+      'Payé ce mois',
+    ]);
+    t.font = { bold: true };
+    t.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true };
+    t.eachCell((c) => {
+      c.fill = {
+        type: 'pattern',
+        pattern: 'solid',
+        fgColor: { argb: 'FFE4E4E7' },
+      };
+    });
+    const cote = (
+      p:
+        | Awaited<
+            ReturnType<BourseService['payesDeuxFois']>
+          >['paires'][number]['a']
+        | null,
+    ) =>
+      p
+        ? [
+            p.nomComplet,
+            p.liste,
+            p.etablissement ?? '',
+            p.departement ?? '',
+            p.categorie ?? '',
+            p.paye ?? 'non',
+          ]
+        : ['', '', '', '', '', ''];
+    r.paires.forEach((x, i) => {
+      ws.addRow([i + 1, x.controle, ...cote(x.a), ...cote(x.b)]).alignment = {
+        horizontal: 'center',
+        vertical: 'middle',
+        wrapText: true,
+      };
+    });
+    ws.columns = [6, 26, 30, 14, 26, 16, 10, 12, 30, 14, 26, 16, 10, 12].map(
+      (width) => ({ width }),
+    );
+    ws.views = [{ state: 'frozen', ySplit: t.number }];
+    return {
+      nom: `Payés deux fois - ${moisEnClair(r.etat.mois)}.xlsx`,
+      contenu: Buffer.from(await wb.xlsx.writeBuffer()),
     };
   }
 
@@ -1141,7 +1298,6 @@ export class BourseService {
       ws.addRow([]);
       ws.addRow([...Array<string>(7).fill(''), ep.signature.nom]).font = {
         bold: true,
-        underline: true,
       };
       [5, 32, 13, 12, 28, 7, 13, 26, 18, 14, 24].forEach(
         (w, i) => (ws.getColumn(i + 1).width = w),
@@ -1232,7 +1388,6 @@ export class BourseService {
     ws.addRow([]);
     ws.addRow(['', '', '', '', c.signatairePaiementNom]).font = {
       bold: true,
-      underline: true,
     };
     ws.getColumn(1).width = 5;
     ws.getColumn(2).width = 22;

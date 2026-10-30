@@ -1209,6 +1209,29 @@ export interface ContentieuxAgent {
  * sont gardées dans `donnees` ; les plus utiles (nom, naissance, département…) sont recopiées
  * en colonnes pour la recherche, les doublons et le périmètre des comptes.
  */
+/**
+ * Modification d'une fiche faite au recensement (DG, 30/10/2026) : comme un agent ajouté, elle passe
+ * au contrôle. Elle s'applique tout de suite ; le contrôle la valide, ou la rejette et la fiche
+ * reprend ses anciennes valeurs. `champs` : pour chaque rubrique, l'ancienne et la nouvelle valeur
+ * (`TYPE_AGENT` : le type d'agent ; `STRUCTURE` : l'établissement de rattachement).
+ */
+@Entity('modification_recensement')
+export class ModificationRecensement {
+  @PrimaryGeneratedColumn() id: number;
+  @Index() @Column({ type: 'int' }) agentId: number;
+  @Column({ type: 'jsonb' }) champs: Record<
+    string,
+    { avant: unknown; apres: unknown }
+  >;
+  /** A_CONTROLER, VALIDEE, REJETEE */
+  @Index() @Column({ type: 'varchar', default: 'A_CONTROLER' }) etat: string;
+  @Column({ type: 'varchar', nullable: true }) faitePar: string | null;
+  @Column({ type: 'timestamptz', default: () => 'now()' }) faiteLe: Date;
+  @Column({ type: 'varchar', nullable: true }) controlePar: string | null;
+  @Column({ type: 'timestamptz', nullable: true }) controleLe: Date | null;
+  @Column({ type: 'text', nullable: true }) note: string | null;
+}
+
 @Entity('agent_recense')
 export class AgentRecense {
   @PrimaryGeneratedColumn() id: number;
@@ -1377,6 +1400,14 @@ export class Classe {
 
 /* ============================ Présence et évaluation du personnel ============================ */
 
+/** Un cours d'un enseignant : la classe, le jour (1 = lundi) et le créneau (« 07:30 »-« 08:25 »). */
+export interface PlageEnseignant {
+  classeId: number;
+  jour: number;
+  debut: string;
+  fin: string;
+}
+
 /** Jours et heures où l'agent est attendu (1 = lundi … 6 = samedi). */
 @Entity('horaire_agent')
 export class HoraireAgent {
@@ -1386,6 +1417,12 @@ export class HoraireAgent {
     string,
     { debut: string | null; fin: string | null }
   >;
+  /**
+   * Plages horaires saisies par l'école (DG, 28/10/2026) : son emploi du temps, créneau par créneau
+   * (le lundi 07:30-08:25 en 6ème 1, le mardi 10:30-11:25 en 5ème 2…), dans sa matière. L'emploi du
+   * temps les reprend telles quelles ; vide : il est réparti automatiquement.
+   */
+  @Column({ type: 'jsonb', default: [] }) plages: PlageEnseignant[];
   @Column({ type: 'varchar', nullable: true }) modifiePar: string | null;
   @UpdateDateColumn() modifieLe: Date;
 }
@@ -1473,6 +1510,8 @@ export class EmploiDuTemps {
   @Column({ type: 'jsonb' }) charges: Record<string, unknown>[];
   @Column({ type: 'int' }) heuresTotal: number;
   @Column({ type: 'int' }) heuresPlacees: number;
+  /** Heures du programme des classes au moment de la génération (sans les plages en plus). */
+  @Column({ type: 'int', nullable: true }) heuresProgramme: number | null;
   @Column({ type: 'varchar', nullable: true }) generePar: string | null;
   @UpdateDateColumn() genereLe: Date;
 }
@@ -1609,6 +1648,7 @@ export const ENTITES = [
   LigneMiseEnRoute,
   BesoinEtablissement,
   AgentRecense,
+  ModificationRecensement,
   PieceRecensement,
   LigneBottin,
   Referentiel,

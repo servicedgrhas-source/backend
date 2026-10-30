@@ -24,9 +24,39 @@ const PARAMETRES_ENTIERS: Record<string, [number, number, string]> = {
   POINT_INDICIAIRE: [1, 100000, 'un montant en FCFA (nombre entier)'],
   HEURES_ENSEIGNANT: [1, 40, 'un nombre d’heures entre 1 et 40'],
   HEURES_ENSEIGNANT_LYCEE: [1, 40, 'un nombre d’heures entre 1 et 40'],
+  PRESENCE_TOLERANCE_ARRIVEE: [0, 120, 'un nombre de minutes entre 0 et 120'],
+  PRESENCE_TOLERANCE_DEPART: [0, 120, 'un nombre de minutes entre 0 et 120'],
+  PRESENCE_RETARD_GRAVE: [5, 600, 'un nombre de minutes entre 5 et 600'],
+  PRESENCE_RETARDS_FREQUENTS: [1, 60, 'un nombre de retards entre 1 et 60'],
+  PRESENCE_ABSENCES_FREQUENTES: [1, 60, 'un nombre d’absences entre 1 et 60'],
 };
 
 export const PARAMETRES_DEFAUT: Record<string, [string, string]> = {
+  // Présence du personnel (DG, 30/10/2026 : « comme une vraie école », avec des marges réglables)
+  PRESENCE_TOLERANCE_ARRIVEE: [
+    '10',
+    'Présence : minutes de tolérance à l’arrivée (le temps des formalités) ; au-delà, l’agent est en retard',
+  ],
+  PRESENCE_TOLERANCE_DEPART: [
+    '10',
+    'Présence : minutes de tolérance au départ ; parti plus tôt que cela avant la fin prévue, c’est un départ anticipé',
+  ],
+  PRESENCE_RETARD_GRAVE: [
+    '60',
+    'Présence : retard important, en minutes (signalé à part : « 1 h de retard ou plus »)',
+  ],
+  PRESENCE_RETARDS_FREQUENTS: [
+    '3',
+    'Présence : nombre de retards sur la période à partir duquel l’agent est « souvent en retard »',
+  ],
+  PRESENCE_ABSENCES_FREQUENTES: [
+    '3',
+    'Présence : nombre d’absences non justifiées sur la période à partir duquel l’agent est « souvent absent »',
+  ],
+  PRESENCE_HORAIRE_DEFAUT: [
+    '07:30-14:00',
+    'Présence : heures de travail par défaut, du lundi au vendredi, pour un agent sans emploi du temps ni horaire saisi (ex. 07:30-14:00)',
+  ],
   ANNEE_SCOLAIRE: ['2026-2027', 'Année scolaire mentionnée dans les notes'],
   ANNEE_SCOLAIRE_MUTATION: [
     '',
@@ -293,6 +323,21 @@ export class ParametresService {
       if (!j.length || j.some((x) => !/^[1-6]$/.test(x)))
         throw new BadRequestException(
           'Écrivez les jours de cours avec des chiffres de 1 (lundi) à 6 (samedi), séparés par des virgules : 1,2,3,4,5,6.',
+        );
+      return;
+    }
+    if (cle === 'PRESENCE_HORAIRE_DEFAUT') {
+      const m = /^(\d{2}):(\d{2})\s*-\s*(\d{2}):(\d{2})$/.exec(valeur);
+      if (
+        !m ||
+        `${m[3]}:${m[4]}` <= `${m[1]}:${m[2]}` ||
+        +m[1] > 23 ||
+        +m[3] > 23 ||
+        +m[2] > 59 ||
+        +m[4] > 59
+      )
+        throw new BadRequestException(
+          'Écrivez l’heure d’arrivée et l’heure de fin comme 07:30-14:00.',
         );
       return;
     }

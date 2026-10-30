@@ -11,6 +11,7 @@ import type { UtilisateurConnecte } from '../auth/auth';
 import { normaliser } from '../common/texte';
 import { JournalService, ParametresService } from '../core/core.service';
 import {
+  EmploiDuTemps,
   EvaluationAgent,
   HoraireAgent,
   Presence,
@@ -20,11 +21,19 @@ import { RecensementService } from '../recensement/recensement.service';
 import { valeurLisible } from '../recensement/valeurs';
 import { EtablissementsService } from './etablissements.service';
 import {
+  ABSENCES,
+  analyseJour,
   bilanSemaine,
+  type Cours,
+  type CoursSemaine,
+  heures as heuresLisibles,
+  horaireEffectif,
   joursAttendus,
   type Pointage,
+  type ReglagesPresence,
   retard,
 } from './presence-regles';
+import type { Seance } from './emploi-du-temps-regles';
 
 /**
  * Suivi du personnel par les chefs de structure (DG, réunion de cadrage du 21/10/2026) :
@@ -177,6 +186,63 @@ export class SuiviService implements OnApplicationBootstrap {
 
   /* ------------------------------ Présence ------------------------------ */
 
+  /** Marges et seuils de la présence (Paramètres : PRESENCE_…). */
+  reglages(): ReglagesPresence {
+    const n = (k: string, d: number) => {
+      const v = Number(this.params.get(k));
+      return Number.isFinite(v) && v >= 0 ? v : d;
+    };
+    const [debutDefaut, finDefaut] = (
+      this.params.get('PRESENCE_HORAIRE_DEFAUT') || '07:30-14:00'
+    )
+      .split('-')
+      .map((x) => x.trim());
+    return {
+      toleranceArrivee: n('PRESENCE_TOLERANCE_ARRIVEE', 10),
+      toleranceDepart: n('PRESENCE_TOLERANCE_DEPART', 10),
+      retardGrave: n('PRESENCE_RETARD_GRAVE', 60),
+      retardsFrequents: n('PRESENCE_RETARDS_FREQUENTS', 3),
+      absencesFrequentes: n('PRESENCE_ABSENCES_FREQUENTES', 3),
+      debutDefaut: debutDefaut || '07:30',
+      finDefaut: finDefaut || '14:00',
+    };
+  }
+
+  /**
+   * Cours de chaque enseignant, jour par jour, d'après l'emploi du temps de l'année des structures
+   * (le plus récent) : c'est à eux que se comparent ses heures d'arrivée et de départ.
+   */
+  private async coursParAgent(structureIds: number[]) {
+    const res = new Map<number, CoursSemaine>();
+    if (!structureIds.length) return res;
+    const annee = this.params.get('ANNEE_SCOLAIRE');
+    const edts = await this.presences.manager.find(EmploiDuTemps, {
+      where: { structureId: In(structureIds), anneeScolaire: annee },
+      order: { genereLe: 'DESC' },
+    });
+    const vus = new Set<number>();
+    for (const e of edts) {
+      if (vus.has(e.structureId)) continue;
+      vus.add(e.structureId);
+      for (const x of e.seances as unknown as Seance[]) {
+        const c = e.creneaux[x.creneau];
+        if (!x.agentId || !c) continue;
+        const m = res.get(x.agentId) ?? {};
+        const j = String(x.jour);
+        const cours: Cours = {
+          debut: c.debut,
+          fin: c.fin,
+          libelle: [x.classe, x.matiereLibelle].filter(Boolean).join(' · '),
+        };
+        m[j] = [...(m[j] ?? []), cours].sort((a, b) =>
+          a.debut.localeCompare(b.debut),
+        );
+        res.set(x.agentId, m);
+      }
+    }
+    return res;
+  }
+
   private lundi(date?: string) {
     return lundiDe(date && DATE.test(date) ? date : aujourdhui());
   }
@@ -211,15 +277,24 @@ export class SuiviService implements OnApplicationBootstrap {
       this.semaines.findOne({ where: { structureId, lundi } }),
     ]);
     const hParAgent = new Map(horaires.map((h) => [h.agentId, h]));
+    const r = this.reglages();
+    const coursDe = await this.coursParAgent([structureId]);
     const auj = aujourdhui();
     // Les alertes tombent en fin de semaine : semaine validée ou terminée
     const finie = !!validee || dates[5] < auj;
     const lignes = agents.map((a) => {
       const h = hParAgent.get(a.id);
-      const jours = joursAttendus(h?.jours);
+      // Heures attendues : emploi du temps, sinon horaire saisi, sinon heures par défaut
+      const cours = coursDe.get(a.id) ?? {};
+      const eff = horaireEffectif(h?.jours, cours, r);
+      const jours = joursAttendus(eff.jours);
       const pts: Record<
         string,
-        Pointage & { motif: string | null; retard: number | null }
+        Pointage & {
+          motif: string | null;
+          retard: number | null;
+          analyse: ReturnType<typeof analyseJour>;
+        }
       > = {};
       const precedents: Record<string, Pointage> = {};
       for (const x of saisies) {
@@ -232,19 +307,32 @@ export class SuiviService implements OnApplicationBootstrap {
             motif: x.motif,
             arrivee: x.arrivee,
             depart: x.depart,
-            retard: retard(h?.jours, jour, x.arrivee),
+            retard: retard(eff.jours, jour, x.arrivee, r.toleranceArrivee),
+            analyse: analyseJour(
+              eff.jours[String(jour)],
+              cours[String(jour)] ?? [],
+              x,
+              r,
+            ),
           };
         }
       }
-      const bilan = bilanSemaine(h?.jours, dates, pts, {
-        dates: avant,
-        pointages: precedents,
-      });
+      const bilan = bilanSemaine(
+        eff.jours,
+        dates,
+        pts,
+        { dates: avant, pointages: precedents },
+        r.toleranceArrivee,
+      );
       return {
         id: a.id,
         nomComplet: a.nomComplet,
         fonction: a.fonction,
         horaire: h?.jours ?? null,
+        // Ce qui est attendu chaque jour, et d'où cela vient
+        prevu: eff.jours,
+        source: eff.source,
+        cours,
         attendus: dates.map((_, i) => jours.includes(i + 1)),
         saisies: pts,
         bilan: { ...bilan, alertes: finie ? bilan.alertes : [] },
@@ -272,6 +360,7 @@ export class SuiviService implements OnApplicationBootstrap {
         ? { par: validee.valideePar, le: validee.valideeLe }
         : null,
       statuts: STATUTS_PRESENCE,
+      reglages: r,
     };
   }
 
@@ -302,6 +391,8 @@ export class SuiviService implements OnApplicationBootstrap {
         })
       ).map((h) => [h.agentId, h.jours]),
     );
+    const r = this.reglages();
+    const coursDe = await this.coursParAgent([structureId]);
     const auj = aujourdhui();
     // Une semaine validée par le chef est close : plus aucun pointage n'y change
     const lundis = [
@@ -348,11 +439,25 @@ export class SuiviService implements OnApplicationBootstrap {
         throw new BadRequestException(
           'L’heure de départ est avant l’heure d’arrivée.',
         );
-      // Arrivé après l'heure prévue de ce jour : en retard
+      // Arrivé après l'heure prévue de ce jour, au-delà de la marge : en retard ; revenu dans la marge : présent
       const jour = ((new Date(`${x.date}T00:00:00Z`).getUTCDay() + 6) % 7) + 1;
-      const enRetard =
-        x.statut === 'PRESENT' &&
-        (retard(horaires.get(Number(x.agentId)), jour, arrivee) ?? 0) > 0;
+      const eff = horaireEffectif(
+        horaires.get(Number(x.agentId)),
+        coursDe.get(Number(x.agentId)),
+        r,
+      );
+      const minutesRetard = retard(
+        eff.jours,
+        jour,
+        arrivee,
+        r.toleranceArrivee,
+      );
+      const statut =
+        ['PRESENT', 'RETARD'].includes(x.statut) && minutesRetard !== null
+          ? minutesRetard > 0
+            ? 'RETARD'
+            : 'PRESENT'
+          : x.statut;
       await this.presences.query(
         `INSERT INTO presence ("agentId", "structureId", date, statut, motif, arrivee, depart, "saisiPar", "saisiLe")
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, now())
@@ -363,7 +468,7 @@ export class SuiviService implements OnApplicationBootstrap {
           Number(x.agentId),
           structureId,
           x.date,
-          enRetard ? 'RETARD' : x.statut,
+          statut,
           texte(x.motif, 200),
           arrivee,
           depart,
@@ -564,6 +669,305 @@ export class SuiviService implements OnApplicationBootstrap {
   }
 
   /**
+   * Retards et absences « comme une vraie école » (DG, 30/10/2026) : pour chaque agent de la période,
+   * ses jours attendus (emploi du temps, horaire ou défaut), ses présences, ses retards (nombre, total,
+   * moyenne, retards d'une heure ou plus), ses départs anticipés, les cours qu'il a manqués et ses
+   * absences ; ceux qui sont souvent en retard ou souvent absents d'après les seuils réglés. Et la
+   * journée d'aujourd'hui : qui est en retard, de combien, qui est absent, qui n'est pas pointé.
+   */
+  async analyse(
+    u: UtilisateurConnecte,
+    f: { departement?: number; structure?: number; du?: string; au?: string },
+  ) {
+    const auj = aujourdhui();
+    const au = f.au && DATE.test(f.au) && f.au <= auj ? f.au : auj;
+    const du = f.du && DATE.test(f.du) ? f.du : plusJours(au, -29);
+    if (du > au) throw new BadRequestException('La période est inversée.');
+    if (plusJours(du, 186) < au)
+      throw new BadRequestException(
+        'Six mois au plus : choisissez une période plus courte.',
+      );
+    const r = this.reglages();
+    // Structures : celle choisie (contrôle d'accès), sinon celles du périmètre qui ont pointé
+    let structures: number[];
+    if (f.structure) {
+      await this.etab.structure(u, f.structure);
+      structures = [f.structure];
+    } else {
+      const p = await this.rec.perimetre(u);
+      const conds = ['p.date BETWEEN $1 AND $2'];
+      const params: unknown[] = [du, au];
+      const ajouter = (sql: string, v: unknown) => {
+        params.push(v);
+        conds.push(sql.replace('$X', `$${params.length}`));
+      };
+      if ('departementId' in p)
+        ajouter('s."departementId" = $X', p.departementId);
+      if ('structures' in p) ajouter('s.id = ANY($X)', p.structures);
+      if (f.departement) ajouter('s."departementId" = $X', f.departement);
+      structures = (
+        await this.presences.query<{ id: number }[]>(
+          `SELECT DISTINCT s.id FROM presence p JOIN structure s ON s.id = p."structureId" WHERE ${conds.join(' AND ')} LIMIT 400`,
+          params,
+        )
+      ).map((x) => x.id);
+    }
+    const parStructure = await this.etab.agentsDe(structures);
+    const nomsStructures = new Map(
+      (structures.length
+        ? await this.presences.query<{ id: number; nom: string }[]>(
+            `SELECT id, nom FROM structure WHERE id = ANY($1)`,
+            [structures],
+          )
+        : []
+      ).map((x) => [x.id, x.nom]),
+    );
+    const agents = [...parStructure.entries()]
+      .flatMap(([sid, l]) =>
+        l.filter((a) => a.enPoste).map((a) => ({ ...a, structureId: sid })),
+      )
+      .slice(0, 3000);
+    const ids = agents.map((a) => a.id);
+    const [horaires, pts, coursDe] = await Promise.all([
+      ids.length
+        ? this.horaires.find({ where: { agentId: In(ids) } })
+        : Promise.resolve([] as HoraireAgent[]),
+      ids.length
+        ? this.presences.query<
+            {
+              agentId: number;
+              date: string;
+              statut: string;
+              motif: string | null;
+              arrivee: string | null;
+              depart: string | null;
+            }[]
+          >(
+            `SELECT "agentId", to_char(date, 'YYYY-MM-DD') AS date, statut, motif, arrivee, depart FROM presence
+              WHERE "agentId" = ANY($1) AND date BETWEEN $2 AND $3`,
+            [ids, du, au],
+          )
+        : Promise.resolve([]),
+      this.coursParAgent(structures),
+    ]);
+    const hDe = new Map(horaires.map((h) => [h.agentId, h.jours]));
+    // On compte à partir de la fiche de l'agent et du premier pointage de sa structure : avant,
+    // il n'y avait rien à pointer (agent pas encore enregistré, école qui ne pointait pas encore)
+    const [crees, premiers] = ids.length
+      ? await Promise.all([
+          this.presences.query<{ id: number; d: string }[]>(
+            `SELECT id, to_char("creeLe", 'YYYY-MM-DD') AS d FROM agent_recense WHERE id = ANY($1)`,
+            [ids],
+          ),
+          this.presences.query<{ id: number; d: string }[]>(
+            `SELECT "structureId" AS id, to_char(min(date), 'YYYY-MM-DD') AS d FROM presence WHERE "structureId" = ANY($1) GROUP BY 1`,
+            [structures],
+          ),
+        ])
+      : [[], []];
+    const creeLe = new Map(crees.map((x) => [x.id, x.d]));
+    const premierPointage = new Map(premiers.map((x) => [x.id, x.d]));
+    const ptsDe = new Map<number, Map<string, (typeof pts)[number]>>();
+    for (const x of pts) {
+      const m = ptsDe.get(x.agentId) ?? new Map<string, (typeof pts)[number]>();
+      m.set(x.date, x);
+      ptsDe.set(x.agentId, m);
+    }
+    // Jours de la période (lundi à samedi)
+    const dates: string[] = [];
+    for (let d = du; d <= au; d = plusJours(d, 1)) {
+      const j = (new Date(`${d}T00:00:00Z`).getUTCDay() + 6) % 7;
+      if (j < 6) dates.push(d);
+    }
+    const jourDe = (d: string) =>
+      ((new Date(`${d}T00:00:00Z`).getUTCDay() + 6) % 7) + 1;
+    const SOURCES = {
+      EDT: 'emploi du temps',
+      HORAIRE: 'horaire saisi',
+      DEFAUT: 'heures par défaut',
+    };
+    const aujourdhuiListe: {
+      agentId: number;
+      nomComplet: string;
+      structure: string;
+      prevu: string | null;
+      arrivee: string | null;
+      depart: string | null;
+      cas:
+        | 'RETARD'
+        | 'DEPART_ANTICIPE'
+        | 'ABSENT'
+        | 'ABSENT_JUSTIFIE'
+        | 'NON_POINTE';
+      minutes: number;
+      grave: boolean;
+      coursManques: string[];
+      motif: string | null;
+    }[] = [];
+    const lignes = agents.map((a) => {
+      const cours = coursDe.get(a.id) ?? {};
+      const eff = horaireEffectif(hDe.get(a.id), cours, r);
+      const attendusJ = joursAttendus(eff.jours);
+      const m: Map<string, (typeof pts)[number]> =
+        ptsDe.get(a.id) ?? new Map<string, (typeof pts)[number]>();
+      const st = {
+        attendus: 0,
+        pointes: 0,
+        presents: 0,
+        aLHeure: 0,
+        retards: 0,
+        minutesRetard: 0,
+        retardsGraves: 0,
+        departsAnticipes: 0,
+        minutesDepartAnticipe: 0,
+        coursManques: 0,
+        minutesCoursPerdues: 0,
+        absencesJustifiees: 0,
+        absencesNonJustifiees: 0,
+        nonPointes: 0,
+        dernierRetard: null as string | null,
+      };
+      const debut = [creeLe.get(a.id), premierPointage.get(a.structureId)]
+        .filter((x): x is string => !!x)
+        .sort()
+        .at(-1);
+      for (const d of dates) {
+        const j = jourDe(d);
+        if (!attendusJ.includes(j)) continue;
+        // Un jour pointé compte toujours ; un jour vide, seulement après le début du suivi
+        if (!m.has(d) && debut && d < debut) continue;
+        st.attendus++;
+        const p = m.get(d);
+        const prevu = eff.jours[String(j)];
+        const base = {
+          agentId: a.id,
+          nomComplet: a.nomComplet,
+          structure: nomsStructures.get(a.structureId) ?? '',
+          prevu: prevu?.debut ? `${prevu.debut}–${prevu.fin ?? '?'}` : null,
+          arrivee: p?.arrivee ?? null,
+          depart: p?.depart ?? null,
+          motif: p?.motif ?? null,
+        };
+        if (!p) {
+          st.nonPointes++;
+          if (d === auj)
+            aujourdhuiListe.push({
+              ...base,
+              cas: 'NON_POINTE',
+              minutes: 0,
+              grave: false,
+              coursManques: [],
+            });
+          continue;
+        }
+        st.pointes++;
+        if (ABSENCES.includes(p.statut)) {
+          if (p.statut === 'ABSENT') st.absencesNonJustifiees++;
+          else st.absencesJustifiees++;
+          if (d === auj)
+            aujourdhuiListe.push({
+              ...base,
+              cas: p.statut === 'ABSENT' ? 'ABSENT' : 'ABSENT_JUSTIFIE',
+              minutes: 0,
+              grave: false,
+              coursManques: (cours[String(j)] ?? []).map(
+                (c) => `${c.debut} ${c.libelle}`,
+              ),
+            });
+          continue;
+        }
+        st.presents++;
+        const x = analyseJour(prevu, cours[String(j)] ?? [], p, r);
+        if (x.retard) {
+          st.retards++;
+          st.minutesRetard += x.retard;
+          st.dernierRetard = d;
+          if (x.retardGrave) st.retardsGraves++;
+        } else st.aLHeure++;
+        if (x.departAnticipe) {
+          st.departsAnticipes++;
+          st.minutesDepartAnticipe += x.departAnticipe;
+        }
+        st.coursManques += x.coursManques.length;
+        st.minutesCoursPerdues += x.minutesCoursPerdues;
+        if (d === auj && x.retard)
+          aujourdhuiListe.push({
+            ...base,
+            cas: 'RETARD',
+            minutes: x.retard,
+            grave: x.retardGrave,
+            coursManques: x.coursManques.map((c) => `${c.debut} ${c.libelle}`),
+          });
+        if (d === auj && x.departAnticipe)
+          aujourdhuiListe.push({
+            ...base,
+            cas: 'DEPART_ANTICIPE',
+            minutes: x.departAnticipe,
+            grave: false,
+            coursManques: x.coursManques.map((c) => `${c.debut} ${c.libelle}`),
+          });
+      }
+      return {
+        agentId: a.id,
+        nomComplet: a.nomComplet,
+        fonction: a.fonction,
+        enseignant: a.enseignant,
+        structureId: a.structureId,
+        structure: nomsStructures.get(a.structureId) ?? '',
+        source: eff.source,
+        sourceLibelle: SOURCES[eff.source],
+        ...st,
+        retardMoyen: st.retards ? Math.round(st.minutesRetard / st.retards) : 0,
+        // Ponctualité : jours venus à l'heure sur les jours venus
+        ponctualite: st.presents
+          ? Math.round((100 * st.aLHeure) / st.presents)
+          : null,
+        souventEnRetard: st.retards >= r.retardsFrequents,
+        souventAbsent: st.absencesNonJustifiees >= r.absencesFrequentes,
+      };
+    });
+    const somme = (k: keyof (typeof lignes)[number]) =>
+      lignes.reduce((s, l) => s + (Number(l[k]) || 0), 0);
+    const parCas = (c: string) => aujourdhuiListe.filter((x) => x.cas === c);
+    return {
+      du,
+      au,
+      aujourdhui: auj,
+      reglages: r,
+      structures: structures.length,
+      totaux: {
+        agents: lignes.length,
+        retards: somme('retards'),
+        minutesRetard: somme('minutesRetard'),
+        retardsGraves: somme('retardsGraves'),
+        departsAnticipes: somme('departsAnticipes'),
+        minutesCoursPerdues: somme('minutesCoursPerdues'),
+        absencesNonJustifiees: somme('absencesNonJustifiees'),
+        absencesJustifiees: somme('absencesJustifiees'),
+        souventEnRetard: lignes.filter((l) => l.souventEnRetard).length,
+        souventAbsent: lignes.filter((l) => l.souventAbsent).length,
+        heuresCoursPerdues: heuresLisibles(somme('minutesCoursPerdues')),
+      },
+      jour: {
+        // Retards du jour, du plus long au plus court
+        retards: parCas('RETARD').sort((a, b) => b.minutes - a.minutes),
+        departs: parCas('DEPART_ANTICIPE').sort(
+          (a, b) => b.minutes - a.minutes,
+        ),
+        absents: parCas('ABSENT'),
+        justifies: parCas('ABSENT_JUSTIFIE'),
+        nonPointes: parCas('NON_POINTE'),
+      },
+      agents: lignes.sort(
+        (a, b) =>
+          b.minutesRetard - a.minutesRetard ||
+          b.absencesNonJustifiees - a.absencesNonJustifiees ||
+          a.nomComplet.localeCompare(b.nomComplet),
+      ),
+    };
+  }
+
+  /**
    * Alertes de présence de la période (4 dernières semaines par défaut), pour le panneau « Alertes » :
    * en premier, les agents restés deux semaines d'affilée sans travailler.
    */
@@ -618,6 +1022,8 @@ export class SuiviService implements OnApplicationBootstrap {
       ),
     ]);
     const h = new Map(horaires.map((x) => [x.agentId, x.jours]));
+    const r = this.reglages();
+    const coursDe = await this.coursParAgent(structures);
     const nom = new Map(noms.map((x) => [x.id, x]));
     const parAgent = new Map<number, Record<string, Pointage>>();
     for (const p of pts) {
@@ -640,10 +1046,13 @@ export class SuiviService implements OnApplicationBootstrap {
         const dates = JOURS.map((_, i) => plusJours(v.lundi, i));
         const avant = dates.map((d) => plusJours(d, -7));
         const tout = parAgent.get(a.id) ?? {};
-        const b = bilanSemaine(h.get(a.id), dates, tout, {
-          dates: avant,
-          pointages: tout,
-        });
+        const b = bilanSemaine(
+          horaireEffectif(h.get(a.id), coursDe.get(a.id), r).jours,
+          dates,
+          tout,
+          { dates: avant, pointages: tout },
+          r.toleranceArrivee,
+        );
         if (b.alertes.length)
           res.push({
             agentId: a.id,

@@ -243,7 +243,7 @@ export class ExcelRecensementService {
 
     // Agents déjà recensés (réactualisation)
     for (const a of o.agents ?? []) {
-      ws.addRow([
+      const ligne = ws.addRow([
         a.numeroFiche,
         c.statuts.find((s) => s.code === a.statut)?.libelle ?? a.statut,
         ...champs.map((ch) => {
@@ -257,6 +257,39 @@ export class ExcelRecensementService {
           return valeurLisible(ch, v, nomDep);
         }),
       ]);
+      // Texte long : il passe à la ligne dans sa case au lieu de déborder sur les voisines
+      ligne.alignment = { vertical: 'top', wrapText: true };
+    }
+    // Largeur de chaque colonne d'après ce qu'elle contient (DG, 29/10/2026 : des contenus ne
+    // tenaient pas dans leur case, ou débordaient) : le titre (son mot le plus long, le reste passe
+    // à la ligne) et les valeurs, entre 10 et 50 caractères ; au-delà, la case passe à la ligne
+    for (let col = 1; col <= entetes.length; col++) {
+      const colonne = ws.getColumn(col);
+      const ch = col >= 3 ? champs[col - 3] : null;
+      let valeurs = 0;
+      colonne.eachCell({ includeEmpty: false }, (cell, rang) => {
+        if (rang <= ligneTitres.number) return;
+        const v = cell.value;
+        const n =
+          v instanceof Date
+            ? 10
+            : (typeof v === 'string' || typeof v === 'number' ? String(v) : '')
+                .split('\n')
+                .reduce((m, x) => Math.max(m, x.length), 0);
+        valeurs = Math.max(valeurs, n);
+      });
+      const motTitre = String(entetes[col - 1] ?? '')
+        .split(/\s+/)
+        .reduce((m, x) => Math.max(m, x.length), 0);
+      const large =
+        ch &&
+        (ch.type === 'LIGNES' ||
+          ch.type === 'LISTE_MULTIPLE' ||
+          ch.type === 'TABLEAU');
+      colonne.width = Math.min(
+        large ? 60 : 50,
+        Math.max(10, motTitre + 3, valeurs + 2, ch?.type === 'DATE' ? 12 : 0),
+      );
     }
 
     // Consignes
@@ -349,12 +382,9 @@ export class ExcelRecensementService {
     u: UtilisateurConnecte,
     f: FiltresAgents & { statut?: string },
   ) {
-    const ids: number[] = [];
-    for (let page = 1; ; page++) {
-      const r = await this.rec.liste(u, { ...f, page });
-      ids.push(...r.lignes.map((l) => l.id as number));
-      if (r.lignes.length < r.parPage || ids.length >= 20000) break;
-    }
+    // Les fiches de la liste, dans son ordre, en une seule requête (les contrôles ne sont pas
+    // recalculés page après page)
+    const ids = await this.rec.idsFiltres(u, f, 20000);
     const agents: AgentRecense[] = [];
     for (let i = 0; i < ids.length; i += 1000)
       agents.push(

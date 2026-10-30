@@ -480,14 +480,86 @@ export const ajouterMoisDate = (date: string, mois: number) => {
 
 /**
  * Une échelle de la grille (Administration › Référentiels › Échelles) : son nombre d'échelons, la
- * durée d'un échelon, et l'échelle où l'on passe après le dernier échelon (sinon : on s'arrête).
+ * durée d'un échelon, les échelons hors classe qui suivent le dernier, et l'échelle où l'on passe
+ * après le dernier échelon hors classe (sinon : on s'arrête).
  */
 export interface EchelleGrille {
   code: string;
   libelle: string;
   nombreEchelons: number | null;
   dureeEchelonMois: number | null;
+  /** Échelons hors classe après le dernier échelon (DG, 27 et 29/10/2026 : 4 ; 0 : aucun). */
+  echelonsHorsClasse: number;
+  /** « Hors classe » (ou « Hors catégorie ») : le nom affiché ; l'abréviation reste « HC ». */
+  libelleHorsClasse: string;
   echelleSuivante: string | null;
+}
+
+/** Le dernier échelon quand l'échelle de l'agent est inconnue (DG, 29/10/2026 : 16). */
+export const DERNIER_ECHELON = 16;
+/** Échelons hors classe quand l'échelle ne dit rien (DG, 29/10/2026 : « de 1 jusqu'à 4 »). */
+export const ECHELONS_HORS_CLASSE = 4;
+
+const majusculesSansAccents = (v: string) =>
+  v
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toUpperCase()
+    .trim();
+
+/** « HC 2 », « H.C. 2 », « Hors classe 2 », « Hors catégorie, 2e échelon » → 2 */
+const HORS_CLASSE =
+  /^(?:H\.?\s*C\.?|HORS[\s-]*(?:CLASSE|CATEGORIE))\s*[-:,.]?\s*(?:ECHELON\s*)?(\d+)/;
+
+/**
+ * Rang d'un échelon écrit dans la fiche : « 5 », « 5e », « 1er » → 5, 1 ; « HC 2 », « Hors classe 2 »
+ * → dernier échelon + 2 (après le 16e, le 2e hors classe : 18). `null` si vide ou illisible.
+ */
+export function rangEchelon(v: unknown, echelle: EchelleGrille | null) {
+  const t = majusculesSansAccents(enTexte(v));
+  if (!t) return null;
+  const hc = HORS_CLASSE.exec(t);
+  if (hc)
+    return (echelle?.nombreEchelons ?? DERNIER_ECHELON) + Number(hc[1]) || null;
+  const n = /^(\d+)/.exec(t);
+  return n ? Number(n[1]) || null : null;
+}
+
+/** Ce qu'on écrit pour un rang : « 5 », ou « HC 2 » au-delà du dernier échelon. */
+export function libelleEchelon(
+  rang: number | null,
+  echelle: EchelleGrille | null,
+) {
+  if (rang === null) return '';
+  const n = echelle?.nombreEchelons ?? DERNIER_ECHELON;
+  return rang > n ? `HC ${rang - n}` : String(rang);
+}
+
+/**
+ * Échelon impossible (DG, 29/10/2026 : « l'échelon de plus de 16 n'existe pas, après 16 c'est hors
+ * classe ») : un nombre au-delà du dernier échelon (« 17 » au lieu de « HC 1 »), un hors classe
+ * au-delà du dernier (HC 4), ou un texte illisible. Le message dit quoi écrire ; `null` si correct.
+ */
+export function echelonHorsGrille(v: unknown, echelle: EchelleGrille | null) {
+  const t = enTexte(v).trim();
+  if (!t) return null;
+  const n = echelle?.nombreEchelons ?? DERNIER_ECHELON;
+  const hc = echelle ? echelle.echelonsHorsClasse : ECHELONS_HORS_CLASSE;
+  const nom = echelle?.libelleHorsClasse ?? 'Hors classe';
+  const permis = `1 à ${n}${hc ? `, puis HC 1 à HC ${hc} (${nom.toLowerCase()})` : ''}`;
+  const rang = rangEchelon(v, echelle);
+  if (rang === null) return `« ${t} » n’est pas un échelon : écrivez ${permis}`;
+  if (HORS_CLASSE.test(majusculesSansAccents(t)))
+    return rang > n + hc
+      ? hc
+        ? `${nom} : HC 1 à HC ${hc} seulement`
+        : `Pas d’échelon ${nom.toLowerCase()} dans cette échelle (le dernier est le ${n}e)`
+      : null;
+  if (rang > n)
+    return hc
+      ? `L’échelon ${rang} n’existe pas : après le ${n}e, c’est ${nom.toLowerCase()} (HC 1 à HC ${hc})`
+      : `L’échelon ${rang} n’existe pas : le dernier est le ${n}e`;
+  return null;
 }
 
 /** L'échelle écrite dans la fiche (« 2 », « Échelle 2 », « ECHELLE 2 ») parmi celles de la grille. */
@@ -518,14 +590,22 @@ export function echellesDe(
     libelle: r.libelle,
     nombreEchelons: Number(r.donnees?.nombreEchelons) || null,
     dureeEchelonMois: Number(r.donnees?.dureeEchelonMois) || null,
+    // Rien de réglé : 4 échelons hors classe ; 0 réglé : aucun
+    echelonsHorsClasse:
+      enTexte(r.donnees?.echelonsHorsClasse) === ''
+        ? ECHELONS_HORS_CLASSE
+        : Math.max(0, Math.floor(Number(r.donnees?.echelonsHorsClasse) || 0)),
+    libelleHorsClasse: enTexte(r.donnees?.libelleHorsClasse) || 'Hors classe',
     echelleSuivante: enTexte(r.donnees?.echelleSuivante) || null,
   }));
 }
 
 /**
  * Promotions (ou avancements) attendues depuis la dernière : à chaque fois l'échelon suivant, après la
- * durée d'un échelon de l'échelle (sinon le délai général) ; après le dernier échelon, le 1er échelon
- * de l'échelle suivante si elle est réglée, sinon on s'arrête. Jusqu'à aujourd'hui, plus la prochaine.
+ * durée d'un échelon de l'échelle (sinon le délai général) ; après le dernier échelon (16), les
+ * échelons hors classe (HC 1 à HC 4, réglables) ; après eux, le 1er échelon de l'échelle suivante si
+ * elle est réglée, sinon on s'arrête. Jusqu'à aujourd'hui, plus la prochaine. `echelon` est le rang
+ * (`rangEchelon`).
  */
 export function promotionsAttendues(o: {
   depuis: string;
@@ -540,6 +620,8 @@ export function promotionsAttendues(o: {
   const res: {
     date: string;
     echelon: number | null;
+    /** « 5 » ou « HC 2 » */
+    echelonLibelle: string;
     echelle: string | null;
   }[] = [];
   let e = o.echelon;
@@ -551,7 +633,17 @@ export function promotionsAttendues(o: {
     const mois = (o.dureeEchelle ? ech?.dureeEchelonMois : null) || o.delaiMois;
     if (e !== null) {
       e++;
-      if (ech?.nombreEchelons && e > ech.nombreEchelons) {
+      // Après le dernier échelon : le passage hors classe
+      if (
+        ech?.nombreEchelons &&
+        ech.echelonsHorsClasse &&
+        e === ech.nombreEchelons + 1
+      )
+        changement = ech.libelleHorsClasse;
+      if (
+        ech?.nombreEchelons &&
+        e > ech.nombreEchelons + ech.echelonsHorsClasse
+      ) {
         const suivante = ech.echelleSuivante
           ? (trouverEchelle(o.echelles, ech.echelleSuivante) ?? null)
           : null;
@@ -562,7 +654,12 @@ export function promotionsAttendues(o: {
       }
     }
     date = ajouterMoisDate(date, mois);
-    res.push({ date, echelon: e, echelle: changement });
+    res.push({
+      date,
+      echelon: e,
+      echelonLibelle: libelleEchelon(e, ech),
+      echelle: changement,
+    });
     if (date > o.aujourdhui) break;
   }
   return res;
@@ -636,7 +733,10 @@ export function prochainAvancement(
     depuis,
     delaiMois: mois,
     dureeEchelle: nature === 'PROMOTION',
-    echelon: Number(enTexte(donnees.ECHELON)) || null,
+    echelon: rangEchelon(
+      donnees.ECHELON,
+      trouverEchelle(echelles, donnees.ECHELLE),
+    ),
     echelle: trouverEchelle(echelles, donnees.ECHELLE),
     echelles,
     aujourdhui: depuis,
@@ -654,6 +754,11 @@ export function prochainAvancement(
  * Échelons dus à une date (réunion DG du 27/10/2026, tableau des échelons en retard) : les
  * promotions (ou avancements) attendues depuis la dernière, jusqu'à `reference`. Un agent au-delà
  * du 1er échelon sans date de dernière promotion : rien ne se calcule, la date est à renseigner.
+ *
+ * Le compte se fait par année (DG, 28/10/2026) : l'échelon d'une année est acquis au 31 décembre.
+ * Entré en 2022, l'agent avance en 2024, 2026… ; en octobre 2026, l'échelon de 2026 n'est pas
+ * encore dû ; il l'est dans la situation au 31/12/2026. La date de chaque échéance reste la date
+ * exacte (pour l'affichage) ; c'est son année qui décide.
  */
 export function echelonsDus(
   c: Pick<ConfigRecensement, 'delaiPromotionMois' | 'delaiAvancementMois'>,
@@ -664,7 +769,8 @@ export function echelonsDus(
 ) {
   const av = prochainAvancement(c, statut, donnees, echelles);
   if (!av) return null;
-  const echelon = Number(enTexte(donnees.ECHELON)) || null;
+  const echelle = trouverEchelle(echelles, donnees.ECHELLE);
+  const echelon = rangEchelon(donnees.ECHELON, echelle);
   const dateManquante = av.origine === 'ENTREE' && !!echelon && echelon > 1;
   const attendues = dateManquante
     ? []
@@ -676,11 +782,11 @@ export function echelonsDus(
             : c.delaiAvancementMois,
         dureeEchelle: av.nature === 'PROMOTION',
         echelon,
-        echelle: trouverEchelle(echelles, donnees.ECHELLE),
+        echelle,
         echelles,
-        aujourdhui: reference,
-      }).filter((x) => x.date <= reference);
-  return { av, echelon, dateManquante, attendues };
+        aujourdhui: `${reference.slice(0, 4)}-12-31`,
+      }).filter((x) => `${x.date.slice(0, 4)}-12-31` <= reference);
+  return { av, echelon, echelle, dateManquante, attendues };
 }
 
 /** Contrôle fixe : texte d'entrée d'un fonctionnaire qui n'est ni un arrêté ni un décret. */

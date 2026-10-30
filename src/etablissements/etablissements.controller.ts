@@ -97,6 +97,17 @@ export class EtablissementsController {
     return this.edt.enregistrerReglages(u, id, dto?.general ? null : dto);
   }
 
+  /** Plages horaires d'un enseignant (son emploi du temps, créneau par créneau) : l'emploi du temps est regénéré. */
+  @Put(':id/emploi-du-temps/enseignants/:agent/plages')
+  plagesEnseignant(
+    @Utilisateur() u: UtilisateurConnecte,
+    @Param('id', ParseIntPipe) id: number,
+    @Param('agent', ParseIntPipe) agent: number,
+    @Body() dto: { plages?: unknown[] },
+  ) {
+    return this.edt.plagesEnseignant(u, id, agent, dto?.plages);
+  }
+
   @Put(':id/enseignants/:agent/matiere')
   definirMatiere(
     @Utilisateur() u: UtilisateurConnecte,

@@ -60,6 +60,8 @@ export interface AgentEcole {
   diplome?: string | null;
   enseignant: boolean;
   enPoste: boolean;
+  /** « Disponibilité » de la fiche : TEMPS_PLEIN, TEMPS_PARTIEL (null : non renseigné). */
+  tempsTravail?: string | null;
 }
 
 export interface LigneBesoin {
@@ -384,13 +386,15 @@ export class EtablissementsService {
         diplome: string | null;
         position: string | null;
         activite: string | null;
+        tempsTravail: string | null;
       }[]
     >(
       `SELECT id, "structureId", "nomComplet", statut, donnees->>'FONCTION' AS fonction,
               donnees->>'FONCTION_STRUCTURE' AS "fonctionStructure",
               donnees->>'SPECIALITE' AS specialite, donnees->>'DIPLOME_PRO' AS diplome,
               donnees->>'POSITION' AS position,
-              donnees->>'STATUT_ACTIVITE' AS activite
+              donnees->>'STATUT_ACTIVITE' AS activite,
+              donnees->>'DISPONIBILITE' AS "tempsTravail"
          FROM agent_recense WHERE "structureId" = ANY($1) AND coalesce(contentieux->>'etat', 'CONFIRME') = 'CONFIRME' ORDER BY "nomComplet"`,
       [ids],
     );
@@ -405,6 +409,7 @@ export class EtablissementsService {
         fonctionStructure: l.fonctionStructure,
         specialite: l.specialite,
         diplome: l.diplome,
+        tempsTravail: l.tempsTravail || null,
         // Volontaires et communautaires sans fonction écrite : ce sont des enseignants
         enseignant:
           ENSEIGNANT.test(f) ||

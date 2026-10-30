@@ -23,7 +23,7 @@ import {
   type MotifMutation,
   type TypeNoteAffectation,
 } from '../common/referentiels';
-import { entierVersRomain } from '../common/texte';
+import { entierVersRomain, normaliser } from '../common/texte';
 import { JournalService, ParametresService } from '../core/core.service';
 import { libelleLot, repereLot } from '../common/lots';
 import {
@@ -675,7 +675,10 @@ export class NotesService {
       circos.forEach((c, k) =>
         sections.push({
           titre:
-            k === 0 ? `${entierVersRomain(i)}- ${titreDepartement(dep)}` : null,
+            // « DEPARTEMENT SCOLAIRE : BOUENZA » (DG, 30/10/2026), sans « de la »
+            k === 0
+              ? `${entierVersRomain(i)}- DEPARTEMENT SCOLAIRE : ${normaliser(dep.nom)}`
+              : null,
           sousTitre: c
             ? `${String(k + 1).padStart(2, '0')}- Circonscription scolaire de ${c}`
             : null,
@@ -888,16 +891,25 @@ export class NotesService {
       throw new BadRequestException(
         'Choisissez l’année scolaire (ex. « 2026-2027 »).',
       );
+    // Seuls les retenus qui ont leur département retenu entrent dans une note (sinon : note vide,
+    // DG 30/10/2026 « comment ça arrive ? »)
     const parDiplome = await this.enroles.query<
       { diplome: string; n: number }[]
     >(
-      `SELECT diplome, count(*)::int AS n FROM enrole WHERE "campagneId" = $1 AND etat = 'RETENU' AND "noteId" IS NULL GROUP BY 1`,
+      `SELECT diplome, count(*)::int AS n FROM enrole WHERE "campagneId" = $1 AND etat = 'RETENU' AND "noteId" IS NULL AND "departementRetenuId" IS NOT NULL GROUP BY 1`,
       [campagneId],
     );
-    if (!parDiplome.length)
-      throw new BadRequestException(
-        `Aucun volontaire retenu en attente de note dans la campagne ${c.annee} : la DGRHAS doit d’abord retenir des dossiers.`,
+    if (!parDiplome.length) {
+      const [{ n }] = await this.enroles.query<{ n: number }[]>(
+        `SELECT count(*)::int AS n FROM enrole WHERE "campagneId" = $1 AND etat = 'RETENU' AND "noteId" IS NULL`,
+        [campagneId],
       );
+      throw new BadRequestException(
+        n
+          ? `${n} volontaire(s) retenu(s), mais sans département retenu : choisissez d’abord leur département (et leur établissement), puis préparez les notes.`
+          : `Aucun volontaire retenu en attente de note dans la campagne ${c.annee} : la DGRHAS doit d’abord retenir des dossiers.`,
+      );
+    }
     const creees: NoteService[] = [];
     for (const { diplome } of parDiplome) {
       const ouverte = await this.notes.findOne({
@@ -1004,6 +1016,11 @@ export class NotesService {
     const res: unknown[] = [];
     for (const n of notes) {
       const lot = n.lotPublicationId ? lots.get(n.lotPublicationId) : null;
+      // Enrôlement : retenus qui attendent leur département (ils n'entrent pas encore dans la note)
+      const enAttente =
+        !n.contenu && n.module === 'ENROLEMENT'
+          ? (await this.lignesEnrolement(n)).bloques.length
+          : 0;
       const lotNumero = lot?.numero ?? null;
       const total = n.contenu
         ? (n.contenu as ContenuNote).total
@@ -1030,6 +1047,7 @@ export class NotesService {
         lotLibelle: lot ? libelleLot(lot) : null,
         libelle: this.libelle(n, lot, lots),
         total,
+        enAttente,
       });
     }
     return res;

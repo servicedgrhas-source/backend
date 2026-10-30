@@ -2,9 +2,13 @@
  * Génération de l'emploi du temps d'un collège ou d'un lycée (DG, 24/10/2026), sans base de
  * données pour être testée seule.
  *
- * 1. Répartition : chaque classe, pour chaque matière, reçoit un enseignant de la matière ; on
- *    donne d'abord les plus grosses charges, à l'enseignant le moins chargé, sans dépasser ses heures
- *    de la semaine. Sans enseignant possible, les heures restent « à pourvoir » (le déficit).
+ * 0. Plages horaires (DG, 28/10/2026) : ce que l'école a saisi pour un enseignant (le lundi
+ *    07:30-08:25 en 6ème 1…) est placé tel quel, dans sa matière. Ces heures comptent dans le
+ *    programme de la classe ; un enseignant qui a des plages n'a rien d'autre : son emploi du temps
+ *    est celui de l'école. Une plage impossible (classe déjà prise…) est signalée, pas placée.
+ * 1. Répartition du reste : chaque classe, pour chaque matière, reçoit un enseignant de la matière
+ *    sans plages ; on donne d'abord les plus grosses charges, à l'enseignant le moins chargé, sans
+ *    dépasser ses heures de la semaine. Sans enseignant possible, les heures restent « à pourvoir ».
  * 2. Placement : chaque heure va sur un créneau de la semaine où la classe, l'enseignant et la salle
  *    sont libres, dans les jours et heures de travail de l'enseignant ; la vague A le matin, la vague B
  *    l'après-midi ; pas plus de deux heures d'une matière par jour pour une classe, et les heures
@@ -28,6 +32,8 @@ export interface EnseignantEdt {
   matiere: string | null;
   /** Jours et heures de travail (1 = lundi) ; vide : tous les jours, toute la journée. */
   horaire: Record<string, { debut: string | null; fin: string | null }> | null;
+  /** Plages horaires saisies par l'école (jour 1 = lundi, n° du créneau) ; vide : réparti automatiquement. */
+  plages?: { classeId: number; jour: number; creneau: number }[];
 }
 export interface Seance {
   classeId: number;
@@ -38,6 +44,8 @@ export interface Seance {
   agent: string | null;
   jour: number;
   creneau: number;
+  /** Plage saisie par l'école (sinon placée par le système). */
+  fixe?: boolean;
 }
 export interface NonPlace {
   classe: string;
@@ -60,6 +68,16 @@ export interface ResultatEdt {
   heuresTotal: number;
   heuresPlacees: number;
 }
+
+const NOMS_JOURS = [
+  '',
+  'lundi',
+  'mardi',
+  'mercredi',
+  'jeudi',
+  'vendredi',
+  'samedi',
+];
 
 const minutes = (h: string | null | undefined) => {
   const m = /^(\d{2}):(\d{2})$/.exec(h ?? '');
@@ -98,7 +116,6 @@ export function genererEmploiDuTemps(e: {
 }): ResultatEdt {
   const lib = (m: string) => e.libelles.get(m) ?? m;
   const nonPlaces: NonPlace[] = [];
-  // 1. Répartition des charges (classe × matière) entre les enseignants de la matière
   const charges = new Map<number, ChargeEnseignant>(
     e.enseignants.map((t) => [
       t.id,
@@ -111,27 +128,159 @@ export function genererEmploiDuTemps(e: {
       },
     ]),
   );
+  const occupe = new Set<string>(); // « C:classe:jour:créneau », « A:agent:… », « S:salle:… »
+  const parJour = new Map<string, number>(); // heures d'une matière, par classe et par jour
+  const chargeJour = new Map<string, number>(); // heures d'une classe par jour
+  const seances: Seance[] = [];
+  const occuper = (
+    classe: ClasseEdt,
+    matiere: string,
+    agent: EnseignantEdt | null,
+    jour: number,
+    i: number,
+    fixe: boolean,
+  ) => {
+    const k = `${jour}:${i}`;
+    occupe.add(`C:${classe.id}:${k}`);
+    if (agent) occupe.add(`A:${agent.id}:${k}`);
+    if (classe.salleId) occupe.add(`S:${classe.salleId}:${k}`);
+    const kj = `${classe.id}:${matiere}:${jour}`;
+    parJour.set(kj, (parJour.get(kj) ?? 0) + 1);
+    const kc = `${classe.id}:${jour}`;
+    chargeJour.set(kc, (chargeJour.get(kc) ?? 0) + 1);
+    seances.push({
+      classeId: classe.id,
+      classe: classe.nom,
+      matiere,
+      matiereLibelle: lib(matiere),
+      agentId: agent?.id ?? null,
+      agent: agent?.nom ?? null,
+      jour,
+      creneau: i,
+      ...(fixe ? { fixe: true } : {}),
+    });
+  };
+  const quand = (jour: number, i: number) =>
+    `${NOMS_JOURS[jour] ?? `jour ${jour}`} ${e.creneaux[i] ? `${e.creneaux[i].debut}-${e.creneaux[i].fin}` : `(créneau ${i + 1})`}`;
+
+  // 0. Plages horaires saisies par l'école : placées telles quelles
+  const parId = new Map(e.classes.map((c) => [c.id, c]));
+  const fixes = new Map<string, number>(); // heures saisies, par « classe|matière »
+  const qui = new Map<string, string>(); // l'enseignant de ces plages, par « classe|matière »
+  for (const t of e.enseignants) {
+    if (!t.plages?.length) continue;
+    const ch = charges.get(t.id)!;
+    if (!t.matiere) {
+      nonPlaces.push({
+        classe: '—',
+        matiere: '',
+        matiereLibelle: t.nom,
+        heures: t.plages.length,
+        raison:
+          'plages horaires saisies, mais sa matière n’est pas connue : écrivez sa spécialité dans sa fiche pour qu’elles soient placées',
+      });
+      continue;
+    }
+    const matiere = t.matiere;
+    for (const p of t.plages) {
+      const classe = parId.get(p.classeId);
+      if (!classe || !e.jours.includes(p.jour) || !e.creneaux[p.creneau]) {
+        nonPlaces.push({
+          classe: classe?.nom ?? '—',
+          matiere,
+          matiereLibelle: t.nom,
+          heures: 1,
+          raison: classe
+            ? `plage du ${quand(p.jour, p.creneau)} hors des jours ou des créneaux de l’école (réglages changés ?) : à saisir à nouveau`
+            : 'plage dans une classe fermée ou d’une autre année : à saisir à nouveau',
+        });
+        continue;
+      }
+      const k = `${p.jour}:${p.creneau}`;
+      if (occupe.has(`A:${t.id}:${k}`)) continue; // la même plage saisie deux fois
+      if (occupe.has(`C:${classe.id}:${k}`)) {
+        const autre = seances.find(
+          (s) =>
+            s.classeId === classe.id &&
+            s.jour === p.jour &&
+            s.creneau === p.creneau,
+        );
+        nonPlaces.push({
+          classe: classe.nom,
+          matiere,
+          matiereLibelle: t.nom,
+          heures: 1,
+          raison: `le ${quand(p.jour, p.creneau)}, la classe a déjà cours avec ${autre?.agent ?? 'un autre enseignant'} : cette plage n’est pas placée`,
+        });
+        continue;
+      }
+      occuper(classe, matiere, t, p.jour, p.creneau, true);
+      ch.heures++;
+      if (!ch.classes.includes(classe.nom)) ch.classes.push(classe.nom);
+      const kf = `${classe.id}|${matiere}`;
+      fixes.set(kf, (fixes.get(kf) ?? 0) + 1);
+      qui.set(kf, t.nom);
+    }
+    if (ch.heures > e.heuresEnseignant)
+      nonPlaces.push({
+        classe: '—',
+        matiere,
+        matiereLibelle: t.nom,
+        heures: 0,
+        raison: `${ch.heures} h saisies dans ses plages, plus que les ${e.heuresEnseignant} h d’un enseignant par semaine`,
+      });
+  }
+  // Plages au-delà du programme de la classe (ou dans une matière hors programme) : c'est dit
+  for (const [kf, n] of fixes) {
+    const [id, matiere] = kf.split('|');
+    const classe = parId.get(Number(id))!;
+    const prevu = Math.round(
+      (e.programme.get(classe.niveau) ?? []).find((p) => p.matiere === matiere)
+        ?.heures ?? 0,
+    );
+    if (n > prevu)
+      nonPlaces.push({
+        classe: classe.nom,
+        matiere,
+        matiereLibelle: lib(matiere),
+        heures: n - prevu,
+        raison: prevu
+          ? `${n} h saisies dans les plages pour ${prevu} h au programme : ${n - prevu} h de plus que le programme`
+          : `${n} h saisies dans les plages, mais ${lib(matiere)} n’est pas au programme de ce niveau`,
+      });
+  }
+
+  // 1. Répartition du reste (classe × matière) entre les enseignants de la matière sans plages
   const lots: {
     classe: ClasseEdt;
     matiere: string;
     heures: number;
     agent: EnseignantEdt | null;
+    /** Le reste d'une matière dont l'école a saisi des plages dans la classe : pas d'autre enseignant. */
+    complement?: string;
   }[] = [];
   for (const c of e.classes)
-    for (const p of e.programme.get(c.niveau) ?? [])
-      if (p.heures > 0)
+    for (const p of e.programme.get(c.niveau) ?? []) {
+      const reste =
+        Math.round(p.heures) - (fixes.get(`${c.id}|${p.matiere}`) ?? 0);
+      if (p.heures > 0 && reste > 0)
         lots.push({
           classe: c,
           matiere: p.matiere,
-          heures: Math.round(p.heures),
+          heures: reste,
           agent: null,
+          complement: qui.get(`${c.id}|${p.matiere}`),
         });
+    }
   lots.sort(
     (a, b) => b.heures - a.heures || a.classe.nom.localeCompare(b.classe.nom),
   );
+  const avecPlages = (t: EnseignantEdt) => !!t.plages?.length;
   for (const l of lots) {
+    // Une classe a un seul enseignant par matière : le reste ne va pas à un autre
+    if (l.complement) continue;
     const possibles = e.enseignants
-      .filter((t) => t.matiere === l.matiere)
+      .filter((t) => t.matiere === l.matiere && !avecPlages(t))
       .filter((t) => charges.get(t.id)!.heures + l.heures <= e.heuresEnseignant)
       .sort(
         (a, b) =>
@@ -147,11 +296,7 @@ export function genererEmploiDuTemps(e: {
     }
   }
 
-  // 2. Placement heure par heure
-  const occupe = new Set<string>(); // « C:classe:jour:créneau », « A:agent:… », « S:salle:… »
-  const parJour = new Map<string, number>(); // heures d'une matière, par classe et par jour
-  const chargeJour = new Map<string, number>(); // heures d'une classe par jour
-  const seances: Seance[] = [];
+  // 2. Placement heure par heure, autour des plages déjà placées
   const disponible = (t: EnseignantEdt | null, jour: number, c: Creneau) => {
     if (!t?.horaire || !Object.keys(t.horaire).length) return true;
     const h = t.horaire[String(jour)];
@@ -215,38 +360,25 @@ export function genererEmploiDuTemps(e: {
         });
       if (!meilleur) break;
       const m = meilleur as { jour: number; i: number };
-      const k = `${m.jour}:${m.i}`;
-      occupe.add(`C:${l.classe.id}:${k}`);
-      if (l.agent) occupe.add(`A:${l.agent.id}:${k}`);
-      if (l.classe.salleId) occupe.add(`S:${l.classe.salleId}:${k}`);
-      const kj = `${l.classe.id}:${l.matiere}:${m.jour}`;
-      parJour.set(kj, (parJour.get(kj) ?? 0) + 1);
-      chargeJour.set(
-        `${l.classe.id}:${m.jour}`,
-        (chargeJour.get(`${l.classe.id}:${m.jour}`) ?? 0) + 1,
-      );
-      seances.push({
-        classeId: l.classe.id,
-        classe: l.classe.nom,
-        matiere: l.matiere,
-        matiereLibelle: lib(l.matiere),
-        agentId: l.agent?.id ?? null,
-        agent: l.agent?.nom ?? null,
-        jour: m.jour,
-        creneau: m.i,
-      });
+      occuper(l.classe, l.matiere, l.agent, m.jour, m.i, false);
       restant--;
     }
-    if (!l.agent)
+    if (!l.agent) {
+      const deLaMatiere = e.enseignants.filter((t) => t.matiere === l.matiere);
       nonPlaces.push({
         classe: l.classe.nom,
         matiere: l.matiere,
         matiereLibelle: lib(l.matiere),
         heures: l.heures,
-        raison: e.enseignants.some((t) => t.matiere === l.matiere)
-          ? `les enseignants de ${lib(l.matiere)} de l’école n’ont plus assez d’heures libres (${e.heuresEnseignant} h au plus chacun) : heures « à pourvoir », enseignant à trouver`
-          : `aucun enseignant de ${lib(l.matiere)} dans l’école : heures « à pourvoir », enseignant à trouver`,
+        raison: l.complement
+          ? `${l.complement} a des plages dans cette classe, mais il manque ${l.heures} h du programme : complétez ses plages horaires (sinon elles restent « à pourvoir »)`
+          : !deLaMatiere.length
+            ? `aucun enseignant de ${lib(l.matiere)} dans l’école : heures « à pourvoir », enseignant à trouver`
+            : deLaMatiere.every(avecPlages)
+              ? `les plages horaires des enseignants de ${lib(l.matiere)} ne couvrent pas ces heures : ajoutez-les à la plage d’un enseignant, sinon elles restent « à pourvoir »`
+              : `les enseignants de ${lib(l.matiere)} de l’école n’ont plus assez d’heures libres (${e.heuresEnseignant} h au plus chacun) : heures « à pourvoir », enseignant à trouver`,
       });
+    }
     if (restant > 0)
       nonPlaces.push({
         classe: l.classe.nom,
@@ -277,6 +409,10 @@ export function genererEmploiDuTemps(e: {
       l.classe.id,
       (besoinClasse.get(l.classe.id) ?? 0) + l.heures,
     );
+  for (const [kf, n] of fixes) {
+    const id = Number(kf.split('|')[0]);
+    besoinClasse.set(id, (besoinClasse.get(id) ?? 0) + n);
+  }
   const manques: NonPlace[] = [];
   for (const c of e.classes) {
     const v = vagueDe(c.nom);
@@ -308,7 +444,9 @@ export function genererEmploiDuTemps(e: {
       a.jour - b.jour ||
       a.creneau - b.creneau,
   );
-  const heuresTotal = lots.reduce((s, l) => s + l.heures, 0);
+  const heuresTotal =
+    lots.reduce((s, l) => s + l.heures, 0) +
+    [...fixes.values()].reduce((s, n) => s + n, 0);
   return {
     seances,
     nonPlaces,

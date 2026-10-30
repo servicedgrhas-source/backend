@@ -396,13 +396,10 @@ export class RegularisationsService {
       `Arrêté la présente liste à la somme de : ${montantArrete(total)}`,
     ]).font = { italic: true };
     ws.addRow([]);
-    ws.addRow(['', '', '', '', c.signatairePaiementTitre]).font = {
-      bold: true,
-    };
+    ws.addRow(['', '', '', '', c.signatairePaiementTitre]);
     ws.addRow([]);
     ws.addRow(['', '', '', '', c.signatairePaiementNom]).font = {
       bold: true,
-      underline: true,
     };
     [5, 34, 16, 28, 50, 13, 13, 16].forEach(
       (w, i) => (ws.getColumn(i + 1).width = w),

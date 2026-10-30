@@ -20,7 +20,15 @@ import { codeCategorie, enTexte, normaliser } from '../common/texte';
 import { AgentRecense } from '../entities';
 import { ParametresService } from '../core/core.service';
 import { RecensementService } from './recensement.service';
-import { echellesDe, echelonsDus } from './valeurs';
+import { echellesDe, echelonsDus, libelleEchelon } from './valeurs';
+
+/** Ordre des pastilles « échelon attendu » : 2, 3… 16, HC 1… HC 4, puis « date à renseigner ». */
+const rangAttendu = (k: string) =>
+  k === 'date'
+    ? 1e6
+    : k.startsWith('HC ')
+      ? 1000 + Number(k.slice(3))
+      : Number(k) || 1e5;
 
 /**
  * Échelons en retard (réunion DG du 27/10/2026) : pour chaque fonctionnaire ou contractuel en
@@ -33,8 +41,11 @@ export interface FiltresRetards {
   categorie?: string;
   cycle?: string;
   structure?: number;
-  /** Nombre exact d'échelons dus ; « 5+ » : 5 ou plus. */
-  dus?: string;
+  /**
+   * Échelon attendu (DG, 28/10/2026 : en commission, on traite ensemble ceux qui passent au même
+   * échelon) : « 3 » = attendus au 3e échelon ; « date » : date de dernière promotion à renseigner.
+   */
+  attendu?: string;
   /** Situation au 31/12 de cette année (sinon aujourd'hui). */
   annee?: number;
   statut?: string;
@@ -53,13 +64,18 @@ export interface LigneRetard {
   departement: string | null;
   structure: string | null;
   cycle: string | null;
-  /** Échelon actuel (celui de l'arrêté), et date de la dernière promotion (ou de l'entrée). */
+  /**
+   * Échelon actuel (celui de l'arrêté), et date de la dernière promotion (ou de l'entrée). Les
+   * échelons sont des rangs (HC 1 après le 16e : 17) ; les libellés disent « 5 » ou « HC 1 ».
+   */
   echelon: number | null;
+  echelonLibelle: string;
   depuis: string;
   origine: 'DERNIER' | 'ENTREE';
   /** Échelons dus à la date de référence, l'échelon qu'il devrait avoir, et les dates. */
   dus: number;
   echelonTheorique: number | null;
+  echelonTheoriqueLibelle: string;
   echeances: string[];
   /** Échelon au-delà du 1er sans date de dernière promotion : à renseigner, rien n'est calculé. */
   dateManquante: boolean;
@@ -168,7 +184,8 @@ export class RetardsEchelonsService {
         continue;
       const r = echelonsDus(c, a.statut, d, echelles, reference);
       if (!r) continue;
-      const { av, echelon, dateManquante, attendues } = r;
+      const { av, echelon, echelle, dateManquante, attendues } = r;
+      const theorique = attendues.at(-1)?.echelon ?? echelon;
       if (!attendues.length && !dateManquante) continue;
       lignes.push({
         id: a.id,
@@ -183,26 +200,32 @@ export class RetardsEchelonsService {
         structure: a.structure,
         cycle: a.cycle ? (LIBELLE_CYCLE[a.cycle] ?? a.cycle) : null,
         echelon,
+        echelonLibelle: libelleEchelon(echelon, echelle),
         depuis: av.depuis,
         origine: av.origine,
         dus: attendues.length,
-        echelonTheorique: attendues.at(-1)?.echelon ?? echelon,
+        echelonTheorique: theorique,
+        echelonTheoriqueLibelle:
+          attendues.at(-1)?.echelonLibelle ??
+          libelleEchelon(theorique, echelle),
         echeances: attendues.map((x) => x.date),
         dateManquante,
       });
     }
-    // Filtre sur le nombre d'échelons dus (« 2 », ou « 5+ »)
-    const m = /^(\d+)(\+)?$/.exec(f.dus ?? '');
-    const retenues = m
-      ? lignes.filter((l) =>
-          m[2] ? l.dus >= Number(m[1]) : l.dus === Number(m[1]),
-        )
-      : f.dus === 'date'
-        ? lignes.filter((l) => l.dateManquante)
-        : lignes;
+    // Filtre sur l'échelon attendu (« 3 » : attendus au 3e échelon ; « HC 1 » : 1er hors classe)
+    const retenues =
+      f.attendu && f.attendu !== 'date'
+        ? lignes.filter(
+            (l) => !l.dateManquante && l.echelonTheoriqueLibelle === f.attendu,
+          )
+        : f.attendu === 'date'
+          ? lignes.filter((l) => l.dateManquante)
+          : lignes;
+    // Par échelon attendu, puis par département et par nom : la liste suit l'ordre de la commission
     retenues.sort(
       (a, b) =>
-        b.dus - a.dus ||
+        Number(a.dateManquante) - Number(b.dateManquante) ||
+        (a.echelonTheorique ?? 99) - (b.echelonTheorique ?? 99) ||
         (a.departement ?? '').localeCompare(b.departement ?? '') ||
         a.nomComplet.localeCompare(b.nomComplet),
     );
@@ -217,10 +240,9 @@ export class RetardsEchelonsService {
       echelonsDus: retenues.reduce((s, l) => s + l.dus, 0),
       dateManquante: lignes.filter((l) => l.dateManquante).length,
       // Répartitions (sur tous les agents en retard du périmètre) : préparer la commission
-      parDus: compter((l) => (l.dateManquante ? 'date' : String(l.dus))).sort(
-        (x, y) =>
-          x.k === 'date' ? 1 : y.k === 'date' ? -1 : Number(x.k) - Number(y.k),
-      ),
+      parAttendu: compter((l) =>
+        l.dateManquante ? 'date' : l.echelonTheoriqueLibelle || '?',
+      ).sort((x, y) => rangAttendu(x.k) - rangAttendu(y.k)),
       parCategorie: compter((l) => l.categorie ?? 'Inconnue'),
       parDepartement: compter((l) => l.departement ?? 'Inconnu'),
       lignes: retenues,
@@ -244,12 +266,11 @@ export class RetardsEchelonsService {
         .join(' · '),
       l.departement ?? '',
       l.structure ?? '',
-      l.echelon ?? '',
+      l.echelonLibelle,
       l.dateManquante
         ? 'à renseigner'
         : `${l.depuis.split('-').reverse().join('/')}${l.origine === 'ENTREE' ? ' (entrée)' : ''}`,
-      l.dateManquante ? '' : l.dus,
-      l.dateManquante ? '' : (l.echelonTheorique ?? ''),
+      l.dateManquante ? '' : l.echelonTheoriqueLibelle,
     ];
   }
 
@@ -262,7 +283,6 @@ export class RetardsEchelonsService {
     'Structure',
     'Échelon actuel',
     'Dernière promotion',
-    'Échelons dus',
     'Échelon attendu',
   ];
 
@@ -285,7 +305,7 @@ export class RetardsEchelonsService {
       `ÉCHELONS EN RETARD AU ${r.reference.split('-').reverse().join('/')}`,
     ]).font = { bold: true, size: 13 };
     ws.addRow([
-      `${r.total} agent(s), ${r.echelonsDus} échelon(s) dus${r.dateManquante ? ` ; ${r.dateManquante} agent(s) sans date de dernière promotion` : ''}`,
+      `${r.total} agent(s), ${r.echelonsDus} échelon(s) de retard${r.dateManquante ? ` ; ${r.dateManquante} agent(s) sans date de dernière promotion` : ''}`,
     ]);
     ws.addRow([]);
     const t = ws.addRow(['N°', ...RetardsEchelonsService.ENTETES]);
@@ -298,7 +318,14 @@ export class RetardsEchelonsService {
       };
       cell.border = { bottom: { style: 'thin' } };
     });
-    r.lignes.forEach((l, i) => ws.addRow([i + 1, ...this.colonnes(l)]));
+    // Tout le contenu du tableau est centré (DG, 28/10/2026)
+    for (const [i, l] of r.lignes.entries())
+      ws.addRow([i + 1, ...this.colonnes(l)]).alignment = {
+        horizontal: 'center',
+        vertical: 'middle',
+        wrapText: true,
+      };
+    t.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true };
     ws.addRow([]);
     ws.addRow([
       ...Array<string>(7).fill(''),
@@ -310,9 +337,8 @@ export class RetardsEchelonsService {
     ws.addRow([]);
     ws.addRow([...Array<string>(7).fill(''), r.signature.nom ?? '']).font = {
       bold: true,
-      underline: true,
     };
-    ws.columns = [6, 34, 14, 14, 18, 18, 30, 10, 18, 10, 10].map((width) => ({
+    ws.columns = [6, 34, 14, 14, 18, 18, 30, 10, 18, 10].map((width) => ({
       width,
     }));
     ws.views = [{ state: 'frozen', ySplit: t.number }];
@@ -350,7 +376,10 @@ export class RetardsEchelonsService {
     const cellule = (t: string | number, gras = false) =>
       new TableCell({
         children: [
-          new Paragraph({ children: [run(String(t), { gras, taille: 16 })] }),
+          new Paragraph({
+            alignment: AlignmentType.CENTER,
+            children: [run(String(t), { gras, taille: 16 })],
+          }),
         ],
       });
     const sansBord = {
@@ -415,7 +444,7 @@ export class RetardsEchelonsService {
               },
             ),
             para(
-              `${r.total} agent(s), ${r.echelonsDus} échelon(s) dus${r.dateManquante ? ` ; ${r.dateManquante} agent(s) sans date de dernière promotion` : ''}`,
+              `${r.total} agent(s), ${r.echelonsDus} échelon(s) de retard${r.dateManquante ? ` ; ${r.dateManquante} agent(s) sans date de dernière promotion` : ''}`,
               { taille: 20, centre: true, avant: 60 },
             ),
             new Paragraph({ children: [] }),
@@ -454,16 +483,14 @@ export class RetardsEchelonsService {
               alignment: AlignmentType.RIGHT,
               spacing: { before: 200 },
               keepNext: true,
-              children: [run(r.signature.titre, { gras: true })],
+              children: [run(r.signature.titre)],
             }),
             ...[0, 1, 2].map(
               () => new Paragraph({ keepNext: true, children: [run('')] }),
             ),
             new Paragraph({
               alignment: AlignmentType.RIGHT,
-              children: [
-                run(r.signature.nom ?? '', { gras: true, souligne: true }),
-              ],
+              children: [run(r.signature.nom ?? '', { gras: true })],
             }),
           ],
         },
