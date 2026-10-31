@@ -141,6 +141,9 @@ export function regleDeLAgent(
   };
 }
 
+/** Motif posé sur l'affectation d'un oublié déclaré déjà affecté (liste des oubliés). */
+export const MOTIF_OUBLI_DEJA_AFFECTE = 'Déjà affecté (contrôle des oubliés)';
+
 /** Copie d'un grade choisi pour une personne (sa classification suit ensuite le grade). */
 export function copieGrade(g: Grade, par: string): GradeChoisi {
   return {
@@ -214,6 +217,11 @@ export function deriver(
         : `Grade non défini pour le diplôme ${regle.libelle}`,
     );
   if (!def) bloquants.push('Type de note à définir');
+  // Ajoutée à la main : elle attend le contrôle des oubliés (DG, 31/10/2026)
+  if (agent.oubli === 'A_CONTROLER')
+    bloquants.push(
+      'Ajoutée à la main : à contrôler (Base des recrutés › Oubliés à contrôler)',
+    );
   if (def?.parDepartement && !aff.departementId)
     bloquants.push('Département retenu manquant');
   if (aff.typeNote === 'PERS_ADM' && !aff.structure)

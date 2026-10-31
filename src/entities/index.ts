@@ -262,6 +262,15 @@ export class Agent {
    * par défaut du diplôme) : copie de la classification, tenue à jour avec le grade.
    */
   @Column({ type: 'jsonb', nullable: true }) gradeChoisi: GradeChoisi | null;
+  /**
+   * Ajoutée à la main dans la base des recrutés (DG, 31/10/2026) : liste des oubliés, contrôlée
+   * avant d'entrer dans une note. A_CONTROLER, DEJA_AFFECTE (hors des notes), PAS_AFFECTE.
+   */
+  @Index()
+  @Column({ type: 'varchar', nullable: true })
+  oubli: 'A_CONTROLER' | 'DEJA_AFFECTE' | 'PAS_AFFECTE' | null;
+  @Column({ type: 'varchar', nullable: true }) oubliPar: string | null;
+  @Column({ type: 'timestamptz', nullable: true }) oubliLe: Date | null;
   /* ---- Saisie dans le système (au lieu du fichier Excel) ---- */
   /** IMPORT = ligne du fichier Excel ; SAISIE = fiche enregistrée dans le système. */
   @Column({ type: 'varchar', default: 'IMPORT' }) origineFiche:

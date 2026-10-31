@@ -54,7 +54,7 @@ import {
   Grade,
   RegleDiplome,
 } from '../entities';
-import { copieGrade } from './calcul';
+import { copieGrade, MOTIF_OUBLI_DEJA_AFFECTE } from './calcul';
 
 export interface RapportImport {
   feuilles: { nom: string; lignes: number }[];
@@ -518,6 +518,13 @@ export class ImportBaseService {
       agent.gradeChoisi = copieGrade(grade, par);
       await this.agents.update(agent.id, { gradeChoisi: agent.gradeChoisi });
     }
+    // Nouvelle fiche : dans la liste des oubliés, contrôlée avant d'entrer dans une note
+    const cree = rapport.crees > 0;
+    if (cree)
+      await this.agents.update(agent.id, {
+        oubli: 'A_CONTROLER',
+        saisiePar: par || null,
+      });
     const affectation = await this.affectations.findOne({
       where: { agentId: agent.id },
       loadEagerRelations: false,
@@ -525,7 +532,7 @@ export class ImportBaseService {
     return {
       id: agent.id,
       nomComplet: agent.nomComplet,
-      cree: rapport.crees > 0,
+      cree,
       anomalies: agent.anomalies ?? [],
       lot: agent.lotPublication ? libelleLot(agent.lotPublication) : null,
       affectation: affectation
@@ -1168,6 +1175,7 @@ export class ImportBaseService {
         'departementId',
         'lotPublicationId',
         'specialite',
+        'oubli',
       ],
       loadEagerRelations: false,
     });
@@ -1196,7 +1204,10 @@ export class ImportBaseService {
             typeNote === 'PERS_ADM' && dep ? `DDEPPSA ${dep.nom}` : null,
           // Primaire, préscolaire : la spécialité est le cycle (DG, 31/10/2026)
           specialite: a.specialite || SPECIALITE_DU_CYCLE[typeNote] || null,
-          statut: 'A_TRAITER',
+          // Oublié déclaré déjà affecté : hors des notes dès que son texte arrive
+          ...(a.oubli === 'DEJA_AFFECTE'
+            ? { statut: 'EXCLU', motifExclusion: MOTIF_OUBLI_DEJA_AFFECTE }
+            : { statut: 'A_TRAITER' }),
         });
       });
     for (let i = 0; i < nouvelles.length; i += 500)

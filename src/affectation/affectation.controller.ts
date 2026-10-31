@@ -3,6 +3,7 @@ import {
   ForbiddenException,
   Body,
   Controller,
+  Delete,
   Get,
   Param,
   ParseIntPipe,
@@ -41,6 +42,7 @@ import { ImportBaseService } from './import.service';
 import { LotsReceptionService } from './lots-reception.service';
 import { AffectationsPersonnelService } from '../recensement/affectations-personnel.service';
 import { DoublonsService } from './doublons.service';
+import { OubliesService } from './oublies.service';
 
 const DATE = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -112,6 +114,13 @@ class FicheManuelleDto {
   @IsOptional() @IsBoolean() autrePersonne?: boolean;
 }
 
+/** Décision sur une personne de la liste des oubliés. */
+class DecisionOubliDto {
+  @IsIn(['DEJA_AFFECTE', 'PAS_AFFECTE']) etat: 'DEJA_AFFECTE' | 'PAS_AFFECTE';
+  /** Déjà affecté : la note où elle figure (« note n° 270 du 08/04/2026 »). */
+  @IsOptional() @IsString() @MaxLength(200) precision?: string;
+}
+
 class FichesDto {
   @IsOptional()
   @IsArray()
@@ -170,6 +179,7 @@ export class AffectationController {
     private readonly importation: ImportBaseService,
     private readonly lotsReception: LotsReceptionService,
     private readonly journal: JournalService,
+    private readonly oublis: OubliesService,
     private readonly controle: ControleAffectationsService,
     private readonly statsSuivi: StatistiquesService,
     private readonly personnel: AffectationsPersonnelService,
@@ -305,6 +315,31 @@ export class AffectationController {
       ...rapport,
     });
     return rapport;
+  }
+
+  /** Liste des oubliés : personnes ajoutées à la main, contrôlées avant d'entrer dans une note. */
+  @Get('recrutes/oublies')
+  oublies() {
+    return this.oublis.liste();
+  }
+
+  @Roles(...ROLES_CONTROLE)
+  @Post('recrutes/oublies/:id/decision')
+  deciderOubli(
+    @Utilisateur() u: UtilisateurConnecte,
+    @Param('id') id: string,
+    @Body() dto: DecisionOubliDto,
+  ) {
+    return this.oublis.decider(u, id, dto.etat, dto.precision);
+  }
+
+  @Roles(...ROLES_CONTROLE)
+  @Delete('recrutes/oublies/:id')
+  supprimerOubli(
+    @Utilisateur() u: UtilisateurConnecte,
+    @Param('id') id: string,
+  ) {
+    return this.oublis.supprimer(u, id);
   }
 
   /** Ajout manuel : ce que le système fera de la personne, avant de l'enregistrer. */

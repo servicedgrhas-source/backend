@@ -77,6 +77,7 @@ import { DemandesService } from './circuit/demandes.service';
 import { LiaisonVolontairesService } from './recensement/liaison-volontaires.service';
 import { AffectationsPersonnelService } from './recensement/affectations-personnel.service';
 import { DoublonsService } from './affectation/doublons.service';
+import { OubliesService } from './affectation/oublies.service';
 import { DoublonsCentralService } from './doublons/doublons-central.service';
 import { DoublonsController } from './doublons/doublons.controller';
 import { RattachementService } from './rattachement/rattachement.service';
@@ -147,6 +148,7 @@ import { ReferentielsService } from './referentiels/referentiels.service';
     AffectationService,
     ImportBaseService,
     DoublonsService,
+    OubliesService,
     DoublonsCentralService,
     RattachementService,
     LotsReceptionService,
