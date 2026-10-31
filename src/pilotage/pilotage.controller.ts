@@ -47,6 +47,11 @@ class EnveloppeDto {
 
 class PropositionDto {
   @IsObject() quotas: Record<string, number>;
+  /**
+   * Par département et par cycle (type de note) : « Brazzaville : 30 primaire, 10 préscolaire »
+   * (DG, 31/10/2026). Les quotas par département en sont alors la somme.
+   */
+  @IsOptional() @IsObject() parCycle?: Record<string, Record<string, number>>;
   @IsOptional() @IsBoolean() texteRecu?: boolean;
   @IsOptional() @IsInt() lot?: number;
   @IsOptional() @IsArray() @IsInt({ each: true }) lots?: number[];
@@ -189,6 +194,7 @@ export class PilotageController {
       dto.quotas,
       dto.texteRecu !== false,
       dto.lots ?? dto.lot,
+      dto.parCycle,
     );
   }
 

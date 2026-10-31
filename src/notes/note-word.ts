@@ -324,10 +324,23 @@ export async function noteWord(n: NoteWord, avecVisas = true): Promise<Buffer> {
       for (const mot of String(l.specialite ?? '').split(/\s+/))
         for (const morceau of mot.match(/[^-]+-?|-/g) ?? [])
           motSpecialite = Math.max(motSpecialite, largeurLigne(morceau, 10));
+  // Grade : toujours sur une seule ligne (« Com. des SAF.C. », DG 31/10/2026)
+  let plusLongGrade = 0;
+  for (const s of c.sections)
+    for (const l of s.lignes)
+      plusLongGrade = Math.max(
+        plusLongGrade,
+        largeurLigne(String(l.grade ?? ''), 10),
+      );
   const largeur = (k: string) =>
-    k === 'specialite'
-      ? Math.min(36, Math.max(LARGEUR.specialite, Math.ceil(motSpecialite + 3)))
-      : (LARGEUR[k] ?? 20);
+    k === 'grade'
+      ? Math.min(36, Math.max(LARGEUR.grade, Math.ceil(plusLongGrade + 3)))
+      : k === 'specialite'
+        ? Math.min(
+            36,
+            Math.max(LARGEUR.specialite, Math.ceil(motSpecialite + 3)),
+          )
+        : (LARGEUR[k] ?? 20);
   const fixes = cles
     .filter((k) => k !== 'nom')
     .reduce((s, k) => s + largeur(k), 0);

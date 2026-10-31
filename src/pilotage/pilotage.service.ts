@@ -422,10 +422,12 @@ export class PilotageService {
     quotas: Record<string, number>,
     texteRecu: boolean,
     lot?: number | number[],
+    parCycle?: Record<string, Record<string, number>>,
   ) {
     const deps = new Map(
       (await this.deps.find()).map((d) => [String(d.id), d]),
     );
+    if (parCycle) return this.proposerParCycle(parCycle, texteRecu, lot, deps);
     const demandes = Object.entries(quotas)
       .map(([id, n]) => [id, Math.max(0, Math.floor(Number(n) || 0))] as const)
       .filter(([id, n]) => n > 0 && deps.has(id));
@@ -491,6 +493,93 @@ export class PilotageService {
       places: total,
       restants: liste.length - total,
       resume,
+      lignes: lignes.sort(
+        (x, y) =>
+          x.departement.localeCompare(y.departement, 'fr') ||
+          x.nomComplet.localeCompare(y.nomComplet, 'fr'),
+      ),
+    };
+  }
+
+  /**
+   * Proposition par département et par cycle : pour chaque cycle (type de note), les personnes
+   * sont tirées au sort parmi celles de ce cycle, puis données aux départements selon les nombres
+   * fixés (« Brazzaville : 30 primaire »). Rien n'est enregistré.
+   */
+  private async proposerParCycle(
+    parCycle: Record<string, Record<string, number>>,
+    texteRecu: boolean,
+    lot: number | number[] | undefined,
+    deps: Map<string, Departement>,
+  ) {
+    const demandes: { dep: string; type: string; n: number }[] = [];
+    for (const [dep, parType] of Object.entries(parCycle))
+      if (deps.has(dep))
+        for (const [type, n] of Object.entries(parType ?? {})) {
+          const k = Math.max(0, Math.floor(Number(n) || 0));
+          if (k) demandes.push({ dep, type, n: k });
+        }
+    const total = demandes.reduce((s, d) => s + d.n, 0);
+    if (!total)
+      throw new BadRequestException(
+        'Indiquez au moins un département, un cycle et un nombre de personnes.',
+      );
+    const liste = await this.eligibles(texteRecu, lot);
+    const types = await this.types(liste);
+    // Personnes de chaque cycle, mélangées au hasard
+    const parType = new Map<string, Agent[]>();
+    for (const a of liste
+      .map((a) => ({ a, r: Math.random() }))
+      .sort((x, y) => x.r - y.r)
+      .map((x) => x.a)) {
+      const t = types.get(a.id)!;
+      (parType.get(t) ?? parType.set(t, []).get(t)!).push(a);
+    }
+    const libelle = (t: string) =>
+      NOTES_AFFECTATION[t as TypeNoteAffectation]?.libelle ?? 'À définir';
+    for (const t of new Set(demandes.map((d) => d.type))) {
+      const voulu = demandes
+        .filter((d) => d.type === t)
+        .reduce((s, d) => s + d.n, 0);
+      const dispo = parType.get(t)?.length ?? 0;
+      if (voulu > dispo)
+        throw new BadRequestException(
+          `${libelle(t)} : ${voulu} place(s) demandée(s), mais seulement ${dispo} personne(s) de ce cycle sans département.`,
+        );
+    }
+    const lignes = demandes.flatMap(({ dep, type, n }) =>
+      parType
+        .get(type)!
+        .splice(0, n)
+        .map((a) => ({
+          agentId: a.id,
+          nomComplet: a.nomComplet,
+          diplome: a.diplomeBrut,
+          lot: a.lotPublication ? libelleLot(a.lotPublication) : null,
+          type,
+          departementId: Number(dep),
+          departement: deps.get(dep)!.nom,
+        })),
+    );
+    const resume = [...new Set(demandes.map((d) => d.dep))].map((id) => {
+      const lesSiens = lignes.filter((l) => String(l.departementId) === id);
+      const parTypeDep: Record<string, number> = {};
+      for (const l of lesSiens)
+        parTypeDep[l.type] = (parTypeDep[l.type] ?? 0) + 1;
+      return {
+        departementId: Number(id),
+        departement: deps.get(id)!.nom,
+        demandes: lesSiens.length,
+        parType: parTypeDep,
+      };
+    });
+    return {
+      eligibles: liste.length,
+      places: total,
+      restants: liste.length - total,
+      resume: resume.sort((x, y) =>
+        x.departement.localeCompare(y.departement, 'fr'),
+      ),
       lignes: lignes.sort(
         (x, y) =>
           x.departement.localeCompare(y.departement, 'fr') ||
