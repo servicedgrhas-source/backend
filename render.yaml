@@ -43,3 +43,6 @@ services:
         sync: false
       - key: R2_SECRET_ACCESS_KEY
         sync: false
+      # Copie des sauvegardes chez Cloudinary (Administration › Sauvegarde) : cloudinary://clé:secret@nom
+      - key: CLOUDINARY_URL
+        sync: false

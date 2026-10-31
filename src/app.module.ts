@@ -78,6 +78,8 @@ import { LiaisonVolontairesService } from './recensement/liaison-volontaires.ser
 import { AffectationsPersonnelService } from './recensement/affectations-personnel.service';
 import { DoublonsService } from './affectation/doublons.service';
 import { OubliesService } from './affectation/oublies.service';
+import { SauvegardeController } from './sauvegarde/sauvegarde.controller';
+import { SauvegardeService } from './sauvegarde/sauvegarde.service';
 import { DoublonsCentralService } from './doublons/doublons-central.service';
 import { DoublonsController } from './doublons/doublons.controller';
 import { RattachementService } from './rattachement/rattachement.service';
@@ -110,6 +112,7 @@ import { ReferentielsService } from './referentiels/referentiels.service';
     }),
   ],
   controllers: [
+    SauvegardeController,
     DemandesController,
     DoublonsController,
     RattachementController,
@@ -149,6 +152,7 @@ import { ReferentielsService } from './referentiels/referentiels.service';
     ImportBaseService,
     DoublonsService,
     OubliesService,
+    SauvegardeService,
     DoublonsCentralService,
     RattachementService,
     LotsReceptionService,
