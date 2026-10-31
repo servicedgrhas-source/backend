@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ForbiddenException,
   Body,
   Controller,
   Get,
@@ -26,6 +27,7 @@ import {
 } from 'class-validator';
 import {
   Roles,
+  ROLES_CONTROLE,
   ROLES_TRAITEMENT,
   Utilisateur,
   type UtilisateurConnecte,
@@ -37,6 +39,7 @@ import { StatistiquesService } from './statistiques.service';
 import { ImportBaseService } from './import.service';
 import { LotsReceptionService } from './lots-reception.service';
 import { AffectationsPersonnelService } from '../recensement/affectations-personnel.service';
+import { DoublonsService } from './doublons.service';
 
 const DATE = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -97,6 +100,11 @@ const GROUPES = ['MEPPSA', 'AUTRES_AVEC', 'AUTRES_SANS'];
 const listeGroupes = (v?: string) =>
   v ? v.split(',').filter((g) => GROUPES.includes(g)) : undefined;
 
+class DoublonDto {
+  @IsString() autreId: string;
+  @IsIn(['SUPPRIMER', 'DIFFERENTES']) decision: 'SUPPRIMER' | 'DIFFERENTES';
+}
+
 class DeportDto {
   @IsArray() @ArrayNotEmpty() @IsString({ each: true }) ids: string[];
   /** Doublons possibles tranchés : n° de fiche du personnel, ou « NOUVELLE ». */
@@ -113,7 +121,43 @@ export class AffectationController {
     private readonly controle: ControleAffectationsService,
     private readonly statsSuivi: StatistiquesService,
     private readonly personnel: AffectationsPersonnelService,
+    private readonly doublons: DoublonsService,
   ) {}
+
+  /* --------------------- Doublons probables, spécialités --------------------- */
+
+  /** La fiche et celles qui lui ressemblent, pour les comparer. */
+  @Roles(...ROLES_TRAITEMENT)
+  @Get('agents/:id/doublons')
+  candidatsDoublon(@Param('id') id: string) {
+    return this.doublons.candidats(id);
+  }
+
+  /** Supprimer définitivement la fiche `:id` (gardée : autreId), ou deux personnes différentes. */
+  @Roles(...ROLES_TRAITEMENT)
+  @Post('agents/:id/doublon')
+  trancherDoublon(
+    @Utilisateur() u: UtilisateurConnecte,
+    @Param('id') id: string,
+    @Body() dto: DoublonDto,
+  ) {
+    if (
+      dto.decision === 'SUPPRIMER' &&
+      u.role !== 'ADMIN' &&
+      !ROLES_CONTROLE.includes(u.role)
+    )
+      throw new ForbiddenException(
+        'Supprimer une fiche est réservé au chef de service, au directeur, au bureau d’études et au DG.',
+      );
+    return this.doublons.trancher(u, id, dto.autreId, dto.decision);
+  }
+
+  /** Primaire et préscolaire : la spécialité est le cycle. */
+  @Roles(...ROLES_TRAITEMENT)
+  @Post('affectations/specialites')
+  completerSpecialites(@Utilisateur() u: UtilisateurConnecte) {
+    return this.doublons.completerSpecialites(u);
+  }
 
   /* ------------- Déport des affectés dans la base du personnel ------------- */
 

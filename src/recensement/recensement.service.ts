@@ -1520,6 +1520,47 @@ export class RecensementService {
         `UPDATE structure SET "responsableId" = $2 WHERE "responsableId" = $1`,
         [b.id, a.id],
       );
+      // Demandes de mutation, nominations, fiche de recrutement, historique des modifications
+      for (const t of [
+        'demande_mutation',
+        'nomination',
+        'modification_recensement',
+      ])
+        await m.query(`UPDATE ${t} SET "agentId" = $2 WHERE "agentId" = $1`, [
+          b.id,
+          a.id,
+        ]);
+      await m.query(
+        `UPDATE agent SET "agentRecenseId" = $2 WHERE "agentRecenseId" = $1`,
+        [b.id, a.id],
+      );
+      // Emplois du temps : l'enseignant des séances, des charges et des cours non placés
+      const edts = await m.query<
+        {
+          id: string;
+          seances: { agentId?: number }[];
+          charges: { agentId?: number }[];
+          nonPlaces: { agentId?: number }[];
+        }[]
+      >(
+        `SELECT id, seances, charges, "nonPlaces" FROM emploi_du_temps
+          WHERE seances @> $1::jsonb OR charges @> $1::jsonb OR "nonPlaces" @> $1::jsonb`,
+        [JSON.stringify([{ agentId: b.id }])],
+      );
+      const remplacer = (l: { agentId?: number }[]) =>
+        (l ?? []).map((x) =>
+          x.agentId === b.id ? { ...x, agentId: a.id } : x,
+        );
+      for (const e of edts)
+        await m.query(
+          `UPDATE emploi_du_temps SET seances = $2, charges = $3, "nonPlaces" = $4 WHERE id = $1`,
+          [
+            e.id,
+            JSON.stringify(remplacer(e.seances)),
+            JSON.stringify(remplacer(e.charges)),
+            JSON.stringify(remplacer(e.nonPlaces)),
+          ],
+        );
       await m.delete(AgentRecense, b.id);
       Object.assign(a, await this.colonnes(d), {
         donnees: d,
@@ -1886,11 +1927,29 @@ export class RecensementService {
             lier(code, id, g);
           });
     };
-    groupes(
-      (l) => (l.dateNaissance ? `${l.nomNormalise}|${l.dateNaissance}` : null),
-      2,
-      'DOUBLON',
-    );
+    // Même nom et même date : doublon, sauf deux fiches déclarées « deux personnes différentes »
+    {
+      const parId = new Map(lignes.map((l) => [l.id, l]));
+      const m = new Map<string, number[]>();
+      for (const l of lignes)
+        if (l.dateNaissance) {
+          const k = `${l.nomNormalise}|${l.dateNaissance}`;
+          m.set(k, [...(m.get(k) ?? []), l.id]);
+        }
+      for (const g of m.values())
+        for (const id of g) {
+          const autres = g.filter(
+            (x) =>
+              x !== id &&
+              !(parId.get(id)?.distinctes ?? []).includes(x) &&
+              !(parId.get(x)?.distinctes ?? []).includes(id),
+          );
+          if (autres.length) {
+            ajouter('DOUBLON', id);
+            lier('DOUBLON', id, [id, ...autres]);
+          }
+        }
+    }
     groupes((l) => l.matricule, 2, 'MATRICULE_DOUBLE');
     // Même personne probable sous deux fiches (deux bases : volontaire puis fonctionnaire, nom écrit autrement…).
     // C'est le calcul le plus long : il est gardé tant que les noms, dates et fiches déclarées

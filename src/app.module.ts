@@ -76,6 +76,11 @@ import { DemandesController } from './circuit/demandes.controller';
 import { DemandesService } from './circuit/demandes.service';
 import { LiaisonVolontairesService } from './recensement/liaison-volontaires.service';
 import { AffectationsPersonnelService } from './recensement/affectations-personnel.service';
+import { DoublonsService } from './affectation/doublons.service';
+import { DoublonsCentralService } from './doublons/doublons-central.service';
+import { DoublonsController } from './doublons/doublons.controller';
+import { RattachementService } from './rattachement/rattachement.service';
+import { RattachementController } from './rattachement/rattachement.controller';
 import { BottinService } from './enrolement/bottin.service';
 import { RetardsEchelonsService } from './recensement/retards-echelons.service';
 import { ImportStructuresService } from './circuit/structures-import.service';
@@ -105,6 +110,8 @@ import { ReferentielsService } from './referentiels/referentiels.service';
   ],
   controllers: [
     DemandesController,
+    DoublonsController,
+    RattachementController,
     EtablissementsController,
     StructuresController,
     BesoinsAdministratifsController,
@@ -139,6 +146,9 @@ import { ReferentielsService } from './referentiels/referentiels.service';
     InitialisationService,
     AffectationService,
     ImportBaseService,
+    DoublonsService,
+    DoublonsCentralService,
+    RattachementService,
     LotsReceptionService,
     DossiersService,
     ComplementsService,

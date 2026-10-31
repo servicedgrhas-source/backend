@@ -30,6 +30,7 @@ import {
   sansPrefixeNumero,
 } from '../common/texte';
 import { JournalService } from '../core/core.service';
+import { RattachementService } from '../rattachement/rattachement.service';
 import { CircuitService } from '../circuit/circuit.service';
 import { DemandeMutation, Departement, PieceDemande } from '../entities';
 
@@ -201,6 +202,7 @@ export class MutationService {
     private readonly circuit: CircuitService,
     @InjectRepository(PieceDemande)
     private readonly pieces: Repository<PieceDemande>,
+    private readonly rattachement: RattachementService,
   ) {}
 
   private presenter(d: DemandeMutation) {
@@ -442,6 +444,8 @@ export class MutationService {
     });
     await this.circuit.alerterNouvelle(d);
     await this.lierPermutation(d);
+    // Rattachée à sa fiche du personnel (sinon : à vérifier ou introuvable, jamais bloquant)
+    await this.rattachement.rattacher('MUTATION', [d.id]);
     await this.journal.log(
       u,
       'DEMANDE_MUTATION_CREEE',
@@ -591,6 +595,7 @@ export class MutationService {
         pieces: fichiers.length,
       },
     );
+    await this.rattachement.rattacher('MUTATION', [d.id]);
     return { id: d.id, numero, code, etape: c.circuit[0].sigle };
   }
 
@@ -1121,6 +1126,9 @@ export class MutationService {
       .filter(([, fois]) => fois > 1)
       .map(([n]) => n)
       .sort((a, b) => a - b);
+    // Chaque demande rattachée à sa fiche du personnel (les doutes sont à trancher à l'écran)
+    const rattachement = await this.rattachement.rattacher('MUTATION');
+    Object.assign(rapport, { rattachement });
     await this.journal.log(
       u,
       'IMPORT_MUTATIONS',

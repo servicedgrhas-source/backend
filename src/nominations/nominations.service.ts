@@ -10,6 +10,7 @@ import { In, IsNull, Repository } from 'typeorm';
 import { ROLES_TRAITEMENT, type UtilisateurConnecte } from '../auth/auth';
 import { champ, lireClasseur } from '../common/excel';
 import { IndexNoms } from '../common/index-noms';
+import { RattachementService } from '../rattachement/rattachement.service';
 import { codeDepartement } from '../common/referentiels';
 import { enTexte, normaliser } from '../common/texte';
 import { JournalService, ParametresService } from '../core/core.service';
@@ -71,6 +72,7 @@ export class NominationsService {
     private readonly rec: RecensementService,
     private readonly params: ParametresService,
     private readonly journal: JournalService,
+    private readonly rattachement: RattachementService,
   ) {}
 
   private dgrhas(u: UtilisateurConnecte) {
@@ -381,6 +383,7 @@ export class NominationsService {
         departementId,
         circonscription: texte(champ(l, 'CIRCONSC')),
         agentId,
+        rattachement: agentId ? 'NOM' : null,
         nomComplet: nom,
         nomNormalise: normaliser(nom),
         genre: /^F/.test(normaliser(champ(l, 'GENRE')))
@@ -420,7 +423,11 @@ export class NominationsService {
         creees: nouvelles.length,
       });
     }
-    return { ...rapport, essai: o.essai };
+    // Nommés sans fiche : à vérifier ou introuvables (jamais bloquant)
+    const rattachement = o.essai
+      ? null
+      : await this.rattachement.rattacher('NOMINATION');
+    return { ...rapport, rattachement, essai: o.essai };
   }
 
   /* ------------------------------ Nouvelle année ------------------------------ */
@@ -864,6 +871,7 @@ export class NominationsService {
     if (!n.motif)
       throw new BadRequestException('Écrivez le motif de la proposition.');
     const cree = await this.noms.save(n);
+    await this.rattachement.rattacher('NOMINATION', [String(cree.id)]);
     await this.journal.log(
       u,
       'NOMINATION_AJOUT',

@@ -162,7 +162,9 @@ export class AffectationsPersonnelService implements OnApplicationBootstrap {
     const enrolement = await this.notesEnrolement();
     // Les recrutés n'entrent dans la base du personnel que déportés (DG, 30/10/2026)
     const affectation = await this.notesAffectation();
-    const bilan = { ...enrolement, ...affectation };
+    // Mutations accordées : la note signée change le lieu de service de la fiche (DG, 31/10/2026)
+    const mutation = await this.notesMutation();
+    const bilan = { ...enrolement, ...affectation, ...mutation };
     if (Object.values(bilan).some((n) => n > 0))
       this.log.log(
         `Notes de service → base du personnel : ${bilan.enroles} affectation(s) de volontaire, ${bilan.affectes} affectation(s) après le texte de la FP (${bilan.integres} passé(s) fonctionnaire ou contractuel, ${bilan.crees} fiche(s) créée(s))`,
@@ -266,6 +268,76 @@ export class AffectationsPersonnelService implements OnApplicationBootstrap {
     }
     await this.enregistrer(modifiees);
     return { enroles: modifiees.length };
+  }
+
+  /**
+   * 3. Mutation accordée : la note de mutation signée est reportée sur la fiche de l'agent à qui la
+   * demande est rattachée (nouveau lieu de service, nouveau département, ligne des affectations
+   * successives). Une demande sans fiche n'est pas reportée (à rattacher dans « Mutations »).
+   */
+  private async notesMutation() {
+    const lignes = await this.agents.query<
+      {
+        demande: string;
+        agentId: number;
+        noteId: string;
+        numero: string | null;
+        reference: string | null;
+        dateSignature: string | null;
+        lieu: string | null;
+        depCode: string | null;
+        depNom: string | null;
+      }[]
+    >(
+      `SELECT d.id AS demande, d."agentId", n.id AS "noteId", n.numero, n.contenu->'entete'->>'reference' AS reference,
+              to_char(n."dateSignature", 'YYYY-MM-DD') AS "dateSignature", d."lieuSollicite" AS lieu,
+              dep.code AS "depCode", dep.nom AS "depNom"
+         FROM demande_mutation d
+         JOIN note_service n ON n.id = d."noteId" AND n.statut = 'SIGNEE' AND n.module = 'MUTATION'
+         LEFT JOIN departement dep ON dep.id = d."departementSolliciteId"
+        WHERE d."agentId" IS NOT NULL AND NOT d.retiree
+        ORDER BY n."dateSignature" NULLS LAST`,
+    );
+    if (!lignes.length) return { mutes: 0 };
+    const c = this.rec.config.get();
+    const valeur = (code: string, v: unknown) => {
+      const ch = c.champs.find((x) => x.code === code && x.actif);
+      if (!ch || estVide(v)) return undefined;
+      const lu = lireValeur(ch, v);
+      return lu.erreur || estVide(lu.valeur) ? undefined : lu.valeur;
+    };
+    const fiches = new Map(
+      (
+        await this.agents.find({
+          where: { id: In([...new Set(lignes.map((l) => l.agentId))]) },
+        })
+      ).map((a) => [a.id, a]),
+    );
+    const modifiees = new Map<number, AgentRecense>();
+    for (const l of lignes) {
+      const a = fiches.get(l.agentId);
+      if (!a) continue;
+      const cle = `MUTATION:${l.noteId}:${l.demande}`;
+      const note = `${referenceComplete(l.numero, l.reference ?? this.params.get('REFERENCE_NOTE'), l.dateSignature)} (mutation)`;
+      if (this.dejaFait(a, cle, note)) continue;
+      const lieu = l.lieu ?? (l.depNom ? `DDEPPSA ${l.depNom}` : null);
+      for (const [k, v] of Object.entries({
+        LIEU_SERVICE: lieu,
+        DEPARTEMENT: l.depCode,
+      })) {
+        const x = valeur(k, v);
+        if (x !== undefined) a.donnees[k] = x;
+      }
+      this.ajouterLigne(a, cle, {
+        NOTE: note,
+        DATE: l.dateSignature ?? undefined,
+        LIEU: lieu ?? undefined,
+      });
+      a.modifiePar = SOURCE;
+      modifiees.set(a.id, a);
+    }
+    await this.enregistrer([...modifiees.values()]);
+    return { mutes: modifiees.size };
   }
 
   /**
@@ -408,6 +480,10 @@ export class AffectationsPersonnelService implements OnApplicationBootstrap {
           LIEU_SERVICE: lieu,
           DEPARTEMENT: dep?.code,
         };
+        // Spécialité (primaire, préscolaire : le cycle) : seulement si la fiche n'en a pas
+        const specialite = aff.specialite ?? ag.specialite;
+        if (specialite && estVide(a.donnees.SPECIALITE))
+          maj.SPECIALITE = specialite;
         // Carrière : seulement si la fiche ne la donne pas encore (le recensement fait foi)
         for (const [k, v] of Object.entries({
           GRADE: grade,

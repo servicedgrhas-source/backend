@@ -15,6 +15,7 @@ import {
   sqlLibelleLot,
 } from '../common/lots';
 import { LotsReceptionService } from './lots-reception.service';
+import { SPECIALITE_DU_CYCLE } from './doublons.service';
 import { BadRequestException, Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { In, IsNull, Not, Repository } from 'typeorm';
@@ -41,6 +42,10 @@ export interface RapportImport {
   ignorees: number;
   /** Lignes d'une personne déjà lue dans une autre feuille : réunies en une seule fiche. */
   fusionnees: number;
+  /** Fiches déjà enregistrées dont le fichier a rempli des cases vides (spécialité, date…). */
+  fichesCompletees: number;
+  /** Nombre de cases remplies ainsi, par champ (« Spécialité » : 12…). */
+  champsCompletes: Record<string, number>;
   /** Bloc choisi à l'import : quota MEPPSA ou quota « Autres ». */
   groupe: 'MEPPSA' | 'AUTRES' | null;
   /** Textes enregistrés dans le système et gardés malgré le fichier. */
@@ -92,6 +97,28 @@ export type LigneLue = Partial<Agent> & {
 };
 
 const vide = (v: unknown) => v === null || v === undefined || v === '';
+
+/** Champs de la fiche que l'import peut compléter, avec leur nom pour le rapport. */
+const CHAMPS_FICHE: Record<string, string> = {
+  dateNaissance: 'Date de naissance',
+  lieuNaissance: 'Lieu de naissance',
+  diplomeCode: 'Diplôme',
+  departementId: 'Département',
+  source: 'Source',
+  cycleBrut: 'Cycle',
+  specialite: 'Spécialité',
+  qualification: 'Qualification',
+  lotCommission: 'Lot de la commission',
+  statut: 'Statut',
+  observation: 'Observation',
+  numeroTexte: 'N° du texte',
+  typeTexte: 'Type de texte',
+  dateReception: 'Date de réception',
+  dateSignatureTexte: 'Date de signature',
+  lieuServiceBrut: 'Lieu de service',
+  origineBrute: 'Origine',
+  parapheur: 'N° parapheur',
+};
 
 /**
  * Même personne dans plusieurs feuilles (QA arrêtés avec et sans département : 686 personnes dans
@@ -270,6 +297,8 @@ export class ImportBaseService {
       misAJour: 0,
       ignorees: 0,
       fusionnees: 0,
+      fichesCompletees: 0,
+      champsCompletes: {},
       groupe: options.groupe ?? null,
       textesConserves: 0,
       affectationsCreees: 0,
@@ -371,7 +400,27 @@ export class ImportBaseService {
               diplomeCode: ex.diplomeCode,
             }
           : null;
-        const agent = Object.assign(ex ?? new Agent(), data, {
+        // Fiche déjà enregistrée : le fichier complète et met à jour, une case vide n'efface rien
+        let apport: Partial<Agent> = data;
+        if (ex) {
+          apport = Object.fromEntries(
+            Object.entries(data).filter(
+              ([k, v]) => k === 'anomalies' || !vide(v),
+            ),
+          );
+          let complete = false;
+          for (const [k, nom] of Object.entries(CHAMPS_FICHE))
+            if (
+              vide((ex as unknown as Record<string, unknown>)[k]) &&
+              !vide((apport as Record<string, unknown>)[k])
+            ) {
+              rapport.champsCompletes[nom] =
+                (rapport.champsCompletes[nom] ?? 0) + 1;
+              complete = true;
+            }
+          if (complete) rapport.fichesCompletees++;
+        }
+        const agent = Object.assign(ex ?? new Agent(), apport, {
           cle,
           // Rangé plus bas dans le lot de son paquet, de son quota et de son type
           lotPublicationId: avecTexte ? (ex?.lotPublicationId ?? null) : null,
@@ -764,6 +813,17 @@ export class ImportBaseService {
     regles ??= new Map((await this.regles.find()).map((r) => [r.code, r]));
     const depsParId = new Map([...deps.values()].map((d) => [d.id, d]));
 
+    // Département et spécialité arrivés avec un nouveau fichier : repris par l'affectation qui
+    // n'en avait pas encore (et pas encore dans une note)
+    await this.affectations.query(`
+      UPDATE affectation f SET "departementId" = a."departementId"
+      FROM agent a WHERE a.id = f."agentId" AND f."departementId" IS NULL
+        AND a."departementId" IS NOT NULL AND f.statut = 'A_TRAITER' AND f."noteId" IS NULL`);
+    await this.affectations.query(`
+      UPDATE affectation f SET specialite = a.specialite
+      FROM agent a WHERE a.id = f."agentId" AND coalesce(trim(f.specialite), '') = ''
+        AND coalesce(trim(a.specialite), '') <> '' AND f.statut = 'A_TRAITER' AND f."noteId" IS NULL`);
+
     // Lot modifié dans le fichier pour une affectation pas encore dans une note
     await this.affectations.query(`
       UPDATE affectation f SET "lotPublicationId" = a."lotPublicationId"
@@ -804,7 +864,8 @@ export class ImportBaseService {
           departementId: a.departementId,
           structure:
             typeNote === 'PERS_ADM' && dep ? `DDEPPSA ${dep.nom}` : null,
-          specialite: a.specialite,
+          // Primaire, préscolaire : la spécialité est le cycle (DG, 31/10/2026)
+          specialite: a.specialite || SPECIALITE_DU_CYCLE[typeNote] || null,
           statut: 'A_TRAITER',
         });
       });

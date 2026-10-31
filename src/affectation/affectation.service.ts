@@ -566,7 +566,7 @@ export class AffectationService {
       const doublon = doublons.get(aff.agentId);
       if (aff.statut === 'A_TRAITER' && doublon)
         d.bloquants.push(
-          `Doublon probable avec ${doublon} : retirez l’une des deux fiches de la note, ou déclarez l’anomalie « Ressemble à » vérifiée`,
+          `Doublon probable avec ${doublon} : cliquez pour comparer les deux fiches (supprimer celle en trop, ou deux personnes différentes)`,
         );
       if (attente.has(aff.id))
         d.bloquants.push('Recommandation en attente de décision du DG');
@@ -701,7 +701,15 @@ export class AffectationService {
     const raisons: Record<string, number> = {};
     let aDeporter = 0;
     let aRepartir = 0;
+    let sansSpecialite = 0;
     for (const x of liste) {
+      if (
+        x.statut === 'A_TRAITER' &&
+        !x.noteId &&
+        ['PRIMAIRE', 'PRESCOLAIRE'].includes(x.typeNote) &&
+        !x.specialite?.trim()
+      )
+        sansSpecialite++;
       const t = (parType[x.typeNote] ??= vide());
       const g = (parGroupe[groupeQuota(x.agent)] ??= vide());
       for (const c of [t, g]) {
@@ -726,7 +734,14 @@ export class AffectationService {
       )
         aRepartir++;
     }
-    return { parType, parGroupe, raisons, aDeporter, aRepartir };
+    return {
+      parType,
+      parGroupe,
+      raisons,
+      aDeporter,
+      aRepartir,
+      sansSpecialite,
+    };
   }
 
   async obtenir(id: string) {

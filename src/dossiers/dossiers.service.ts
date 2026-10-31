@@ -424,6 +424,9 @@ export class DossiersService {
         lieuNaissance: a.lieuNaissance,
         diplome: r?.libelle ?? a.diplomeBrut,
         cycle: r?.cycle ?? a.cycleBrut,
+        qualification: a.qualification,
+        specialite: a.specialite,
+        source: a.source,
         grade: gradeAffiche(r?.grade ?? null, c.contractuel),
         gradeLibelle: r?.gradeLibelle ?? null,
         classification: r

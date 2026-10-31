@@ -547,6 +547,14 @@ export class DemandeMutation {
   @Column({ type: 'text', nullable: true }) instructionCommentaire:
     string | null;
   @Column({ type: 'varchar', nullable: true }) instructionPar: string | null;
+  /**
+   * Rattachement à la base du personnel (DG, 31/10/2026) : MATRICULE, NOM (rattachée sûrement),
+   * MANUEL (choisie), CREEE (fiche créée depuis la demande), A_VERIFIER (plusieurs fiches
+   * possibles), INTROUVABLE, SANS_FICHE (laissée sans fiche). Jamais bloquant.
+   */
+  @Index() @Column({ type: 'varchar', nullable: true }) rattachement:
+    | string
+    | null;
   @Column({ type: 'boolean', default: false }) retiree: boolean;
   @Column({ type: 'text', nullable: true }) motifRetrait: string | null;
   @Column({ type: 'uuid', nullable: true }) noteId: string | null;
@@ -619,6 +627,23 @@ export class MembreCommission {
   @Column({ type: 'varchar', nullable: true }) fonction: string | null;
   @Column({ type: 'int', default: 0 }) places: number;
   @Column({ type: 'varchar', nullable: true }) modifiePar: string | null;
+  @CreateDateColumn() creeLe: Date;
+}
+
+/**
+ * Deux fiches déclarées « deux personnes différentes » (DG, 31/10/2026) : la paire n'est plus
+ * proposée comme doublon probable. `a` < `b` (identifiants en texte) ; `base` : RECRUTES,
+ * PERSONNEL, VOLONTAIRES, ENROLES.
+ */
+@Entity('doublon_distinct')
+@Index(['base', 'a', 'b'], { unique: true })
+export class DoublonDistinct {
+  @PrimaryGeneratedColumn() id: number;
+  @Column() base: string;
+  @Column() a: string;
+  @Column() b: string;
+  @Column({ type: 'text', nullable: true }) motif: string | null;
+  @Column({ type: 'varchar', nullable: true }) par: string | null;
   @CreateDateColumn() creeLe: Date;
 }
 
@@ -1594,6 +1619,10 @@ export class Nomination {
   @Column({ type: 'varchar', nullable: true }) circonscription: string | null;
   /** Fiche de la base du personnel, quand elle est retrouvée. */
   @Index() @Column({ type: 'int', nullable: true }) agentId: number | null;
+  /** Rattachement à la base du personnel : comme pour les mutations (MATRICULE, NOM, MANUEL…). */
+  @Index() @Column({ type: 'varchar', nullable: true }) rattachement:
+    | string
+    | null;
   @Column() nomComplet: string;
   @Index() @Column() nomNormalise: string;
   @Column({ type: 'varchar', nullable: true }) genre: string | null;
@@ -1685,4 +1714,5 @@ export const ENTITES = [
   CadreOrganique,
   BesoinPersonnel,
   Nomination,
+  DoublonDistinct,
 ];
