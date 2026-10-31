@@ -1162,6 +1162,8 @@ export class ImportBaseService {
       meppsa: fiches.filter((a) => a.feuille !== 'QUOTA_AUTRES').length,
       autres: fiches.filter((a) => a.feuille === 'QUOTA_AUTRES').length,
       illisibles: fiches.filter((a) => illisible(a)).length,
+      // Texte connu mais lot non indiqué : il suffit de les ranger dans leur lot
+      avecTexte: fiches.filter((a) => !!a.numeroTexte).length,
       personnes: fiches.map((a) => ({
         id: a.id,
         nomComplet: a.nomComplet,
