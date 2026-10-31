@@ -124,15 +124,29 @@ export class DashboardController {
              WHERE "anneeScolaire" = $1) AS ecoles`,
         [this.params.get('ANNEE_SCOLAIRE')],
       ),
-      // Textes reçus par paquet (un envoi de la FP)
+      // Textes reçus : par paquet (anciens lots rangés par date de réception), puis par lot de
+      // publication de la base (« Arrêtés — lot VIII », DG 30/10/2026) : décrets puis arrêtés, les
+      // listes du tableau de bord partant de la fin (arrêtés lot VIII en tête)
       this.db.query<Ligne[]>(`
-        SELECT p.numero, p."dateReception"::text AS "dateReception", count(a.id)::int AS agents,
-          count(f.id) FILTER (WHERE f.statut = 'AFFECTE')::int AS affectes,
-          count(DISTINCT l.id)::int AS lots
-        FROM paquet_reception p JOIN lot_publication l ON l."paquetId" = p.id
-        LEFT JOIN agent a ON a."lotPublicationId" = l.id
-        LEFT JOIN affectation f ON f."agentId" = a.id
-        GROUP BY p.id ORDER BY p."dateReception" NULLS LAST, p.numero`),
+        SELECT * FROM (
+          SELECT 'P' || p.id AS cle, p.numero, p."dateReception"::text AS "dateReception",
+            NULL::text AS "typeTexte", NULL::int AS "numeroFichier", count(a.id)::int AS agents,
+            count(f.id) FILTER (WHERE f.statut = 'AFFECTE')::int AS affectes,
+            count(DISTINCT l.id)::int AS lots, 0 AS groupe, p."dateReception" AS d1, 0 AS d2
+          FROM paquet_reception p JOIN lot_publication l ON l."paquetId" = p.id
+          LEFT JOIN agent a ON a."lotPublicationId" = l.id
+          LEFT JOIN affectation f ON f."agentId" = a.id
+          GROUP BY p.id
+          UNION ALL
+          SELECT 'L' || l.id, l.numero, NULL, l."typeTexte", l."numeroFichier", count(a.id)::int,
+            count(f.id) FILTER (WHERE f.statut = 'AFFECTE')::int, 1,
+            CASE l."typeTexte" WHEN 'DECRET' THEN 1 ELSE 2 END, NULL, l."numeroFichier"
+          FROM lot_publication l
+          LEFT JOIN agent a ON a."lotPublicationId" = l.id
+          LEFT JOIN affectation f ON f."agentId" = a.id
+          WHERE l."numeroFichier" IS NOT NULL
+          GROUP BY l.id
+        ) x ORDER BY groupe, d1 NULLS LAST, d2, numero`),
     ]);
     const d = t.demandes as Record<string, number>;
     return {
