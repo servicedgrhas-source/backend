@@ -11,7 +11,13 @@ import {
   type TypeNoteAffectation,
 } from '../common/referentiels';
 import { ageRevolu, dateEnLettres } from '../common/texte';
-import type { Affectation, Agent, RegleDiplome } from '../entities';
+import type {
+  Affectation,
+  Agent,
+  Grade,
+  GradeChoisi,
+  RegleDiplome,
+} from '../entities';
 
 export interface ParametresCalcul {
   /** Catégories II et III : contractuel au-delà de cet âge. */
@@ -135,6 +141,21 @@ export function regleDeLAgent(
   };
 }
 
+/** Copie d'un grade choisi pour une personne (sa classification suit ensuite le grade). */
+export function copieGrade(g: Grade, par: string): GradeChoisi {
+  return {
+    code: g.code,
+    abreviation: g.abreviation,
+    libelle: g.libelle,
+    categorie: g.categorie,
+    echelle: g.echelle,
+    echelon: g.echelon,
+    indice: g.indice,
+    par,
+    le: new Date().toISOString(),
+  };
+}
+
 /** Grade affiché : « Inst. » -> « Inst.C. » pour un contractuel. */
 export function gradeAffiche(
   grade: string | null,
@@ -187,7 +208,11 @@ export function deriver(
   if (!regle)
     bloquants.push(`Diplôme non reconnu (« ${agent.diplomeBrut ?? '—'} »)`);
   else if (!regle.grade)
-    bloquants.push(`Grade non défini pour le diplôme ${regle.libelle}`);
+    bloquants.push(
+      regle.code === 'SANS_DIPLOME'
+        ? 'Sans diplôme : grade à choisir (Détails de la note)'
+        : `Grade non défini pour le diplôme ${regle.libelle}`,
+    );
   if (!def) bloquants.push('Type de note à définir');
   if (def?.parDepartement && !aff.departementId)
     bloquants.push('Département retenu manquant');

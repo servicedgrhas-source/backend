@@ -54,6 +54,15 @@ class LotDto {
 }
 
 class AgentDto {
+  /* Informations de la fiche, modifiables dans la Base des recrutés (DG, 31/10/2026) */
+  @IsOptional() @IsString() @MaxLength(200) nomComplet?: string;
+  @IsOptional() @IsString() @MaxLength(120) lieuNaissance?: string | null;
+  @IsOptional() @IsString() @MaxLength(200) specialite?: string | null;
+  @IsOptional() @IsString() @MaxLength(200) qualification?: string | null;
+  @IsOptional() @IsString() @MaxLength(40) cycleBrut?: string | null;
+  @IsOptional() @IsString() @MaxLength(80) statut?: string | null;
+  @IsOptional() @IsString() @MaxLength(80) source?: string | null;
+  @IsOptional() @IsString() @MaxLength(500) observation?: string | null;
   @IsOptional() @Matches(DATE) dateNaissance?: string;
   @IsOptional() @IsInt() departementId?: number;
   @IsOptional() @IsString() diplomeCode?: string;
@@ -95,6 +104,8 @@ class FicheManuelleDto {
   @IsOptional() @IsInt() quota?: number | null;
   @IsOptional() @IsInt() numeroOrdre?: number | null;
   @IsOptional() @IsString() @MaxLength(500) observation?: string | null;
+  /** Grade à la demande (autre grade du diplôme, ou grade d'une personne sans diplôme). */
+  @IsOptional() @IsString() gradeCode?: string | null;
   /** Doute tranché : la fiche existante qui est la même personne. */
   @IsOptional() @IsString() meme?: string | null;
   /** Doute tranché : ce n'est pas la même personne, une nouvelle fiche est créée. */
@@ -312,10 +323,12 @@ export class AffectationController {
     @Body() dto: FicheManuelleDto,
   ) {
     const { groupe, meme, autrePersonne, ...fiche } = dto;
-    const r = await this.importation.ajouterManuelle(fiche, groupe, {
-      meme,
-      autrePersonne,
-    });
+    const r = await this.importation.ajouterManuelle(
+      fiche,
+      groupe,
+      { meme, autrePersonne },
+      u.nom,
+    );
     await this.journal.log(u, 'AJOUT_MANUEL_RECRUTE', 'agent', r.id, {
       groupe,
       cree: r.cree,

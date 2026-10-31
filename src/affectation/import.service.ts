@@ -47,7 +47,14 @@ import {
   normaliser,
   romainVersEntier,
 } from '../common/texte';
-import { Affectation, Agent, Departement, RegleDiplome } from '../entities';
+import {
+  Affectation,
+  Agent,
+  Departement,
+  Grade,
+  RegleDiplome,
+} from '../entities';
+import { copieGrade } from './calcul';
 
 export interface RapportImport {
   feuilles: { nom: string; lignes: number }[];
@@ -208,6 +215,8 @@ export interface FicheManuelle {
   quota?: number | null;
   numeroOrdre?: number | null;
   observation?: string | null;
+  /** Grade à la demande (un des autres grades du diplôme, ou celui d'une personne sans diplôme). */
+  gradeCode?: string | null;
 }
 
 /** Nom de la « feuille » d'une saisie manuelle (journal, doutes). */
@@ -462,8 +471,22 @@ export class ImportBaseService {
     f: FicheManuelle,
     groupe: 'MEPPSA' | 'AUTRES',
     choix: { meme?: string | null; autrePersonne?: boolean } = {},
+    par = '',
   ) {
     const v = await this.verifierManuelle(f, groupe);
+    // Grade à la demande : permis par le diplôme (vérifié avant tout enregistrement)
+    const regle = await this.regles.findOne({ where: { code: f.diplomeCode } });
+    let grade: Grade | null = null;
+    if (f.gradeCode && f.gradeCode !== regle?.gradeCode) {
+      if (!regle?.gradesAutres?.includes(f.gradeCode))
+        throw new BadRequestException(
+          'Ce grade n’est pas permis pour ce diplôme (Règles des diplômes et grades)',
+        );
+      grade = await this.regles.manager.findOne(Grade, {
+        where: { code: f.gradeCode },
+      });
+      if (!grade) throw new NotFoundException('Grade introuvable');
+    }
     if (choix.meme && !v.doutes.some((d) => d.id === choix.meme))
       throw new BadRequestException(
         'La fiche choisie ne fait pas partie des fiches qui ressemblent',
@@ -491,6 +514,10 @@ export class ImportBaseService {
       data.cle!;
     const agent = ctx.existants.get(cle);
     if (!agent) throw new NotFoundException('Fiche introuvable après l’ajout');
+    if (grade) {
+      agent.gradeChoisi = copieGrade(grade, par);
+      await this.agents.update(agent.id, { gradeChoisi: agent.gradeChoisi });
+    }
     const affectation = await this.affectations.findOne({
       where: { agentId: agent.id },
       loadEagerRelations: false,

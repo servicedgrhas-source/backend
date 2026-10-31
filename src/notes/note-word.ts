@@ -98,6 +98,86 @@ const MM = 56.7; // twips par millimètre
 const MARGE = 16; // mm, comme la version imprimée
 const LARGEUR_UTILE = 210 - 2 * MARGE;
 const POLICE = 'Times New Roman';
+/**
+ * « Fait à », le titre et le nom du signataire poussés de deux tabulations vers la droite
+ * (DG, 31/10/2026), moins si la plus longue des trois lignes ne tiendrait plus avant la marge.
+ */
+const SIGNATURE_RETRAIT = 25;
+/** Marges intérieures d'une cellule de tableau Word (mm, gauche + droite). */
+const MARGES_CELLULE = 3.8;
+
+/** Largeurs des caractères de Times New Roman (millièmes de corps), pour estimer une ligne. */
+const LARGEURS_TIMES: Record<string, number> = {
+  ' ': 250,
+  ',': 250,
+  '.': 250,
+  '-': 333,
+  "'": 333,
+  '’': 333,
+  a: 444,
+  b: 500,
+  c: 444,
+  d: 500,
+  e: 444,
+  f: 333,
+  g: 500,
+  h: 500,
+  i: 278,
+  j: 278,
+  k: 500,
+  l: 278,
+  m: 778,
+  n: 500,
+  o: 500,
+  p: 500,
+  q: 500,
+  r: 333,
+  s: 389,
+  t: 278,
+  u: 500,
+  v: 500,
+  w: 722,
+  x: 500,
+  y: 500,
+  z: 444,
+  A: 722,
+  B: 667,
+  C: 667,
+  D: 722,
+  E: 611,
+  F: 556,
+  G: 722,
+  H: 722,
+  I: 333,
+  J: 389,
+  K: 722,
+  L: 611,
+  M: 889,
+  N: 722,
+  O: 722,
+  P: 556,
+  Q: 722,
+  R: 667,
+  S: 556,
+  T: 611,
+  U: 722,
+  V: 722,
+  W: 944,
+  X: 722,
+  Y: 722,
+  Z: 611,
+};
+
+/** Largeur estimée d'une ligne en Times New Roman (mm). */
+function largeurLigne(texte: string, taille = 11, gras = false) {
+  let unites = 0;
+  for (const ch of texte) {
+    const base = ch.normalize('NFD')[0];
+    unites += LARGEURS_TIMES[base] ?? (/\d/.test(base) ? 500 : 556);
+  }
+  // Le gras est un peu plus large
+  return ((unites / 1000) * taille * (gras ? 1.06 : 1) * 25.4) / 72;
+}
 const SANS_BORD = {
   top: { style: BorderStyle.NONE, size: 0, color: 'FFFFFF' },
   bottom: { style: BorderStyle.NONE, size: 0, color: 'FFFFFF' },
@@ -133,6 +213,8 @@ const p = (
     taille?: number;
     /** Taquet de tabulation (mm) : aligne la deuxième colonne (ampliations). */
     taquet?: number;
+    /** Retrait à gauche (mm). */
+    retrait?: number;
   } = {},
 ) =>
   new Paragraph({
@@ -149,6 +231,7 @@ const p = (
           : AlignmentType.LEFT,
     spacing: { before: (o.avant ?? 0) * 20, after: (o.apres ?? 0) * 20 },
     keepNext: o.garderAvecSuivant,
+    indent: o.retrait ? { left: Math.round(o.retrait * MM) } : undefined,
     tabStops: o.taquet
       ? [{ type: TabStopType.LEFT, position: Math.round(o.taquet * MM) }]
       : undefined,
@@ -233,13 +316,24 @@ export async function noteWord(n: NoteWord, avecVisas = true): Promise<Buffer> {
         ...autres.map((x) => x.cle),
       ]
     : ['n', 'nom', ...colsMutation.map((x) => x.cle)];
+  // Spécialité : assez large pour son plus long mot, jamais coupé au milieu (« Mathématiques »,
+  // DG 31/10/2026) ; « Histoire-Géographie » passe à la ligne après le trait d'union
+  let motSpecialite = 0;
+  for (const s of c.sections)
+    for (const l of s.lignes)
+      for (const mot of String(l.specialite ?? '').split(/\s+/))
+        for (const morceau of mot.match(/[^-]+-?|-/g) ?? [])
+          motSpecialite = Math.max(motSpecialite, largeurLigne(morceau, 10));
+  const largeur = (k: string) =>
+    k === 'specialite'
+      ? Math.min(36, Math.max(LARGEUR.specialite, Math.ceil(motSpecialite + 3)))
+      : (LARGEUR[k] ?? 20);
   const fixes = cles
     .filter((k) => k !== 'nom')
-    .reduce((s, k) => s + (LARGEUR[k] ?? 20), 0);
+    .reduce((s, k) => s + largeur(k), 0);
   const largeurs = cles.map((k) =>
     Math.round(
-      (k === 'nom' ? Math.max(30, LARGEUR_UTILE - fixes) : (LARGEUR[k] ?? 20)) *
-        MM,
+      (k === 'nom' ? Math.max(30, LARGEUR_UTILE - fixes) : largeur(k)) * MM,
     ),
   );
 
@@ -320,6 +414,8 @@ export async function noteWord(n: NoteWord, avecVisas = true): Promise<Buffer> {
     p(`${new Date().toLocaleDateString('fr-FR')}/${c.repere}`, {
       centre: true,
       taille: 8,
+      // Pas collé à l'en-tête (DG, 31/10/2026)
+      apres: 10,
     }),
     new Table({
       layout: TableLayoutType.FIXED,
@@ -451,9 +547,27 @@ export async function noteWord(n: NoteWord, avecVisas = true): Promise<Buffer> {
   });
 
   // Mentions et signature : liées entre elles (et à la dernière ligne du tableau)
-  for (const m of c.mentions)
-    corps.push(p(m, { justifie: true, avant: 6, garderAvecSuivant: true }));
+  // Une ligne vide entre la fin du tableau et les mentions (DG, 31/10/2026)
+  c.mentions.forEach((m, i) =>
+    corps.push(
+      p(m, { justifie: true, avant: i ? 6 : 20, garderAvecSuivant: true }),
+    ),
+  );
   const moitie = Math.round(LARGEUR_UTILE * 0.5 * MM);
+  const faitA = `Fait à ${e.lieu}, le${n.dateSignature ? ` ${dateEnLettres(n.dateSignature) ?? ''}` : ''}`;
+  // Aussi à droite que possible, sans que la plus longue ligne passe à la ligne
+  const plusLongue = Math.max(
+    largeurLigne(faitA),
+    largeurLigne(e.signataireTitre),
+    largeurLigne(e.signataireNom, 11, true),
+  );
+  const retrait = Math.max(
+    0,
+    Math.min(
+      SIGNATURE_RETRAIT,
+      LARGEUR_UTILE * 0.5 - MARGES_CELLULE - plusLongue - 2,
+    ),
+  );
   corps.push(
     new Table({
       layout: TableLayoutType.FIXED,
@@ -467,13 +581,12 @@ export async function noteWord(n: NoteWord, avecVisas = true): Promise<Buffer> {
             new TableCell({ children: [p('')] }),
             new TableCell({
               children: [
-                p(
-                  // Sans date : « le » seul, la date est écrite à la main (DG, 31/10/2026)
-                  `Fait à ${e.lieu}, le${n.dateSignature ? ` ${dateEnLettres(n.dateSignature) ?? ''}` : ''}`,
-                  { avant: 14, garderAvecSuivant: true },
-                ),
+                // Sans date : « le » seul, la date est écrite à la main (DG, 31/10/2026)
+                p(faitA, { avant: 14, garderAvecSuivant: true, retrait }),
                 p(e.signataireTitre, {
-                  avant: 4,
+                  retrait,
+                  // Un peu d'espace sous « Fait à » (DG, 31/10/2026)
+                  avant: 10,
                   // Deux lignes de plus avant le nom du signataire (DG, 31/10/2026)
                   apres: 88,
                   garderAvecSuivant: true,
@@ -510,7 +623,7 @@ export async function noteWord(n: NoteWord, avecVisas = true): Promise<Buffer> {
               ],
             }),
             new TableCell({
-              children: [p(e.signataireNom, { gras: true })],
+              children: [p(e.signataireNom, { gras: true, retrait })],
               verticalAlign: VerticalAlign.TOP,
             }),
           ],

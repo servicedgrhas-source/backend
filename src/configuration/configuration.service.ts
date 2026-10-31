@@ -44,6 +44,21 @@ export interface RegleDto {
   gradeCode: string | null;
 }
 
+/**
+ * Personnes sans diplôme (DG, 31/10/2026) : elles vont dans l'administration (note du personnel
+ * administratif). Pas de grade par défaut : les grades rattachés à « Sans diplôme » se donnent
+ * personne par personne.
+ */
+export const SANS_DIPLOME = 'SANS_DIPLOME';
+const REGLE_SANS_DIPLOME = {
+  code: SANS_DIPLOME,
+  libelle: 'Sans diplôme',
+  cycle: 'ADMINISTRATION',
+  typeNote: 'PERS_ADM',
+  gradeCode: null,
+  ecritures: ['Sans diplôme', 'Néant', 'Aucun diplôme'],
+};
+
 function codeDepuis(texte: string) {
   return cleCompacte(texte).slice(0, 30) || 'X';
 }
@@ -92,6 +107,39 @@ export class ConfigurationService implements OnApplicationBootstrap {
     }
     await this.synchroniserCopies();
     await this.miseAJourDuDG();
+    await this.ajouterSansDiplome();
+  }
+
+  /** La règle « Sans diplôme », ajoutée une fois (supprimée à l'écran, elle ne revient pas). */
+  private async ajouterSansDiplome(toujours = false) {
+    const CLE = 'REGLE_SANS_DIPLOME_20261031';
+    if (!toujours) {
+      const [deja] = await this.regles.query<unknown[]>(
+        'SELECT 1 FROM parametre WHERE cle = $1',
+        [CLE],
+      );
+      if (deja) return;
+    }
+    if (!(await this.regles.findOne({ where: { code: SANS_DIPLOME } }))) {
+      const prises = new Set(
+        (await this.regles.find()).flatMap((r) => r.ecritures.map(cleCompacte)),
+      );
+      await this.regles.insert({
+        ...REGLE_SANS_DIPLOME,
+        ecritures: REGLE_SANS_DIPLOME.ecritures.filter(
+          (e) => !prises.has(cleCompacte(e)),
+        ),
+      });
+    }
+    if (!toujours)
+      await this.regles.query(
+        'INSERT INTO parametre (cle, valeur, description) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING',
+        [
+          CLE,
+          new Date().toISOString(),
+          'Règle « Sans diplôme » ajoutée (personnes sans diplôme, à l’administration)',
+        ],
+      );
   }
 
   /**
@@ -462,6 +510,7 @@ export class ConfigurationService implements OnApplicationBootstrap {
         ecritures: ECRITURES_DEFAUT[r.code] ?? [r.libelle],
       })),
     );
+    await this.ajouterSansDiplome(true);
     await this.synchroniserCopies();
     const bilan = await this.appliquer();
     await this.journal.log(

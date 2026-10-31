@@ -43,6 +43,7 @@ import {
   RegleDiplome,
 } from '../entities';
 import {
+  copieGrade,
   regleDeLAgent,
   deriver,
   estContractuel,
@@ -372,6 +373,14 @@ export class AffectationService {
         | 'dateSignatureTexte'
         | 'contractuelForce'
         | 'anomaliesVerifiees'
+        | 'nomComplet'
+        | 'lieuNaissance'
+        | 'specialite'
+        | 'qualification'
+        | 'cycleBrut'
+        | 'statut'
+        | 'source'
+        | 'observation'
       >
     > & {
       /**
@@ -392,10 +401,22 @@ export class AffectationService {
       where: { agentId: id },
       loadEagerRelations: false,
     });
-    // Déclarer une anomalie vérifiée ne change rien à la note : permis même après validation
-    const seulementVerification = Object.keys(dto).every(
-      (k) => k === 'anomaliesVerifiees' || k === 'masquerCycle',
+    // Ce qui n'est pas imprimé sur la note (anomalie vérifiée, qualification, observation, lieu
+    // de naissance, statut, source) se modifie même après validation
+    const horsNote = new Set([
+      'anomaliesVerifiees',
+      'masquerCycle',
+      'qualification',
+      'observation',
+      'lieuNaissance',
+      'statut',
+      'source',
+    ]);
+    // Seuls les champs envoyés comptent (la validation crée les autres, vides)
+    const envoyes = Object.keys(dto).filter(
+      (k) => (dto as Record<string, unknown>)[k] !== undefined,
     );
+    const seulementVerification = envoyes.every((k) => horsNote.has(k));
     if (aff?.statut === 'AFFECTE' && !seulementVerification)
       throw new BadRequestException(
         'Agent déjà dans une note validée : modification impossible',
@@ -411,6 +432,24 @@ export class AffectationService {
       ...champs
     } = dto;
     const maj: Partial<Agent> = { ...champs };
+    // Textes : espaces retirés, case vidée → null ; le nom garde sa forme de recherche à jour
+    for (const k of [
+      'lieuNaissance',
+      'specialite',
+      'qualification',
+      'cycleBrut',
+      'statut',
+      'source',
+      'observation',
+    ] as const)
+      if (dto[k] !== undefined) maj[k] = (dto[k] ?? '').trim() || null;
+      else delete maj[k];
+    if (dto.nomComplet !== undefined) {
+      const nom = (dto.nomComplet ?? '').replace(/\s+/g, ' ').trim();
+      if (!nom) throw new BadRequestException('Noms et prénoms obligatoires');
+      maj.nomComplet = nom;
+      maj.nomNormalise = normaliser(nom);
+    }
     // Grade : par défaut celui du diplôme, un autre à la demande parmi ceux permis par le diplôme
     const diplome = dto.diplomeCode ?? a.diplomeCode;
     if (gradeCode !== undefined) {
@@ -427,17 +466,7 @@ export class AffectationService {
           where: { code: gradeCode },
         });
         if (!g) throw new NotFoundException('Grade introuvable');
-        maj.gradeChoisi = {
-          code: g.code,
-          abreviation: g.abreviation,
-          libelle: g.libelle,
-          categorie: g.categorie,
-          echelle: g.echelle,
-          echelon: g.echelon,
-          indice: g.indice,
-          par: u.nom,
-          le: new Date().toISOString(),
-        };
+        maj.gradeChoisi = copieGrade(g, u.nom);
       }
     } else if (
       dto.diplomeCode &&
@@ -487,6 +516,21 @@ export class AffectationService {
       anomalies = anomalies.filter((x) => !x.startsWith('Département'));
     if ('diplomeCode' in dto && dto.diplomeCode)
       anomalies = anomalies.filter((x) => !x.startsWith('Diplôme'));
+    // Cycle (comme dans la base) corrigé : l'avertissement suit (sauf s'il a été masqué)
+    if (dto.cycleBrut !== undefined) {
+      const regle = await this.regles.findOne({
+        where: { code: dto.diplomeCode ?? a.diplomeCode ?? '' },
+      });
+      const lu = codeCycle(maj.cycleBrut);
+      const differe = !!regle && !!lu && lu !== regle.cycle;
+      const masque = (
+        maj.anomaliesVerifiees ??
+        a.anomaliesVerifiees ??
+        []
+      ).includes(ANOMALIE_CYCLE);
+      anomalies = anomalies.filter((x) => x !== ANOMALIE_CYCLE);
+      if (differe && !masque) anomalies.push(ANOMALIE_CYCLE);
+    }
     maj.anomalies = anomaliesAJour({ ...a, ...maj, anomalies });
     await this.agents.update(id, maj);
 
@@ -525,9 +569,24 @@ export class AffectationService {
       const regle = await this.regles.findOne({
         where: { code: dto.diplomeCode },
       });
-      if (regle)
-        await this.affectations.update(aff.id, { typeNote: regle.typeNote });
+      if (regle) {
+        // Personnel administratif (« Sans diplôme »…) : structure par défaut, la DDEPPSA du département
+        const depId = dto.departementId ?? aff.departementId;
+        const dep =
+          regle.typeNote === 'PERS_ADM' && !aff.structure && depId
+            ? await this.deps.findOne({ where: { id: depId } })
+            : null;
+        await this.affectations.update(aff.id, {
+          typeNote: regle.typeNote,
+          ...(dep ? { structure: `DDEPPSA ${dep.nom}` } : {}),
+        });
+      }
     }
+    // Spécialité corrigée sur la fiche : l'affectation pas encore dans une note validée la reprend
+    if (aff && aff.statut === 'A_TRAITER' && dto.specialite !== undefined)
+      await this.affectations.update(aff.id, {
+        specialite: maj.specialite ?? null,
+      });
     // Département corrigé dans la base : l'affectation pas encore dans une note validée suit
     // (la note en préparation se recalcule ; une note validée ne change plus)
     if (
@@ -580,7 +639,7 @@ export class AffectationService {
   }
 
   /**
-   * Fiches dont le cycle du fichier diffère de celui du diplôme : celles qui affichent
+   * Fiches dont le cycle du fichier differe de celui du diplôme : celles qui affichent
    * l'avertissement, et celles où il a été masqué (« j'ai vérifié », cycle du fichier gardé).
    */
   async cyclesDifferents() {
@@ -616,7 +675,7 @@ export class AffectationService {
     });
     return {
       aVerifier: lignes.filter((x) => x.alerte).map(fiche),
-      // Masquées : le cycle du fichier diffère toujours (la règle appliquée les a alignées)
+      // Masquées : le cycle du fichier differe toujours (la règle appliquée les a alignées)
       masquees: lignes
         .filter(
           (x) =>
@@ -664,7 +723,7 @@ export class AffectationService {
     return { fiches: n };
   }
 
-  /** Applique la règle du diplôme aux fiches dont le cycle Excel diffère (toutes, ou celles cochées). */
+  /** Applique la règle du diplôme aux fiches dont le cycle Excel differe (toutes, ou celles cochées). */
   async appliquerReglesCycle(u: UtilisateurConnecte, ids?: string[]) {
     const ANOMALIE = ANOMALIE_CYCLE;
     const r = await this.agents.query<unknown[]>(
