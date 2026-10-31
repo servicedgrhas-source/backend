@@ -121,6 +121,13 @@ class DecisionOubliDto {
   @IsOptional() @IsString() @MaxLength(200) precision?: string;
 }
 
+/** Personnes sans lot rangées dans le lot choisi (« Arrêtés — lot VIII »). */
+class RangerLotDto {
+  @IsArray() @ArrayNotEmpty() @IsString({ each: true }) ids: string[];
+  @IsIn(['ARRETE', 'DECRET']) famille: 'ARRETE' | 'DECRET';
+  @IsInt() numero: number;
+}
+
 class FichesDto {
   @IsOptional()
   @IsArray()
@@ -315,6 +322,31 @@ export class AffectationController {
       ...rapport,
     });
     return rapport;
+  }
+
+  /** Personnes sans lot de publication : elles n'entrent dans aucune note. */
+  @Get('recrutes/sans-lot')
+  sansLot() {
+    return this.importation.sansLot();
+  }
+
+  /** À la demande : les personnes cochées sont rangées dans le lot choisi. */
+  @Roles('CHEF_SERVICE', 'DG')
+  @Post('recrutes/sans-lot/ranger')
+  async rangerDansLot(
+    @Utilisateur() u: UtilisateurConnecte,
+    @Body() dto: RangerLotDto,
+  ) {
+    const r = await this.importation.rangerDansLot(
+      dto.ids,
+      dto.famille,
+      dto.numero,
+    );
+    await this.journal.log(u, 'RANGEMENT_SANS_LOT', 'agent', null, {
+      ...r,
+      personnes: dto.ids.length,
+    });
+    return r;
   }
 
   /** Liste des oubliés : personnes ajoutées à la main, contrôlées avant d'entrer dans une note. */

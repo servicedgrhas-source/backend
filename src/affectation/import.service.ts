@@ -722,7 +722,9 @@ export class ImportBaseService {
           ] as const)
             (data as Record<string, unknown>)[k] = ex[k];
         }
-        const avecTexte = !!ex?.textePointeLe || lotNum !== null;
+        // Case lot vide au réimport : le lot déjà connu est gardé (une case vide n'efface rien)
+        const avecTexte =
+          !!ex?.textePointeLe || lotNum !== null || !!ex?.lotPublicationId;
         // Valeurs de la fiche avant la mise à jour : Object.assign écrit dans `ex` lui-même,
         // il faut donc les lire avant, sinon les corrections faites dans le système sont perdues
         const avant = ex
@@ -1138,6 +1140,78 @@ export class ImportBaseService {
       dateReception: lireDate(receptionBrute),
       lotPublicationNumero,
       anomalies,
+    };
+  }
+
+  /**
+   * Personnes sans lot de publication (DG, 31/10/2026) : texte de la FP pas encore reçu, ou lot
+   * illisible dans le fichier. Elles n'ont pas d'affectation et n'entrent dans aucune note.
+   */
+  async sansLot() {
+    const fiches = await this.agents.find({
+      where: { lotPublicationId: IsNull() },
+      order: { nomComplet: 'ASC' },
+    });
+    const regles = new Map((await this.regles.find()).map((r) => [r.code, r]));
+    const illisible = (a: Agent) =>
+      (a.anomalies ?? []).find((x) =>
+        x.startsWith('Lot de publication invalide'),
+      );
+    return {
+      total: fiches.length,
+      meppsa: fiches.filter((a) => a.feuille !== 'QUOTA_AUTRES').length,
+      autres: fiches.filter((a) => a.feuille === 'QUOTA_AUTRES').length,
+      illisibles: fiches.filter((a) => illisible(a)).length,
+      personnes: fiches.map((a) => ({
+        id: a.id,
+        nomComplet: a.nomComplet,
+        dateNaissance: a.dateNaissance,
+        liste:
+          a.feuille === 'QUOTA_AUTRES'
+            ? 'Quota « Autres »'
+            : `Quota ${a.quota ?? 'MEPPSA'}`,
+        diplome:
+          (a.diplomeCode ? regles.get(a.diplomeCode)?.libelle : null) ??
+          a.diplomeBrut,
+        departement: a.departement?.nom ?? null,
+        typeTexte: a.typeTexte,
+        numeroTexte: a.numeroTexte,
+        // « Lot de publication invalide (VIIII) » : ce qui était écrit dans le fichier
+        lotIllisible: illisible(a)?.match(/\((.*)\)/)?.[1] ?? null,
+        oubli: a.oubli,
+      })),
+    };
+  }
+
+  /**
+   * Range les personnes choisies dans un lot du fichier (« Arrêtés — lot VIII »), créé au besoin,
+   * comme l'import : leur affectation est créée pour la note de leur diplôme.
+   */
+  async rangerDansLot(ids: string[], famille: FamilleLot, numero: number) {
+    if (!Number.isInteger(numero) || numero < 1 || numero > 200)
+      throw new BadRequestException('Numéro de lot invalide (de I à CC)');
+    const libres = await this.agents.find({
+      where: { id: In(ids), lotPublicationId: IsNull() },
+      select: ['id'],
+      loadEagerRelations: false,
+    });
+    if (!libres.length)
+      throw new BadRequestException(
+        'Ces personnes ont déjà un lot : rien à ranger.',
+      );
+    const liste = libres.map((a) => a.id);
+    // Le type de texte suit le lot choisi (arrêté ou décret)
+    await this.agents.update({ id: In(liste) }, { typeTexte: famille });
+    await this.lotsReception.rangerParFichier(
+      liste.map((id) => ({ id, famille, numero })),
+    );
+    const affectationsCreees = await this.creerAffectations();
+    // « Lot de publication invalide » n'a plus lieu d'être
+    await this.anomalies.reconcilier(liste);
+    return {
+      ranges: liste.length,
+      lot: `${famille === 'DECRET' ? 'Décrets' : 'Arrêtés'} — lot ${romain(numero)}`,
+      affectationsCreees,
     };
   }
 
