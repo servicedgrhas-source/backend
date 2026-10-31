@@ -1,6 +1,7 @@
 import {
   BadRequestException,
   ForbiddenException,
+  NotFoundException,
   Body,
   Controller,
   Delete,
@@ -197,6 +198,14 @@ export class AffectationController {
 
   /** La fiche et celles qui lui ressemblent, pour les comparer. */
   @Roles(...ROLES_TRAITEMENT)
+  /** Une fiche, pour la corriger (« Modifier » dans la liste des oubliés). */
+  @Get('agents/:id/fiche')
+  async ficheAgent(@Param('id') id: string) {
+    const a = await this.service.ficheAgent(id);
+    if (!a) throw new NotFoundException('Fiche introuvable');
+    return a;
+  }
+
   @Get('agents/:id/doublons')
   candidatsDoublon(@Param('id') id: string) {
     return this.doublons.candidats(id);

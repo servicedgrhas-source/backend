@@ -631,6 +631,11 @@ export class AffectationService {
     return this.agents.findOne({ where: { id } });
   }
 
+  /** Une fiche telle qu'elle est enregistrée (fenêtre « Corriger la fiche »). */
+  ficheAgent(id: string) {
+    return this.agents.findOne({ where: { id } });
+  }
+
   /** Nombre de fiches par anomalie (pour les corrections groupées). */
   async resumeAnomalies() {
     return this.agents.query<{ anomalie: string; n: number }[]>(`
