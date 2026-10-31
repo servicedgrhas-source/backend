@@ -384,8 +384,14 @@ export class ReferentielsService implements OnApplicationBootstrap {
         })
       ).map((r) => ({ valeur: r.code, libelle: r.libelle }));
     else if (liste === 'LIEU_NAISSANCE')
-      l = uniques(
-        (
+      l = uniques([
+        // Les départements du Congo d'abord : la saisie va plus vite (DG, 01/11/2026)
+        ...(await this.deps.find({ order: { ordre: 'ASC' } })).map((d) => ({
+          valeur: d.nom,
+          libelle: d.nom,
+          detail: 'département',
+        })),
+        ...(
           await this.refs.query<{ libelle: string; t: string | null }[]>(
             `SELECT libelle, donnees->>'typeLocalite' AS t FROM referentiel
               WHERE type IN ('VILLE', 'LOCALITE') AND actif
@@ -402,7 +408,7 @@ export class ReferentielsService implements OnApplicationBootstrap {
                 ? 'commune'
                 : 'ville',
         })),
-      );
+      ]);
     else if (liste === 'GRADE')
       l = uniques([
         ...(
