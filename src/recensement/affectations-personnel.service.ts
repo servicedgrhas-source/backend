@@ -10,6 +10,7 @@ import { In, Repository } from 'typeorm';
 import { AffectationService } from '../affectation/affectation.service';
 import { deriver } from '../affectation/calcul';
 import { IndexNoms } from '../common/index-noms';
+import { CATEGORIE } from '../nominations/categories';
 import { libelleLot } from '../common/lots';
 import { JournalService, ParametresService } from '../core/core.service';
 import {
@@ -164,7 +165,9 @@ export class AffectationsPersonnelService implements OnApplicationBootstrap {
     const affectation = await this.notesAffectation();
     // Mutations accordées : la note signée change le lieu de service de la fiche (DG, 31/10/2026)
     const mutation = await this.notesMutation();
-    const bilan = { ...enrolement, ...affectation, ...mutation };
+    // Nomination signée : la fonction et le poste de la fiche suivent (DG, 31/10/2026)
+    const nomination = await this.notesNomination();
+    const bilan = { ...enrolement, ...affectation, ...mutation, ...nomination };
     if (Object.values(bilan).some((n) => n > 0))
       this.log.log(
         `Notes de service → base du personnel : ${bilan.enroles} affectation(s) de volontaire, ${bilan.affectes} affectation(s) après le texte de la FP (${bilan.integres} passé(s) fonctionnaire ou contractuel, ${bilan.crees} fiche(s) créée(s))`,
@@ -268,6 +271,78 @@ export class AffectationsPersonnelService implements OnApplicationBootstrap {
     }
     await this.enregistrer(modifiees);
     return { enroles: modifiees.length };
+  }
+
+  /**
+   * 4. Nomination : la note de nomination signée est reportée sur la fiche du nommé (rattaché à la
+   * base du personnel) : fonction dans la structure (« Directeur de CEG »), nouveau poste comme lieu
+   * de service, département, ligne des affectations successives. « Fonction / profession » (sa
+   * qualification) ne change pas. Un nommé sans fiche n'est pas reporté (à rattacher).
+   */
+  private async notesNomination() {
+    const lignes = await this.agents.query<
+      {
+        nomination: number;
+        agentId: number;
+        noteId: string;
+        numero: string | null;
+        reference: string | null;
+        dateSignature: string | null;
+        categorie: string;
+        poste: string | null;
+        depCode: string | null;
+      }[]
+    >(
+      `SELECT x.id AS nomination, x."agentId", n.id AS "noteId", n.numero, n.contenu->'entete'->>'reference' AS reference,
+              to_char(n."dateSignature", 'YYYY-MM-DD') AS "dateSignature", x.categorie,
+              x."nouveauPoste" AS poste, dep.code AS "depCode"
+         FROM nomination x
+         JOIN note_service n ON n.id = x."noteId" AND n.statut = 'SIGNEE' AND n.module = 'NOMINATION'
+         LEFT JOIN departement dep ON dep.id = x."departementId"
+        WHERE x."agentId" IS NOT NULL AND x.observation <> 'RELEVE'
+        ORDER BY n."dateSignature" NULLS LAST, x.id`,
+    );
+    if (!lignes.length) return { nommes: 0 };
+    const c = this.rec.config.get();
+    const valeur = (code: string, v: unknown) => {
+      const ch = c.champs.find((x) => x.code === code && x.actif);
+      if (!ch || estVide(v)) return undefined;
+      const lu = lireValeur(ch, v);
+      return lu.erreur || estVide(lu.valeur) ? undefined : lu.valeur;
+    };
+    const fiches = new Map(
+      (
+        await this.agents.find({
+          where: { id: In([...new Set(lignes.map((l) => l.agentId))]) },
+        })
+      ).map((a) => [a.id, a]),
+    );
+    const modifiees = new Map<number, AgentRecense>();
+    for (const l of lignes) {
+      const a = fiches.get(l.agentId);
+      if (!a) continue;
+      const fonction = CATEGORIE.get(l.categorie)?.libelle ?? null;
+      const cle = `NOMINATION:${l.noteId}:${l.nomination}`;
+      const note = `${referenceComplete(l.numero, l.reference ?? this.params.get('REFERENCE_NOTE'), l.dateSignature)} (nomination${fonction ? ` : ${fonction}` : ''})`;
+      if (this.dejaFait(a, cle, note)) continue;
+      for (const [k, v] of Object.entries({
+        FONCTION_STRUCTURE: fonction,
+        LIEU_SERVICE: l.poste,
+        DEPARTEMENT: l.depCode,
+      })) {
+        const x = valeur(k, v);
+        if (x !== undefined) a.donnees[k] = x;
+      }
+      this.ajouterLigne(a, cle, {
+        NOTE: note,
+        DATE: l.dateSignature ?? undefined,
+        LIEU: l.poste ?? undefined,
+      });
+      a.modifiePar = SOURCE;
+      modifiees.set(a.id, a);
+    }
+    await this.enregistrer([...modifiees.values()]);
+    return { nommes: modifiees.size };
   }
 
   /**

@@ -235,6 +235,7 @@ export class AffectationController {
     @UploadedFile() fichier?: Express.Multer.File,
     @Body('groupe') groupe?: string,
     @Body('feuilles') feuilles?: string,
+    @Body('memes') memes?: string,
   ) {
     if (!fichier) throw new BadRequestException('Fichier Excel manquant');
     if (!/\.xlsx$/i.test(fichier.originalname))
@@ -244,6 +245,8 @@ export class AffectationController {
     const rapport = await this.importation.importer(fichier.buffer, {
       groupe: groupe as 'MEPPSA' | 'AUTRES' | undefined,
       feuilles: feuilles ? (JSON.parse(feuilles) as string[]) : undefined,
+      // Doutes cochés « même personne » à l'aperçu : « feuille|ligne » → fiche
+      memes: memes ? (JSON.parse(memes) as Record<string, string>) : undefined,
     });
     await this.journal.log(u, 'IMPORT_BASE_RECRUTEMENT', 'agent', null, {
       fichier: fichier.originalname,
@@ -258,11 +261,17 @@ export class AffectationController {
   @UseInterceptors(
     FileInterceptor('fichier', { limits: { fileSize: 40 * 1024 * 1024 } }),
   )
-  apercuBase(@UploadedFile() fichier?: Express.Multer.File) {
+  apercuBase(
+    @UploadedFile() fichier?: Express.Multer.File,
+    @Body('groupe') groupe?: string,
+  ) {
     if (!fichier) throw new BadRequestException('Fichier Excel manquant');
     if (!/\.xlsx$/i.test(fichier.originalname))
       throw new BadRequestException('Seuls les fichiers .xlsx sont acceptés');
-    return this.importation.apercu(fichier.buffer);
+    return this.importation.apercu(
+      fichier.buffer,
+      groupe === 'MEPPSA' || groupe === 'AUTRES' ? groupe : undefined,
+    );
   }
 
   @Get('lots')

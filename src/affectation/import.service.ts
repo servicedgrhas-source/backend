@@ -7,9 +7,11 @@ import {
   RESSEMBLE,
   TEXTE_PARTAGE,
 } from '../common/anomalies';
+import { IndexNoms } from '../common/index-noms';
 import { motsDuNom, ressemblance } from '../common/ressemblance';
 import {
   type FamilleLot,
+  libelleLot,
   romain,
   sqlGroupeQuota,
   sqlLibelleLot,
@@ -42,6 +44,8 @@ export interface RapportImport {
   ignorees: number;
   /** Lignes d'une personne déjà lue dans une autre feuille : réunies en une seule fiche. */
   fusionnees: number;
+  /** Doutes tranchés « même personne » à l'aperçu : fiches mises à jour au lieu d'en créer. */
+  memesConfirmees: number;
   /** Fiches déjà enregistrées dont le fichier a rempli des cases vides (spécialité, date…). */
   fichesCompletees: number;
   /** Nombre de cases remplies ainsi, par champ (« Spécialité » : 12…). */
@@ -194,12 +198,72 @@ export class ImportBaseService {
    * publication (« Arrêtés VIII : 53 ») et les personnes déjà vues dans une feuille précédente.
    * Aucun nom n'est renvoyé.
    */
-  async apercu(contenu: Buffer) {
+  async apercu(contenu: Buffer, groupe?: 'MEPPSA' | 'AUTRES') {
     const feuilles = await lireClasseur(contenu, ['NOMSETPRENOMS', 'DIPLOME']);
     if (!feuilles.length)
       throw new BadRequestException(
         "Aucune feuille visible avec les colonnes « Noms et prénoms » et « Diplôme » n'a été trouvée.",
       );
+    // Ce que l'import fera de chaque ligne : fiche retrouvée (mise à jour), nouvelle, ou doute
+    const ctx = await this.contexte();
+    const fiche = (a: Agent) => ({
+      id: a.id,
+      nomComplet: a.nomComplet,
+      dateNaissance: a.dateNaissance,
+      liste:
+        a.feuille === 'QUOTA_AUTRES'
+          ? 'Quota « Autres »'
+          : `Quota ${a.quota ?? '?'}`,
+      diplome: a.diplomeBrut,
+      departement: a.departement?.nom ?? a.departementBrut,
+      texte: a.numeroTexte,
+      lot: a.lotPublication ? libelleLot(a.lotPublication) : null,
+    });
+    const doutes: {
+      cle: string;
+      feuille: string;
+      ligne: number;
+      nomComplet: string;
+      dateNaissance: string | null;
+      diplome: string | null;
+      departement: string | null;
+      texte: string | null;
+      candidats: ReturnType<typeof fiche>[];
+    }[] = [];
+    const etat = new Map<
+      string,
+      { retrouvees: number; nouvelles: number; doutes: number }
+    >();
+    for (const f of feuilles) {
+      const quotaAutres = groupe ? groupe === 'AUTRES' : feuilleAutres(f.nom);
+      const e = { retrouvees: 0, nouvelles: 0, doutes: 0 };
+      etat.set(f.nom, e);
+      for (const l of f.lignes) {
+        if (!nettoyer(champ(l, 'NOMSETPRENOMS'))) continue;
+        const data = this.lireLigne(l, quotaAutres, ctx.deps, ctx.regles);
+        if (this.ficheSure(data, ctx)) {
+          e.retrouvees++;
+          continue;
+        }
+        const c = this.fichesDouteuses(data, ctx);
+        if (!c.length) {
+          e.nouvelles++;
+          continue;
+        }
+        e.doutes++;
+        doutes.push({
+          cle: `${f.nom}|${l._ligne}`,
+          feuille: f.nom,
+          ligne: l._ligne,
+          nomComplet: data.nomComplet!,
+          dateNaissance: data.dateNaissance ?? null,
+          diplome: data.diplomeBrut ?? null,
+          departement: data.departementBrut ?? null,
+          texte: data.numeroTexte ?? null,
+          candidats: c.slice(0, 4).map(fiche),
+        });
+      }
+    }
     const vues = new Set<string>();
     const res = feuilles.map((f) => {
       const lots: Record<string, number> = {};
@@ -239,6 +303,7 @@ export class ImportBaseService {
       return {
         nom: f.nom,
         lignes,
+        ...etat.get(f.nom),
         groupe: feuilleAutres(f.nom) ? 'AUTRES' : 'MEPPSA',
         avecDepartement,
         dejaVues,
@@ -248,7 +313,7 @@ export class ImportBaseService {
           .map(([libelle, n]) => ({ libelle, n })),
       };
     });
-    return { feuilles: res, personnes: vues.size };
+    return { feuilles: res, personnes: vues.size, doutes };
   }
 
   /**
@@ -256,9 +321,75 @@ export class ImportBaseService {
    * quota « Autres » (avec ou sans département) ; on peut ne prendre que certaines feuilles. Chaque
    * personne est rangée dans le lot de publication écrit dans le fichier (« Arrêtés — lot VIII »).
    */
+  /** Les fiches déjà enregistrées, rangées pour retrouver une personne du fichier. */
+  private async contexte() {
+    const deps = new Map((await this.deps.find()).map((d) => [d.code, d]));
+    const regles = new Map((await this.regles.find()).map((r) => [r.code, r]));
+    const tous = await this.agents.find();
+    const existants = new Map(tous.map((a) => [a.cle, a]));
+    const parId = new Map(tous.map((a) => [a.id, a]));
+    const parNom = new Map<string, Agent[]>();
+    const index = new IndexNoms<Agent>();
+    for (const a of tous) {
+      const k = `${a.feuille}|${a.nomNormalise}`;
+      (parNom.get(k) ?? parNom.set(k, []).get(k)!).push(a);
+      index.ajouter(a.nomComplet, a.dateNaissance, a);
+    }
+    // Fiches saisies dans le système, retrouvées par nom + date de naissance
+    const saisies = new Map(
+      tous
+        .filter((a) => a.origineFiche === 'SAISIE')
+        .map((a) => [`${a.nomNormalise}|${a.dateNaissance}`, a]),
+    );
+    return { deps, regles, existants, parId, parNom, index, saisies };
+  }
+
+  /**
+   * La fiche existante d'une ligne du fichier, quand on est sûr : même clé ; fiche saisie au même
+   * nom et à la même date ; même nom et même feuille avec la même date ou le même n° de texte.
+   */
+  private ficheSure(
+    data: LigneLue,
+    ctx: Awaited<ReturnType<ImportBaseService['contexte']>>,
+  ): string | null {
+    if (ctx.existants.has(data.cle!)) return data.cle!;
+    const s = ctx.saisies.get(`${data.nomNormalise}|${data.dateNaissance}`);
+    if (s) return s.cle;
+    const t = cleTexte(data.numeroTexte);
+    const c = (
+      ctx.parNom.get(`${data.feuille}|${data.nomNormalise}`) ?? []
+    ).filter(
+      (x) =>
+        (!!data.dateNaissance && x.dateNaissance === data.dateNaissance) ||
+        (!!t && cleTexte(x.numeroTexte) === t),
+    );
+    return c.length === 1 ? c[0].cle : null;
+  }
+
+  /**
+   * Doute (DG, 31/10/2026) : pas de fiche sûre, mais des fiches qui ressemblent (nom proche et même
+   * date, même nom sans date, ou même nom écrit pareil avec une autre date). À la personne qui
+   * importe de dire « même personne : mettre à jour » ; sinon une nouvelle fiche est créée.
+   */
+  private fichesDouteuses(
+    data: LigneLue,
+    ctx: Awaited<ReturnType<ImportBaseService['contexte']>>,
+  ) {
+    const vus = new Set<string>();
+    return [
+      ...ctx.index.probables(data.nomComplet!, data.dateNaissance ?? null),
+      ...ctx.index.memesNoms(data.nomComplet!),
+    ].filter((a) => !vus.has(a.id) && !!vus.add(a.id));
+  }
+
   async importer(
     contenu: Buffer,
-    options: { groupe?: 'MEPPSA' | 'AUTRES'; feuilles?: string[] } = {},
+    options: {
+      groupe?: 'MEPPSA' | 'AUTRES';
+      feuilles?: string[];
+      /** Doutes tranchés à l'aperçu : « feuille|n° de ligne » → fiche à mettre à jour. */
+      memes?: Record<string, string>;
+    } = {},
   ): Promise<RapportImport> {
     const toutes = await lireClasseur(contenu, ['NOMSETPRENOMS', 'DIPLOME']);
     if (!toutes.length)
@@ -271,22 +402,8 @@ export class ImportBaseService {
     if (!feuilles.length)
       throw new BadRequestException('Aucune des feuilles choisies.');
 
-    const deps = new Map((await this.deps.find()).map((d) => [d.code, d]));
-    const regles = new Map((await this.regles.find()).map((r) => [r.code, r]));
-    const existants = new Map(
-      (await this.agents.find()).map((a) => [a.cle, a]),
-    );
-    const parNom = new Map<string, Agent[]>();
-    for (const a of existants.values()) {
-      const k = `${a.feuille}|${a.nomNormalise}`;
-      (parNom.get(k) ?? parNom.set(k, []).get(k)!).push(a);
-    }
-    // Fiches saisies dans le système, retrouvées par nom + date de naissance
-    const saisies = new Map(
-      [...existants.values()]
-        .filter((a) => a.origineFiche === 'SAISIE')
-        .map((a) => [`${a.nomNormalise}|${a.dateNaissance}`, a]),
-    );
+    const ctx = await this.contexte();
+    const { deps, regles, existants } = ctx;
     // Personnes à ranger dans le lot de publication du fichier
     const aRanger: { agent: Agent; famille: FamilleLot; numero: number }[] = [];
 
@@ -297,6 +414,7 @@ export class ImportBaseService {
       misAJour: 0,
       ignorees: 0,
       fusionnees: 0,
+      memesConfirmees: 0,
       fichesCompletees: 0,
       champsCompletes: {},
       groupe: options.groupe ?? null,
@@ -324,24 +442,19 @@ export class ImportBaseService {
         }
         rapport.lignesLues++;
         const data = this.lireLigne(l, quotaAutres, deps, regles);
-        let cle = data.cle!;
-        if (!existants.has(cle)) {
-          const s = saisies.get(`${data.nomNormalise}|${data.dateNaissance}`);
-          if (s) cle = s.cle;
-          else {
-            // Fiche d'une base précédente sous une autre clé (date de naissance corrigée ou
-            // absente, autre n° d'ordre) : même nom, même feuille, et même date ou même texte
-            const t = cleTexte(data.numeroTexte);
-            const c = (
-              parNom.get(`${data.feuille}|${data.nomNormalise}`) ?? []
-            ).filter(
-              (x) =>
-                (!!data.dateNaissance &&
-                  x.dateNaissance === data.dateNaissance) ||
-                (!!t && cleTexte(x.numeroTexte) === t),
-            );
-            if (c.length === 1) cle = c[0].cle;
-          }
+        // « Même personne » coché à l'aperçu : la fiche choisie est mise à jour
+        const choisie = options.memes?.[`${f.nom}|${l._ligne}`];
+        const cle =
+          (choisie ? ctx.parId.get(choisie)?.cle : null) ??
+          this.ficheSure(data, ctx) ??
+          data.cle!;
+        const confirmee = choisie ? ctx.parId.get(choisie) : undefined;
+        if (confirmee) {
+          rapport.memesConfirmees++;
+          // Même personne : ses informations sont complétées, sa liste (quota) ne change pas
+          data.feuille = confirmee.feuille;
+          data.quota = confirmee.quota;
+          data.numeroOrdre = confirmee.numeroOrdre ?? data.numeroOrdre;
         }
         data.cle = cle;
         const deja = lues.get(cle);
