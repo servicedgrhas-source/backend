@@ -7,7 +7,11 @@ import {
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { In, Repository } from 'typeorm';
-import { estContractuel, salaireBrut } from '../affectation/calcul';
+import {
+  estContractuel,
+  regleDeLAgent,
+  salaireBrut,
+} from '../affectation/calcul';
 import { AffectationService } from '../affectation/affectation.service';
 import type { UtilisateurConnecte } from '../auth/auth';
 import {
@@ -147,13 +151,17 @@ export class PilotageService {
     // Validées, pas encore parties : ce que coûtera le prochain envoi à la FP
     const pretes = { effectif: 0, annuel: 0 };
     for (const a of comptes) {
-      const r = a.diplomeCode ? regles.get(a.diplomeCode) : undefined;
+      const r = regleDeLAgent(a, regles);
       const s = salaireBrut(r?.indice, p) ?? 0;
       if (!r?.indice) sansIndice++;
-      const cle = r?.code ?? `?${a.diplomeBrut ?? ''}`;
+      // Grade choisi à la demande : une ligne à part (autre catégorie, autre indice)
+      const cle = r
+        ? `${r.code}|${a.gradeChoisi?.code ?? ''}`
+        : `?${a.diplomeBrut ?? ''}`;
       const d = parDiplome.get(cle) ?? {
-        diplome:
-          r?.libelle ?? `${a.diplomeBrut ?? 'Diplôme inconnu'} (non reconnu)`,
+        diplome: r
+          ? `${r.libelle}${a.gradeChoisi ? ` (grade ${a.gradeChoisi.abreviation})` : ''}`
+          : `${a.diplomeBrut ?? 'Diplôme inconnu'} (non reconnu)`,
         categorie: r?.categorie ?? null,
         echelle: r?.echelle ?? null,
         indice: r?.indice ?? null,

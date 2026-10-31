@@ -24,6 +24,7 @@ import {
   IsString,
   Matches,
   MaxLength,
+  ValidateIf,
 } from 'class-validator';
 import {
   Roles,
@@ -67,6 +68,37 @@ class AgentDto {
   anomaliesVerifiees?: string[];
   /** Cycle différent du diplôme : avertissement masqué, cycle du fichier gardé. */
   @IsOptional() @IsBoolean() masquerCycle?: boolean;
+  /** Grade à la demande (un des autres grades du diplôme) ; null : grade par défaut. */
+  @IsOptional()
+  @ValidateIf((_, v) => v !== null)
+  @IsString()
+  gradeCode?: string | null;
+}
+
+/** Personne ajoutée à la main dans la base des recrutés (mêmes colonnes que le fichier). */
+class FicheManuelleDto {
+  @IsIn(['MEPPSA', 'AUTRES']) groupe: 'MEPPSA' | 'AUTRES';
+  @IsString() @MaxLength(200) nomComplet: string;
+  @Matches(DATE) dateNaissance: string;
+  @IsOptional() @IsString() @MaxLength(120) lieuNaissance?: string | null;
+  @IsString() @MaxLength(40) diplomeCode: string;
+  @IsOptional() @IsString() @MaxLength(80) departement?: string | null;
+  @IsOptional() @IsString() @MaxLength(80) source?: string | null;
+  @IsOptional() @IsString() @MaxLength(40) cycle?: string | null;
+  @IsOptional() @IsString() @MaxLength(200) specialite?: string | null;
+  @IsOptional() @IsString() @MaxLength(200) qualification?: string | null;
+  @IsOptional() @IsString() @MaxLength(80) statut?: string | null;
+  @IsOptional() @IsIn(['ARRETE', 'DECRET']) typeTexte?: 'ARRETE' | 'DECRET';
+  @IsOptional() @IsString() @MaxLength(40) numeroTexte?: string | null;
+  @IsOptional() @IsString() @MaxLength(10) lot?: string | null;
+  @IsOptional() @Matches(DATE) dateSignatureTexte?: string | null;
+  @IsOptional() @IsInt() quota?: number | null;
+  @IsOptional() @IsInt() numeroOrdre?: number | null;
+  @IsOptional() @IsString() @MaxLength(500) observation?: string | null;
+  /** Doute tranché : la fiche existante qui est la même personne. */
+  @IsOptional() @IsString() meme?: string | null;
+  /** Doute tranché : ce n'est pas la même personne, une nouvelle fiche est créée. */
+  @IsOptional() @IsBoolean() autrePersonne?: boolean;
 }
 
 class FichesDto {
@@ -262,6 +294,35 @@ export class AffectationController {
       ...rapport,
     });
     return rapport;
+  }
+
+  /** Ajout manuel : ce que le système fera de la personne, avant de l'enregistrer. */
+  @Roles('CHEF_SERVICE', 'DG')
+  @Post('recrutes/manuel/verifier')
+  verifierManuelle(@Body() dto: FicheManuelleDto) {
+    const { groupe, ...fiche } = dto;
+    return this.importation.verifierManuelle(fiche, groupe);
+  }
+
+  /** Ajout manuel d'une personne, sans fichier Excel : mêmes contrôles qu'une ligne du fichier. */
+  @Roles('CHEF_SERVICE', 'DG')
+  @Post('recrutes/manuel')
+  async ajouterManuelle(
+    @Utilisateur() u: UtilisateurConnecte,
+    @Body() dto: FicheManuelleDto,
+  ) {
+    const { groupe, meme, autrePersonne, ...fiche } = dto;
+    const r = await this.importation.ajouterManuelle(fiche, groupe, {
+      meme,
+      autrePersonne,
+    });
+    await this.journal.log(u, 'AJOUT_MANUEL_RECRUTE', 'agent', r.id, {
+      groupe,
+      cree: r.cree,
+      meme: meme ?? null,
+      lot: r.lot,
+    });
+    return r;
   }
 
   /** Feuilles du classeur, leurs lignes et leurs lots, avant l'import (aucun nom). */

@@ -29,7 +29,6 @@ import {
   type Cycle,
 } from '../common/referentiels';
 
-const ANOMALIE_CYCLE = 'Cycle de la base différent de celui du diplôme';
 import { normaliser } from '../common/texte';
 import { JournalService, ParametresService } from '../core/core.service';
 import {
@@ -40,14 +39,18 @@ import {
   PaquetReception,
   Recommandation,
   ReferenceNote,
+  Grade,
   RegleDiplome,
 } from '../entities';
 import {
+  regleDeLAgent,
   deriver,
   estContractuel,
   referenceTexte,
   type ParametresCalcul,
 } from './calcul';
+
+const ANOMALIE_CYCLE = 'Cycle de la base différent de celui du diplôme';
 
 export interface FiltreAffectations {
   lot?: number;
@@ -326,11 +329,7 @@ export class AffectationService {
         ...a,
         // Seulement ce qui est encore vrai d'après la fiche (jamais un message périmé)
         anomalies: anomaliesAJour(a, (c) => regles.get(c)?.cycle),
-        ...estContractuel(
-          a,
-          p,
-          a.diplomeCode ? regles.get(a.diplomeCode)?.categorie : null,
-        ),
+        ...estContractuel(a, p, regleDeLAgent(a, regles)?.categorie),
         reference: referenceTexte(a).reference,
       })),
     };
@@ -380,6 +379,11 @@ export class AffectationService {
        * cycle du fichier gardé (BEPC d'un homme envoyé à l'administration, DG 31/10/2026).
        */
       masquerCycle?: boolean;
+      /**
+       * Grade à la demande (DG, 31/10/2026) : un des autres grades possibles du diplôme ; null ou
+       * le grade par défaut : retour au grade par défaut du diplôme.
+       */
+      gradeCode?: string | null;
     },
   ) {
     const a = await this.agents.findOne({ where: { id } });
@@ -400,8 +404,53 @@ export class AffectationService {
     const avant: Record<string, unknown> = {};
     for (const k of Object.keys(dto))
       avant[k] = (a as unknown as Record<string, unknown>)[k];
-    const { anomaliesVerifiees: verifiees, masquerCycle, ...champs } = dto;
+    const {
+      anomaliesVerifiees: verifiees,
+      masquerCycle,
+      gradeCode,
+      ...champs
+    } = dto;
     const maj: Partial<Agent> = { ...champs };
+    // Grade : par défaut celui du diplôme, un autre à la demande parmi ceux permis par le diplôme
+    const diplome = dto.diplomeCode ?? a.diplomeCode;
+    if (gradeCode !== undefined) {
+      const regle = diplome
+        ? await this.regles.findOne({ where: { code: diplome } })
+        : null;
+      if (!gradeCode || gradeCode === regle?.gradeCode) maj.gradeChoisi = null;
+      else {
+        if (!regle?.gradesAutres?.includes(gradeCode))
+          throw new BadRequestException(
+            'Ce grade n’est pas permis pour ce diplôme (Règles des diplômes et grades)',
+          );
+        const g = await this.regles.manager.findOne(Grade, {
+          where: { code: gradeCode },
+        });
+        if (!g) throw new NotFoundException('Grade introuvable');
+        maj.gradeChoisi = {
+          code: g.code,
+          abreviation: g.abreviation,
+          libelle: g.libelle,
+          categorie: g.categorie,
+          echelle: g.echelle,
+          echelon: g.echelon,
+          indice: g.indice,
+          par: u.nom,
+          le: new Date().toISOString(),
+        };
+      }
+    } else if (
+      dto.diplomeCode &&
+      dto.diplomeCode !== a.diplomeCode &&
+      a.gradeChoisi
+    ) {
+      // Autre diplôme : le grade choisi pour l'ancien ne vaut plus, retour au grade par défaut
+      const regle = await this.regles.findOne({
+        where: { code: dto.diplomeCode },
+      });
+      if (!regle?.gradesAutres?.includes(a.gradeChoisi.code))
+        maj.gradeChoisi = null;
+    }
     // Les anomalies corrigées à la main disparaissent
     let anomalies = a.anomalies ?? [];
     if (masquerCycle) {

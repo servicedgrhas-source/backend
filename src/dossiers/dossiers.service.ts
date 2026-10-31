@@ -8,6 +8,7 @@ import {
   estContractuel,
   gradeAffiche,
   referenceTexte,
+  regleDeLAgent,
 } from '../affectation/calcul';
 import { libelleLot, libellePaquet } from '../common/lots';
 import {
@@ -139,7 +140,7 @@ export class DossiersService {
       attente: compte?.attente ?? 0,
       recus: compte?.recus ?? 0,
       items: items.map((a) => {
-        const r = a.diplomeCode ? regles.get(a.diplomeCode) : undefined;
+        const r = regleDeLAgent(a, regles);
         const c = estContractuel(a, p, r?.categorie);
         return {
           id: a.id,
@@ -320,7 +321,7 @@ export class DossiersService {
     if (!a) throw new NotFoundException('Dossier introuvable');
     const regles = await this.affSvc.reglesParCode();
     const p = this.affSvc.parametresCalcul();
-    const r = a.diplomeCode ? regles.get(a.diplomeCode) : undefined;
+    const r = regleDeLAgent(a, regles);
     const c = estContractuel(a, p, r?.categorie);
     const aff = await this.affectations.findOne({
       where: { agentId: id },

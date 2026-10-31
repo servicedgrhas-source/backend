@@ -18,14 +18,27 @@ import {
 } from '../common/lots';
 import { LotsReceptionService } from './lots-reception.service';
 import { SPECIALITE_DU_CYCLE } from './doublons.service';
-import { BadRequestException, Injectable } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { In, IsNull, Not, Repository } from 'typeorm';
-import { champ, lireClasseur, type Ligne } from '../common/excel';
 import {
+  champ,
+  type FeuilleLue,
+  lireClasseur,
+  type Ligne,
+} from '../common/excel';
+import {
+  type Cycle,
   codeCycle,
   codeDepartement,
+  LIBELLE_CYCLE,
+  NOTES_AFFECTATION,
   reconnaitreDiplome,
+  type TypeNoteAffectation,
 } from '../common/referentiels';
 import {
   cleCompacte,
@@ -172,6 +185,34 @@ export function fusionner(a: LigneLue, b: LigneLue) {
   });
 }
 
+/**
+ * Personne ajoutée à la main dans la base des recrutés, sans fichier Excel (DG, 31/10/2026) : elle
+ * passe par la même lecture et les mêmes vérifications qu'une ligne du fichier.
+ */
+export interface FicheManuelle {
+  nomComplet: string;
+  dateNaissance: string;
+  lieuNaissance?: string | null;
+  diplomeCode: string;
+  departement?: string | null;
+  source?: string | null;
+  cycle?: string | null;
+  specialite?: string | null;
+  qualification?: string | null;
+  statut?: string | null;
+  typeTexte?: 'ARRETE' | 'DECRET' | null;
+  numeroTexte?: string | null;
+  /** Lot de publication, en chiffres romains (« VIII ») ou arabes. */
+  lot?: string | null;
+  dateSignatureTexte?: string | null;
+  quota?: number | null;
+  numeroOrdre?: number | null;
+  observation?: string | null;
+}
+
+/** Nom de la « feuille » d'une saisie manuelle (journal, doutes). */
+export const FEUILLE_MANUELLE = 'Saisie manuelle';
+
 function typeTexte(v: unknown): 'ARRETE' | 'DECRET' | null {
   const k = cleCompacte(v);
   if (k.startsWith('ARRET')) return 'ARRETE';
@@ -198,27 +239,15 @@ export class ImportBaseService {
    * publication (« Arrêtés VIII : 53 ») et les personnes déjà vues dans une feuille précédente.
    * Aucun nom n'est renvoyé.
    */
-  async apercu(contenu: Buffer, groupe?: 'MEPPSA' | 'AUTRES') {
-    const feuilles = await lireClasseur(contenu, ['NOMSETPRENOMS', 'DIPLOME']);
+  async apercu(contenu: Buffer | FeuilleLue[], groupe?: 'MEPPSA' | 'AUTRES') {
+    const feuilles = await this.feuillesDe(contenu);
     if (!feuilles.length)
       throw new BadRequestException(
         "Aucune feuille visible avec les colonnes « Noms et prénoms » et « Diplôme » n'a été trouvée.",
       );
     // Ce que l'import fera de chaque ligne : fiche retrouvée (mise à jour), nouvelle, ou doute
     const ctx = await this.contexte();
-    const fiche = (a: Agent) => ({
-      id: a.id,
-      nomComplet: a.nomComplet,
-      dateNaissance: a.dateNaissance,
-      liste:
-        a.feuille === 'QUOTA_AUTRES'
-          ? 'Quota « Autres »'
-          : `Quota ${a.quota ?? '?'}`,
-      diplome: a.diplomeBrut,
-      departement: a.departement?.nom ?? a.departementBrut,
-      texte: a.numeroTexte,
-      lot: a.lotPublication ? libelleLot(a.lotPublication) : null,
-    });
+    const fiche = (a: Agent) => this.resume(a);
     const doutes: {
       cle: string;
       feuille: string;
@@ -322,6 +351,162 @@ export class ImportBaseService {
    * personne est rangée dans le lot de publication écrit dans le fichier (« Arrêtés — lot VIII »).
    */
   /** Les fiches déjà enregistrées, rangées pour retrouver une personne du fichier. */
+  private async feuillesDe(contenu: Buffer | FeuilleLue[]) {
+    return Array.isArray(contenu)
+      ? contenu
+      : lireClasseur(contenu, ['NOMSETPRENOMS', 'DIPLOME']);
+  }
+
+  /** Une fiche existante, telle que montrée pour trancher un doute. */
+  private resume(a: Agent) {
+    return {
+      id: a.id,
+      nomComplet: a.nomComplet,
+      dateNaissance: a.dateNaissance,
+      liste:
+        a.feuille === 'QUOTA_AUTRES'
+          ? 'Quota « Autres »'
+          : `Quota ${a.quota ?? '?'}`,
+      diplome: a.diplomeBrut,
+      departement: a.departement?.nom ?? a.departementBrut,
+      texte: a.numeroTexte,
+      lot: a.lotPublication ? libelleLot(a.lotPublication) : null,
+    };
+  }
+
+  /** La saisie manuelle écrite comme une ligne du fichier Excel (mêmes colonnes). */
+  private async ligneManuelle(f: FicheManuelle): Promise<FeuilleLue[]> {
+    const nom = nettoyer(f.nomComplet);
+    if (!nom) throw new BadRequestException('Noms et prénoms obligatoires');
+    if (!lireDate(f.dateNaissance))
+      throw new BadRequestException('Date de naissance obligatoire');
+    const regle = await this.regles.findOne({ where: { code: f.diplomeCode } });
+    if (!regle) throw new BadRequestException('Diplôme inconnu');
+    const ligne: Ligne = {
+      _ligne: 1,
+      NOMSETPRENOMS: nom,
+      DATEDENAIS: f.dateNaissance,
+      LIEUDENAIS: f.lieuNaissance ?? null,
+      // Écrit comme dans le fichier : la reconnaissance du diplôme est la même
+      DIPLOME: regle.ecritures?.[0] ?? regle.libelle,
+      DEPARTEMENT: f.departement ?? null,
+      SOURCE: f.source ?? null,
+      CYCLE: f.cycle ?? null,
+      SPECIALITE: f.specialite ?? null,
+      QUALIFICATION: f.qualification ?? null,
+      STATUT: f.statut ?? null,
+      TYPEDETEXTE:
+        f.typeTexte === 'DECRET'
+          ? 'Décret'
+          : f.typeTexte === 'ARRETE'
+            ? 'Arrêté'
+            : null,
+      NTEXTE: f.numeroTexte ?? null,
+      LOTDEPUBLICAT: f.lot ?? null,
+      DATEDESIGNATURE: f.dateSignatureTexte ?? null,
+      QUOTA: f.quota ?? null,
+      NDORDRE: f.numeroOrdre ?? null,
+      OBS: f.observation ?? null,
+    };
+    return [{ nom: FEUILLE_MANUELLE, lignes: [ligne], entetes: [] }];
+  }
+
+  /**
+   * Avant l'ajout manuel : ce que le système fera de la personne. Fiche déjà enregistrée (mise à
+   * jour), fiches qui lui ressemblent (à trancher), anomalies, cycle, note et lot qu'elle rejoindra.
+   */
+  async verifierManuelle(f: FicheManuelle, groupe: 'MEPPSA' | 'AUTRES') {
+    const feuilles = await this.ligneManuelle(f);
+    const ctx = await this.contexte();
+    const data = this.lireLigne(
+      feuilles[0].lignes[0],
+      groupe === 'AUTRES',
+      ctx.deps,
+      ctx.regles,
+    );
+    const sure = this.ficheSure(data, ctx);
+    const existante = sure ? ctx.existants.get(sure) : undefined;
+    const regle = data.diplomeCode
+      ? ctx.regles.get(data.diplomeCode)
+      : undefined;
+    const typeNote = regle?.typeNote as TypeNoteAffectation | undefined;
+    const n = data.lotPublicationNumero;
+    return {
+      existante: existante ? this.resume(existante) : null,
+      doutes: existante
+        ? []
+        : this.fichesDouteuses(data, ctx)
+            .slice(0, 4)
+            .map((a) => this.resume(a)),
+      anomalies: data.anomalies ?? [],
+      cycle: regle
+        ? (LIBELLE_CYCLE[regle.cycle as Cycle] ?? regle.cycle)
+        : null,
+      note: typeNote
+        ? (NOTES_AFFECTATION[typeNote]?.libelle ?? typeNote)
+        : null,
+      grade: regle?.grade ?? null,
+      lot:
+        n !== null && n !== undefined
+          ? `${data.typeTexte === 'DECRET' ? 'Décrets' : 'Arrêtés'} — lot ${romain(n)}`
+          : null,
+    };
+  }
+
+  /**
+   * Ajout manuel : la personne est enregistrée comme une ligne du fichier (même clé, mêmes
+   * contrôles, rangée dans son lot, affectation créée pour la note de son diplôme). Si elle
+   * ressemble à une fiche, il faut dire laquelle (« même personne ») ou que c'en est une autre.
+   */
+  async ajouterManuelle(
+    f: FicheManuelle,
+    groupe: 'MEPPSA' | 'AUTRES',
+    choix: { meme?: string | null; autrePersonne?: boolean } = {},
+  ) {
+    const v = await this.verifierManuelle(f, groupe);
+    if (choix.meme && !v.doutes.some((d) => d.id === choix.meme))
+      throw new BadRequestException(
+        'La fiche choisie ne fait pas partie des fiches qui ressemblent',
+      );
+    if (v.doutes.length && !choix.meme && !choix.autrePersonne)
+      throw new BadRequestException(
+        'Cette personne ressemble à une fiche déjà enregistrée : dites si c’est la même personne ou une autre.',
+      );
+    const feuilles = await this.ligneManuelle(f);
+    const rapport = await this.importer(feuilles, {
+      groupe,
+      memes: choix.meme ? { [`${FEUILLE_MANUELLE}|1`]: choix.meme } : undefined,
+    });
+    // La fiche enregistrée : celle choisie, celle retrouvée, ou la nouvelle (même clé que l'import)
+    const ctx = await this.contexte();
+    const data = this.lireLigne(
+      feuilles[0].lignes[0],
+      groupe === 'AUTRES',
+      ctx.deps,
+      ctx.regles,
+    );
+    const cle =
+      (choix.meme ? ctx.parId.get(choix.meme)?.cle : null) ??
+      this.ficheSure(data, ctx) ??
+      data.cle!;
+    const agent = ctx.existants.get(cle);
+    if (!agent) throw new NotFoundException('Fiche introuvable après l’ajout');
+    const affectation = await this.affectations.findOne({
+      where: { agentId: agent.id },
+      loadEagerRelations: false,
+    });
+    return {
+      id: agent.id,
+      nomComplet: agent.nomComplet,
+      cree: rapport.crees > 0,
+      anomalies: agent.anomalies ?? [],
+      lot: agent.lotPublication ? libelleLot(agent.lotPublication) : null,
+      affectation: affectation
+        ? { typeNote: affectation.typeNote, statut: affectation.statut }
+        : null,
+    };
+  }
+
   private async contexte() {
     const deps = new Map((await this.deps.find()).map((d) => [d.code, d]));
     const regles = new Map((await this.regles.find()).map((r) => [r.code, r]));
@@ -383,7 +568,7 @@ export class ImportBaseService {
   }
 
   async importer(
-    contenu: Buffer,
+    contenu: Buffer | FeuilleLue[],
     options: {
       groupe?: 'MEPPSA' | 'AUTRES';
       feuilles?: string[];
@@ -391,7 +576,7 @@ export class ImportBaseService {
       memes?: Record<string, string>;
     } = {},
   ): Promise<RapportImport> {
-    const toutes = await lireClasseur(contenu, ['NOMSETPRENOMS', 'DIPLOME']);
+    const toutes = await this.feuillesDe(contenu);
     if (!toutes.length)
       throw new BadRequestException(
         "Aucune feuille visible avec les colonnes « Noms et prénoms » et « Diplôme » n'a été trouvée.",

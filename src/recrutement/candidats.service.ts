@@ -12,7 +12,11 @@ import {
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Between, In, IsNull, Not, Repository } from 'typeorm';
-import { estContractuel, salaireBrut } from '../affectation/calcul';
+import {
+  estContractuel,
+  regleDeLAgent,
+  salaireBrut,
+} from '../affectation/calcul';
 import { AffectationService } from '../affectation/affectation.service';
 import type { UtilisateurConnecte } from '../auth/auth';
 import { champ, lireClasseur } from '../common/excel';
@@ -206,7 +210,7 @@ export class CandidatsService implements OnApplicationBootstrap {
     const regles = await this.affectation.reglesParCode();
     const p = this.affectation.parametresCalcul();
     return liste.map((a) => {
-      const r = a.diplomeCode ? regles.get(a.diplomeCode) : undefined;
+      const r = regleDeLAgent(a, regles);
       return {
         ...a,
         ...estContractuel(a, p, r?.categorie),

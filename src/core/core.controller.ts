@@ -53,6 +53,7 @@ import {
 } from '../common/code-personnel';
 import {
   Departement,
+  Grade,
   RegleDiplome,
   ROLES,
   type Role,
@@ -121,6 +122,7 @@ export class CoreController {
     private readonly deps: Repository<Departement>,
     @InjectRepository(RegleDiplome)
     private readonly regles: Repository<RegleDiplome>,
+    @InjectRepository(Grade) private readonly grades: Repository<Grade>,
     private readonly sessions: SessionService,
     private readonly journal: JournalService,
     private readonly params: ParametresService,
@@ -529,6 +531,7 @@ export class CoreController {
     return {
       departements: await this.deps.find({ order: { ordre: 'ASC' } }),
       regles: await this.regles.find({ order: { code: 'ASC' } }),
+      grades: await this.grades.find({ order: { libelle: 'ASC' } }),
       typesNote: TYPES_NOTE_AFFECTATION.map((code) => ({
         code,
         libelle: NOTES_AFFECTATION[code].libelle,

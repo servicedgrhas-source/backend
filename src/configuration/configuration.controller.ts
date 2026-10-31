@@ -22,6 +22,11 @@ import { Roles, Utilisateur, type UtilisateurConnecte } from '../auth/auth';
 import { ConfigurationService } from './configuration.service';
 
 class GradeDto {
+  /** Diplômes pour lesquels ce grade est aussi possible (en plus de leur grade par défaut). */
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  diplomesAutres?: string[];
   @IsString() @MaxLength(40) abreviation: string;
   @IsString() @MaxLength(150) libelle: string;
   @IsOptional()

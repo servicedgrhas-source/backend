@@ -4,6 +4,7 @@ import {
   estContractuel,
   salaireBrut,
   type ParametresCalcul,
+  regleDeLAgent,
 } from '../affectation/calcul';
 import type { Agent, RegleDiplome } from '../entities';
 
@@ -322,7 +323,7 @@ export async function fichierBase(o: {
 
   let total = 0;
   o.fiches.forEach((a, i) => {
-    const regle = a.diplomeCode ? o.regles.get(a.diplomeCode) : undefined;
+    const regle = regleDeLAgent(a, o.regles);
     const { contractuel } = estContractuel(a, o.parametres, regle?.categorie);
     const salaire = salaireBrut(regle?.indice, o.parametres);
     if (salaire) total += salaire * 12;

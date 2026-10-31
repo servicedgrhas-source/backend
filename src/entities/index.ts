@@ -116,6 +116,11 @@ export class RegleDiplome {
   @Column({ type: 'varchar', nullable: true }) gradeCode: string | null;
   /** Façons dont le diplôme est écrit dans les fichiers Excel (ex. « BAC A4 »). */
   @Column({ type: 'jsonb', default: () => "'[]'" }) ecritures: string[];
+  /**
+   * Autres grades possibles avec ce diplôme (DG, 31/10/2026) : le grade ci-dessus reste celui par
+   * défaut ; un de ceux-ci se choisit à la demande, personne par personne.
+   */
+  @Column({ type: 'jsonb', default: () => "'[]'" }) gradesAutres: string[];
   /* Copie des valeurs du grade, tenue à jour automatiquement (lecture rapide). */
   @Column({ type: 'varchar', nullable: true }) grade: string | null;
   @Column({ type: 'varchar', nullable: true }) gradeLibelle: string | null;
@@ -123,6 +128,19 @@ export class RegleDiplome {
   @Column({ type: 'int', nullable: true }) echelle: number | null;
   @Column({ type: 'int', nullable: true }) echelon: number | null;
   @Column({ type: 'int', nullable: true }) indice: number | null;
+}
+
+/** Grade choisi pour une personne (copie de la classification du grade). */
+export interface GradeChoisi {
+  code: string;
+  abreviation: string;
+  libelle: string;
+  categorie: string | null;
+  echelle: number | null;
+  echelon: number | null;
+  indice: number | null;
+  par: string;
+  le: string;
 }
 
 /** Grade de la fonction publique et sa classification. */
@@ -239,6 +257,11 @@ export class Agent {
   /** Anomalies vérifiées à la main : elles ne reviennent pas à la réimportation du fichier. */
   @Column({ type: 'jsonb', default: () => "'[]'" })
   anomaliesVerifiees: string[];
+  /**
+   * Grade choisi à la demande parmi les autres grades possibles de son diplôme (sinon le grade
+   * par défaut du diplôme) : copie de la classification, tenue à jour avec le grade.
+   */
+  @Column({ type: 'jsonb', nullable: true }) gradeChoisi: GradeChoisi | null;
   /* ---- Saisie dans le système (au lieu du fichier Excel) ---- */
   /** IMPORT = ligne du fichier Excel ; SAISIE = fiche enregistrée dans le système. */
   @Column({ type: 'varchar', default: 'IMPORT' }) origineFiche:
@@ -553,8 +576,7 @@ export class DemandeMutation {
    * possibles), INTROUVABLE, SANS_FICHE (laissée sans fiche). Jamais bloquant.
    */
   @Index() @Column({ type: 'varchar', nullable: true }) rattachement:
-    | string
-    | null;
+    string | null;
   @Column({ type: 'boolean', default: false }) retiree: boolean;
   @Column({ type: 'text', nullable: true }) motifRetrait: string | null;
   @Column({ type: 'uuid', nullable: true }) noteId: string | null;
@@ -1621,8 +1643,7 @@ export class Nomination {
   @Index() @Column({ type: 'int', nullable: true }) agentId: number | null;
   /** Rattachement à la base du personnel : comme pour les mutations (MATRICULE, NOM, MANUEL…). */
   @Index() @Column({ type: 'varchar', nullable: true }) rattachement:
-    | string
-    | null;
+    string | null;
   @Column() nomComplet: string;
   @Index() @Column() nomNormalise: string;
   @Column({ type: 'varchar', nullable: true }) genre: string | null;

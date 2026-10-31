@@ -112,6 +112,29 @@ export function estContractuel(
   };
 }
 
+/**
+ * Règle du diplôme d'une personne, avec le grade choisi pour elle à la place du grade par défaut
+ * (DG, 31/10/2026) : grade, catégorie, échelle, échelon et indice sont alors ceux du grade choisi.
+ */
+export function regleDeLAgent(
+  a: Pick<Agent, 'diplomeCode'> & { gradeChoisi?: Agent['gradeChoisi'] },
+  regles: Map<string, RegleDiplome>,
+): RegleDiplome | undefined {
+  const r = a.diplomeCode ? regles.get(a.diplomeCode) : undefined;
+  const g = a.gradeChoisi;
+  if (!r || !g) return r;
+  return {
+    ...r,
+    gradeCode: g.code,
+    grade: g.abreviation,
+    gradeLibelle: g.libelle,
+    categorie: g.categorie,
+    echelle: g.echelle,
+    echelon: g.echelon,
+    indice: g.indice,
+  };
+}
+
 /** Grade affiché : « Inst. » -> « Inst.C. » pour un contractuel. */
 export function gradeAffiche(
   grade: string | null,
@@ -150,7 +173,7 @@ export function deriver(
   p: ParametresCalcul,
 ): Derive {
   const agent = aff.agent;
-  const regle = agent.diplomeCode ? regles.get(agent.diplomeCode) : undefined;
+  const regle = regleDeLAgent(agent, regles);
   const { contractuel, age, impose, dateAge } = estContractuel(
     agent,
     p,

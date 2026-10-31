@@ -26,6 +26,8 @@ const ANOMALIE_DIPLOME = 'Diplôme non reconnu';
 const ANOMALIE_CYCLE = 'Cycle de la base différent de celui du diplôme';
 
 export interface GradeDto {
+  /** Diplômes pour lesquels ce grade est aussi possible (en plus de leur grade par défaut). */
+  diplomesAutres?: string[];
   abreviation: string;
   libelle: string;
   categorie: string | null;
@@ -159,6 +161,27 @@ export class ConfigurationService implements OnApplicationBootstrap {
     await this.appliquer();
   }
 
+  /**
+   * Grade choisi pour une personne : sa classification suit celle du grade ; un choix qui n'est plus
+   * possible (diplôme retiré du grade, devenu le grade par défaut, autre diplôme) est retiré. Les
+   * personnes déjà dans une note validée gardent tout. Renvoie le nombre de choix retirés.
+   */
+  private async synchroniserGradesChoisis(): Promise<number> {
+    const modifiables = `NOT EXISTS (SELECT 1 FROM affectation f WHERE f."agentId" = a.id AND f.statut = 'AFFECTE')`;
+    await this.agents.query(`
+      UPDATE agent a SET "gradeChoisi" = a."gradeChoisi" || jsonb_build_object('abreviation', g.abreviation,
+        'libelle', g.libelle, 'categorie', g.categorie, 'echelle', g.echelle, 'echelon', g.echelon, 'indice', g.indice)
+      FROM grade g WHERE g.code = a."gradeChoisi"->>'code' AND ${modifiables}`);
+    const r = await this.agents.query<unknown[]>(`
+      UPDATE agent a SET "gradeChoisi" = NULL
+      WHERE a."gradeChoisi" IS NOT NULL AND ${modifiables} AND NOT EXISTS (
+        SELECT 1 FROM regle_diplome r WHERE r.code = a."diplomeCode"
+          AND r."gradeCode" IS DISTINCT FROM a."gradeChoisi"->>'code'
+          AND r."gradesAutres" ? (a."gradeChoisi"->>'code'))
+      RETURNING a.id`);
+    return Array.isArray(r[0]) ? (r[0] as unknown[]).length : r.length;
+  }
+
   /** Recopie la classification du grade dans chaque règle (lecture rapide par les calculs). */
   private async synchroniserCopies() {
     await this.regles.query(`
@@ -168,6 +191,13 @@ export class ConfigurationService implements OnApplicationBootstrap {
     await this.regles.query(`
       UPDATE regle_diplome SET grade = NULL, "gradeLibelle" = NULL, categorie = NULL, echelle = NULL, echelon = NULL, indice = NULL
       WHERE "gradeCode" IS NULL OR "gradeCode" NOT IN (SELECT code FROM grade)`);
+    // Le grade par défaut n'est pas aussi un « autre grade » ; un grade supprimé disparaît
+    await this.regles.query(`
+      UPDATE regle_diplome r SET "gradesAutres" = coalesce((
+        SELECT jsonb_agg(x) FROM jsonb_array_elements_text(r."gradesAutres") x
+        WHERE x IS DISTINCT FROM r."gradeCode" AND x IN (SELECT code FROM grade)), '[]')
+      WHERE jsonb_array_length(r."gradesAutres") > 0`);
+    return this.synchroniserGradesChoisis();
   }
 
   /* ------------------------------ Lecture ------------------------------ */
@@ -184,12 +214,20 @@ export class ConfigurationService implements OnApplicationBootstrap {
       SELECT NULLIF(trim("diplomeBrut"), '') AS libelle, count(*)::int AS n FROM agent
       WHERE "diplomeCode" IS NULL GROUP BY 1 ORDER BY 2 DESC, 1`);
     const n = (code: string) => parDiplome.find((x) => x.code === code)?.n ?? 0;
+    // Personnes à qui ce grade a été donné à la demande
+    const choisis = await this.agents.query<{ code: string; n: number }[]>(
+      `SELECT "gradeChoisi"->>'code' AS code, count(*)::int AS n FROM agent WHERE "gradeChoisi" IS NOT NULL GROUP BY 1`,
+    );
     return {
       grades: grades.map((g) => ({
         ...g,
         diplomes: regles
           .filter((r) => r.gradeCode === g.code)
           .map((r) => r.libelle),
+        diplomesAutres: regles
+          .filter((r) => (r.gradesAutres ?? []).includes(g.code))
+          .map((r) => ({ code: r.code, libelle: r.libelle })),
+        personnes: choisis.find((x) => x.code === g.code)?.n ?? 0,
       })),
       regles: regles.map((r) => ({ ...r, agents: n(r.code) })),
       nonReconnus,
@@ -236,14 +274,31 @@ export class ConfigurationService implements OnApplicationBootstrap {
     let code = codeDepuis(dto.abreviation);
     while (await this.grades.findOne({ where: { code } })) code = `${code}_2`;
     const g = await this.grades.save({ ...this.nettoyerGrade(dto), code });
-    await this.journal.log(
-      u,
-      'CREATION_GRADE',
-      'grade',
-      code,
-      this.nettoyerGrade(dto),
-    );
+    await this.rattacherDiplomes(code, dto.diplomesAutres);
+    await this.journal.log(u, 'CREATION_GRADE', 'grade', code, {
+      ...this.nettoyerGrade(dto),
+      diplomesAutres: dto.diplomesAutres ?? [],
+    });
     return g;
+  }
+
+  /**
+   * Diplômes rattachés à un grade (en plus de leur grade par défaut) : le grade s'ajoute à leurs
+   * « autres grades » et se retire de ceux qui ne sont plus cochés. Rien si la liste n'est pas donnée.
+   */
+  private async rattacherDiplomes(code: string, diplomes?: string[]) {
+    if (!diplomes) return 0;
+    const voulus = new Set(diplomes);
+    for (const r of await this.regles.find()) {
+      const avant = r.gradesAutres ?? [];
+      const apres =
+        voulus.has(r.code) && r.gradeCode !== code
+          ? [...new Set([...avant, code])]
+          : avant.filter((x) => x !== code);
+      if (apres.length !== avant.length)
+        await this.regles.update(r.code, { gradesAutres: apres });
+    }
+    return this.synchroniserCopies();
   }
 
   async modifierGrade(u: UtilisateurConnecte, code: string, dto: GradeDto) {
@@ -252,6 +307,7 @@ export class ConfigurationService implements OnApplicationBootstrap {
     if (!g) throw new NotFoundException('Grade introuvable');
     await this.grades.update(code, this.nettoyerGrade(dto));
     await this.synchroniserCopies();
+    const retires = await this.rattacherDiplomes(code, dto.diplomesAutres);
     await this.journal.log(u, 'MODIFICATION_GRADE', 'grade', code, {
       avant: {
         abreviation: g.abreviation,
@@ -260,8 +316,11 @@ export class ConfigurationService implements OnApplicationBootstrap {
         echelon: g.echelon,
       },
       apres: this.nettoyerGrade(dto),
+      diplomesAutres: dto.diplomesAutres,
+      choixRetires: retires,
     });
-    return this.grades.findOne({ where: { code } });
+    // Personnes remises au grade par défaut de leur diplôme (diplôme décoché)
+    return { ...(await this.grades.findOne({ where: { code } })), retires };
   }
 
   async supprimerGrade(u: UtilisateurConnecte, code: string) {
@@ -270,7 +329,16 @@ export class ConfigurationService implements OnApplicationBootstrap {
       throw new BadRequestException(
         `Ce grade est utilisé par ${utilises} diplôme(s) : changez d'abord leur grade.`,
       );
+    const [{ n: choisi }] = await this.agents.query<{ n: number }[]>(
+      `SELECT count(*)::int AS n FROM agent WHERE "gradeChoisi"->>'code' = $1`,
+      [code],
+    );
+    if (choisi)
+      throw new BadRequestException(
+        `Ce grade a été choisi pour ${choisi} personne(s) : remettez-les d'abord au grade par défaut de leur diplôme.`,
+      );
     await this.grades.delete(code);
+    await this.synchroniserCopies();
     await this.journal.log(u, 'SUPPRESSION_GRADE', 'grade', code);
     return { ok: true };
   }
