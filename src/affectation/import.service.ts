@@ -872,9 +872,14 @@ export class ImportBaseService {
 
     const quota = entier(champ(l, 'QUOTA'));
     const numeroOrdre = entier(champ(l, 'NDORDRE'));
+    // Quota MEPPSA : quota + n° d'ordre + nom ; sans ces colonnes (fichier nettoyé du 31/10/2026),
+    // la date de naissance, sinon deux homonymes seraient réunis en une seule fiche
+    const naissanceCle = dateNaissance ?? normaliser(naissanceBrute);
     const cle = quotaAutres
-      ? `QA|${nomNormalise}|${dateNaissance ?? normaliser(naissanceBrute)}`
-      : `M|${quota ?? ''}|${numeroOrdre ?? ''}|${nomNormalise}`;
+      ? `QA|${nomNormalise}|${naissanceCle}`
+      : quota !== null && numeroOrdre !== null
+        ? `M|${quota}|${numeroOrdre}|${nomNormalise}`
+        : `M|${nomNormalise}|${naissanceCle}`;
 
     return {
       cle,

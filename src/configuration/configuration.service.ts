@@ -417,9 +417,10 @@ export class ConfigurationService implements OnApplicationBootstrap {
         diplomeCode: string | null;
         cycleBrut: string | null;
         anomalies: string[];
+        anomaliesVerifiees: string[] | null;
       }[]
     >(`
-      SELECT a.id, a."diplomeBrut", a."diplomeCode", a."cycleBrut", a.anomalies FROM agent a
+      SELECT a.id, a."diplomeBrut", a."diplomeCode", a."cycleBrut", a.anomalies, a."anomaliesVerifiees" FROM agent a
       LEFT JOIN affectation f ON f."agentId" = a.id
       WHERE f.id IS NULL OR f.statut <> 'AFFECTE'`);
   }
@@ -441,7 +442,13 @@ export class ConfigurationService implements OnApplicationBootstrap {
       );
       if (!code) anomalies = [...anomalies, ANOMALIE_DIPLOME];
       const cb = codeCycle(a.cycleBrut);
-      if (regle && cb && cb !== regle.cycle)
+      // Avertissement masqué (« j'ai vérifié ») : il ne revient pas
+      if (
+        regle &&
+        cb &&
+        cb !== regle.cycle &&
+        !(a.anomaliesVerifiees ?? []).includes(ANOMALIE_CYCLE)
+      )
         anomalies = [...anomalies, ANOMALIE_CYCLE];
       const memeAnomalies =
         anomalies.length === (a.anomalies ?? []).length &&

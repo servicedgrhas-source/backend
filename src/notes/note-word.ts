@@ -75,8 +75,8 @@ const LARGEUR: Record<string, number> = {
   n: 7,
   grade: 16,
   cat: 8,
-  ech: 8,
-  echl: 9,
+  ech: 9,
+  echl: 10,
   reference: 31,
   cycle: 19,
   specialite: 21,
@@ -163,6 +163,8 @@ const cellule = (
     fusion?: 'debut' | 'suite';
     colonnes?: number;
     garder?: boolean;
+    /** Marges réduites : « Ech », « Echl » tiennent sur une ligne (DG, 31/10/2026). */
+    serre?: boolean;
   } = {},
 ) =>
   new TableCell({
@@ -182,7 +184,9 @@ const cellule = (
           : undefined,
     columnSpan: o.colonnes,
     verticalAlign: VerticalAlign.CENTER,
-    margins: { left: 60, right: 60, top: 20, bottom: 20 },
+    margins: o.serre
+      ? { left: 15, right: 15, top: 20, bottom: 20 }
+      : { left: 60, right: 60, top: 20, bottom: 20 },
   });
 
 export async function noteWord(n: NoteWord, avecVisas = true): Promise<Buffer> {
@@ -239,11 +243,13 @@ export async function noteWord(n: NoteWord, avecVisas = true): Promise<Buffer> {
     ),
   );
 
-  /** En-tête du tableau, répété en haut de chaque page par Word. */
+  /**
+   * En-tête du tableau, écrit une seule fois au début : quand le tableau continue sur la page
+   * suivante, la liste reprend directement au numéro suivant (DG, 31/10/2026).
+   */
   const entete: TableRow[] = c.classification
     ? [
         new TableRow({
-          tableHeader: true,
           cantSplit: true,
           children: [
             cellule('N°', { gras: true, centre: true, fusion: 'debut' }),
@@ -281,14 +287,13 @@ export async function noteWord(n: NoteWord, avecVisas = true): Promise<Buffer> {
           ],
         }),
         new TableRow({
-          tableHeader: true,
           cantSplit: true,
           children: [
             cellule('', { fusion: 'suite' }),
             cellule('', { fusion: 'suite' }),
             ...(avecGrade ? [cellule('', { fusion: 'suite' })] : []),
             ...['Cat', 'Ech', 'Echl'].map((x) =>
-              cellule(x, { gras: true, centre: true }),
+              cellule(x, { gras: true, centre: true, serre: true }),
             ),
             ...(refCol ? [cellule('', { fusion: 'suite' })] : []),
             ...autres.map(() => cellule('', { fusion: 'suite' })),
@@ -297,7 +302,6 @@ export async function noteWord(n: NoteWord, avecVisas = true): Promise<Buffer> {
       ]
     : [
         new TableRow({
-          tableHeader: true,
           cantSplit: true,
           children: [
             cellule('N°', { gras: true, centre: true }),
@@ -464,12 +468,14 @@ export async function noteWord(n: NoteWord, avecVisas = true): Promise<Buffer> {
             new TableCell({
               children: [
                 p(
-                  `Fait à ${e.lieu}, le ${dateEnLettres(n.dateSignature) ?? '________________'}`,
+                  // Sans date : « le » seul, la date est écrite à la main (DG, 31/10/2026)
+                  `Fait à ${e.lieu}, le${n.dateSignature ? ` ${dateEnLettres(n.dateSignature) ?? ''}` : ''}`,
                   { avant: 14, garderAvecSuivant: true },
                 ),
                 p(e.signataireTitre, {
                   avant: 4,
-                  apres: 60,
+                  // Deux lignes de plus avant le nom du signataire (DG, 31/10/2026)
+                  apres: 88,
                   garderAvecSuivant: true,
                 }),
               ],

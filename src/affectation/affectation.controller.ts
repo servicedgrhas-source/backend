@@ -65,6 +65,15 @@ class AgentDto {
   @IsArray()
   @IsString({ each: true })
   anomaliesVerifiees?: string[];
+  /** Cycle différent du diplôme : avertissement masqué, cycle du fichier gardé. */
+  @IsOptional() @IsBoolean() masquerCycle?: boolean;
+}
+
+class FichesDto {
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  ids?: string[];
 }
 
 class AffectationDto {
@@ -345,11 +354,37 @@ export class AffectationController {
     return this.service.resumeAnomalies();
   }
 
-  /** Cycle du fichier différent de celui du diplôme : la règle du diplôme s'applique à tous. */
+  /** Cycle du fichier différent de celui du diplôme : fiches avec l'avertissement, et masquées. */
+  @Get('agents/anomalies/cycle')
+  cyclesDifferents() {
+    return this.service.cyclesDifferents();
+  }
+
+  /** La règle du diplôme s'applique (à toutes, ou aux fiches cochées). */
   @Roles(...ROLES_TRAITEMENT)
   @Post('agents/anomalies/cycle')
-  appliquerCycle(@Utilisateur() u: UtilisateurConnecte) {
-    return this.service.appliquerReglesCycle(u);
+  appliquerCycle(
+    @Utilisateur() u: UtilisateurConnecte,
+    @Body() dto: FichesDto,
+  ) {
+    return this.service.appliquerReglesCycle(u, dto?.ids);
+  }
+
+  /** « J'ai vérifié » : l'avertissement des fiches cochées est masqué, leur cycle gardé. */
+  @Roles(...ROLES_TRAITEMENT)
+  @Post('agents/anomalies/cycle/masquer')
+  masquerCycles(@Utilisateur() u: UtilisateurConnecte, @Body() dto: FichesDto) {
+    return this.service.masquerCycles(u, dto.ids ?? []);
+  }
+
+  /** Fait réapparaître l'avertissement des fiches cochées. */
+  @Roles(...ROLES_TRAITEMENT)
+  @Post('agents/anomalies/cycle/reafficher')
+  reafficherCycles(
+    @Utilisateur() u: UtilisateurConnecte,
+    @Body() dto: FichesDto,
+  ) {
+    return this.service.reafficherCycles(u, dto.ids ?? []);
   }
 
   @Get('agents/statistiques')

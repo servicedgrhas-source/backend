@@ -23,10 +23,13 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Brackets, In, Not, Repository } from 'typeorm';
 import type { UtilisateurConnecte } from '../auth/auth';
 import {
+  codeCycle,
   LIBELLE_CYCLE,
   NOTES_AFFECTATION,
   type Cycle,
 } from '../common/referentiels';
+
+const ANOMALIE_CYCLE = 'Cycle de la base différent de celui du diplôme';
 import { normaliser } from '../common/texte';
 import { JournalService, ParametresService } from '../core/core.service';
 import {
@@ -371,7 +374,13 @@ export class AffectationService {
         | 'contractuelForce'
         | 'anomaliesVerifiees'
       >
-    >,
+    > & {
+      /**
+       * Cycle du fichier différent du diplôme : « j'ai vérifié », l'avertissement est masqué et le
+       * cycle du fichier gardé (BEPC d'un homme envoyé à l'administration, DG 31/10/2026).
+       */
+      masquerCycle?: boolean;
+    },
   ) {
     const a = await this.agents.findOne({ where: { id } });
     if (!a) throw new NotFoundException('Agent introuvable');
@@ -381,7 +390,7 @@ export class AffectationService {
     });
     // Déclarer une anomalie vérifiée ne change rien à la note : permis même après validation
     const seulementVerification = Object.keys(dto).every(
-      (k) => k === 'anomaliesVerifiees',
+      (k) => k === 'anomaliesVerifiees' || k === 'masquerCycle',
     );
     if (aff?.statut === 'AFFECTE' && !seulementVerification)
       throw new BadRequestException(
@@ -391,10 +400,16 @@ export class AffectationService {
     const avant: Record<string, unknown> = {};
     for (const k of Object.keys(dto))
       avant[k] = (a as unknown as Record<string, unknown>)[k];
-    const { anomaliesVerifiees: verifiees, ...champs } = dto;
+    const { anomaliesVerifiees: verifiees, masquerCycle, ...champs } = dto;
     const maj: Partial<Agent> = { ...champs };
     // Les anomalies corrigées à la main disparaissent
     let anomalies = a.anomalies ?? [];
+    if (masquerCycle) {
+      anomalies = anomalies.filter((x) => x !== ANOMALIE_CYCLE);
+      maj.anomaliesVerifiees = [
+        ...new Set([...(a.anomaliesVerifiees ?? []), ANOMALIE_CYCLE]),
+      ];
+    }
     if ('numeroTexte' in dto && dto.numeroTexte)
       anomalies = anomalies.filter(
         (x) => !x.startsWith('Lot de publication sans numéro'),
@@ -404,7 +419,10 @@ export class AffectationService {
       const aRetirer = new Set(verifiees.map(motif));
       anomalies = anomalies.filter((x) => !aRetirer.has(motif(x)));
       maj.anomaliesVerifiees = [
-        ...new Set([...(a.anomaliesVerifiees ?? []), ...aRetirer]),
+        ...new Set([
+          ...(maj.anomaliesVerifiees ?? a.anomaliesVerifiees ?? []),
+          ...aRetirer,
+        ]),
       ];
       // Cycle : la règle du diplôme fait foi, la fiche est alignée sur elle
       if ([...aRetirer].some((x) => x.startsWith('Cycle de la base'))) {
@@ -512,9 +530,94 @@ export class AffectationService {
       FROM agent, jsonb_array_elements_text(anomalies) x GROUP BY 1 ORDER BY 2 DESC`);
   }
 
-  /** Applique la règle du diplôme à toutes les fiches dont le cycle Excel diffère. */
-  async appliquerReglesCycle(u: UtilisateurConnecte) {
-    const ANOMALIE = 'Cycle de la base différent de celui du diplôme';
+  /**
+   * Fiches dont le cycle du fichier diffère de celui du diplôme : celles qui affichent
+   * l'avertissement, et celles où il a été masqué (« j'ai vérifié », cycle du fichier gardé).
+   */
+  async cyclesDifferents() {
+    const lignes = await this.agents.query<
+      {
+        id: string;
+        nomComplet: string;
+        diplomeBrut: string | null;
+        cycleBrut: string | null;
+        cycleDiplome: string;
+        lot: Record<string, unknown> | null;
+        alerte: boolean;
+        masquee: boolean;
+      }[]
+    >(
+      `SELECT a.id, a."nomComplet", a."diplomeBrut", a."cycleBrut", r.cycle AS "cycleDiplome",
+              CASE WHEN l.id IS NULL THEN NULL ELSE jsonb_build_object('numero', l.numero, 'typeTexte', l."typeTexte",
+                'quota', l.quota, 'autres', l.autres, 'rang', l.rang, 'numeroFichier', l."numeroFichier") END AS lot,
+              a.anomalies ? $1 AS alerte, a."anomaliesVerifiees" ? $1 AS masquee
+       FROM agent a JOIN regle_diplome r ON r.code = a."diplomeCode"
+       LEFT JOIN lot_publication l ON l.id = a."lotPublicationId"
+       WHERE a.anomalies ? $1 OR a."anomaliesVerifiees" ? $1
+       ORDER BY a."nomComplet"`,
+      [ANOMALIE_CYCLE],
+    );
+    const fiche = (x: (typeof lignes)[number]) => ({
+      id: x.id,
+      nomComplet: x.nomComplet,
+      diplome: x.diplomeBrut,
+      cycleFichier: x.cycleBrut,
+      cycleDiplome: LIBELLE_CYCLE[x.cycleDiplome as Cycle] ?? x.cycleDiplome,
+      lot: x.lot,
+    });
+    return {
+      aVerifier: lignes.filter((x) => x.alerte).map(fiche),
+      // Masquées : le cycle du fichier diffère toujours (la règle appliquée les a alignées)
+      masquees: lignes
+        .filter(
+          (x) =>
+            !x.alerte &&
+            x.masquee &&
+            codeCycle(x.cycleBrut) !== null &&
+            codeCycle(x.cycleBrut) !== x.cycleDiplome,
+        )
+        .map(fiche),
+    };
+  }
+
+  /** Masque l'avertissement des fiches cochées : le cycle du fichier est gardé. */
+  async masquerCycles(u: UtilisateurConnecte, ids: string[]) {
+    const r = await this.agents.query<unknown[]>(
+      `UPDATE agent a SET
+         anomalies = a.anomalies - $1,
+         "anomaliesVerifiees" = CASE WHEN a."anomaliesVerifiees" ? $1 THEN a."anomaliesVerifiees"
+                                     ELSE a."anomaliesVerifiees" || to_jsonb($1::text) END
+       WHERE a.id = ANY($2::uuid[]) AND a.anomalies ? $1
+       RETURNING a.id`,
+      [ANOMALIE_CYCLE, ids],
+    );
+    const n = Array.isArray(r[0]) ? (r[0] as unknown[]).length : r.length;
+    await this.journal.log(u, 'MASQUAGE_CYCLES', 'agent', null, {
+      fiches: n,
+    });
+    return { fiches: n };
+  }
+
+  /** Réaffiche l'avertissement des fiches cochées (masqué par erreur, à revoir). */
+  async reafficherCycles(u: UtilisateurConnecte, ids: string[]) {
+    const r = await this.agents.query<unknown[]>(
+      `UPDATE agent a SET
+         "anomaliesVerifiees" = a."anomaliesVerifiees" - $1,
+         anomalies = CASE WHEN a.anomalies ? $1 THEN a.anomalies ELSE a.anomalies || to_jsonb($1::text) END
+       WHERE a.id = ANY($2::uuid[]) AND a."anomaliesVerifiees" ? $1
+       RETURNING a.id`,
+      [ANOMALIE_CYCLE, ids],
+    );
+    const n = Array.isArray(r[0]) ? (r[0] as unknown[]).length : r.length;
+    await this.journal.log(u, 'REAFFICHAGE_CYCLES', 'agent', null, {
+      fiches: n,
+    });
+    return { fiches: n };
+  }
+
+  /** Applique la règle du diplôme aux fiches dont le cycle Excel diffère (toutes, ou celles cochées). */
+  async appliquerReglesCycle(u: UtilisateurConnecte, ids?: string[]) {
+    const ANOMALIE = ANOMALIE_CYCLE;
     const r = await this.agents.query<unknown[]>(
       `UPDATE agent a SET
          anomalies = a.anomalies - $1,
@@ -524,8 +627,9 @@ export class AffectationService {
                          WHEN 'COLLEGE' THEN 'Collège' WHEN 'LYCEE' THEN 'Lycée' ELSE 'Administration' END
        FROM regle_diplome r
        WHERE r.code = a."diplomeCode" AND a.anomalies ? $1
+         AND ($2::uuid[] IS NULL OR a.id = ANY($2::uuid[]))
        RETURNING a.id`,
-      [ANOMALIE],
+      [ANOMALIE, ids ?? null],
     );
     const n = Array.isArray(r[0]) ? (r[0] as unknown[]).length : r.length;
     await this.journal.log(u, 'CORRECTION_CYCLES', 'agent', null, {
