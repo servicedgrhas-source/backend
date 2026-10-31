@@ -1,4 +1,10 @@
-import { anomaliesAJour, nomRessemblant, RESSEMBLE } from '../common/anomalies';
+import {
+  anomaliesAJour,
+  cleTexte,
+  nomRessemblant,
+  RESSEMBLE,
+  TEXTE_PARTAGE,
+} from '../common/anomalies';
 import { LotsReceptionService } from './lots-reception.service';
 import {
   GROUPES_QUOTA,
@@ -14,7 +20,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Brackets, In, Repository } from 'typeorm';
+import { Brackets, In, Not, Repository } from 'typeorm';
 import type { UtilisateurConnecte } from '../auth/auth';
 import {
   LIBELLE_CYCLE,
@@ -416,6 +422,36 @@ export class AffectationService {
       anomalies = anomalies.filter((x) => !x.startsWith('Diplôme'));
     maj.anomalies = anomaliesAJour({ ...a, ...maj, anomalies });
     await this.agents.update(id, maj);
+
+    // N° de texte corrigé : l'ancien numéro n'est peut-être plus partagé ; l'alerte « N° de texte
+    // partagé » disparaît alors aussi de l'autre fiche
+    if (
+      'numeroTexte' in dto &&
+      dto.numeroTexte &&
+      a.numeroTexte &&
+      cleTexte(dto.numeroTexte) !== cleTexte(a.numeroTexte)
+    ) {
+      const ancien = cleTexte(a.numeroTexte);
+      const memes = (
+        await this.agents.find({
+          select: ['id', 'numeroTexte', 'anomalies'],
+          where: { id: Not(id) },
+          loadEagerRelations: false,
+        })
+      ).filter((x) => cleTexte(x.numeroTexte) === ancien);
+      if (memes.length <= 1)
+        for (const x of memes) {
+          const restantes = (x.anomalies ?? []).filter(
+            (y) =>
+              !(
+                y.startsWith(TEXTE_PARTAGE) &&
+                cleTexte(/^[^(]*\(([^,)]+)/.exec(y)?.[1]) === ancien
+              ),
+          );
+          if (restantes.length !== (x.anomalies ?? []).length)
+            await this.agents.update(x.id, { anomalies: restantes });
+        }
+    }
 
     // Changement de diplôme -> type de note par défaut recalculé
     if (aff && dto.diplomeCode && dto.diplomeCode !== a.diplomeCode) {
