@@ -118,6 +118,12 @@ export const PARAMETRES_DEFAUT: Record<string, [string, string]> = {
     'Times New Roman',
     'Police des notes de service : Times New Roman ou Sylfaen',
   ],
+  // « PROJET DE NOTE DE SERVICE » jusqu'à la validation du DG et aux trois avis de conformité
+  // (DG, 01/11/2026) ; NON : toujours « NOTE DE SERVICE », comme avant
+  PROJET_DE_NOTE: [
+    'OUI',
+    'Titre « PROJET DE NOTE DE SERVICE » tant que le DG et le circuit (bureau, service, direction) n’ont pas validé',
+  ],
   // Le numéro dit le chemin de la note, du cabinet au service qui l'a initiée (DG, 24/10/2026 :
   // le Service de recrutement à la fin)
   REFERENCE_NOTE: [
@@ -335,6 +341,8 @@ export class ParametresService {
   verifier(cle: string, valeur: string) {
     if (!PARAMETRES_DEFAUT[cle])
       throw new BadRequestException('Paramètre inconnu');
+    if (cle === 'PROJET_DE_NOTE' && !['OUI', 'NON'].includes(valeur))
+      throw new BadRequestException('Choisissez Oui ou Non');
     if (
       cle === 'ANNEE_SCOLAIRE' ||
       (cle === 'ANNEE_SCOLAIRE_MUTATION' && valeur)

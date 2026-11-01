@@ -1099,6 +1099,25 @@ export class NotesService {
     return `Mutation – ${MOTIFS[n.motif as MotifMutation]?.libelle} – ${LIBELLE_GROUPE[n.typeNote as GroupeMutation]}${n.rang > 1 ? ` (suite ${n.rang - 1})` : ''}`;
   }
 
+  /**
+   * Titre de la note (DG, 01/11/2026) : « PROJET DE NOTE DE SERVICE » tant que le DG ne l'a pas
+   * validée et que le bureau, le service et la direction ne l'ont pas déclarée conforme ;
+   * « NOTE DE SERVICE » ensuite, et toujours une fois signée. Paramètre PROJET_DE_NOTE = NON :
+   * toujours « NOTE DE SERVICE », comme avant.
+   */
+  private titreNote(n: NoteService, titre: string) {
+    const base = (titre ?? '').replace(/^PROJET DE /, '');
+    if (base !== 'NOTE DE SERVICE') return titre;
+    if (this.params.get('PROJET_DE_NOTE').trim().toUpperCase() === 'NON')
+      return base;
+    const conforme = (['BUREAU', 'SERVICE', 'DIRECTION'] as const).every((v) =>
+      (n.conformite ?? []).some((a) => a.niveau === v && a.conforme),
+    );
+    const definitive =
+      n.statut === 'SIGNEE' || (n.statut === 'VALIDEE' && conforme);
+    return definitive ? base : `PROJET DE ${base}`;
+  }
+
   /** Cycle d'une note, pour la colonne « Cycle » de la liste (DG, 01/11/2026). */
   private cycle(n: NoteService): string | null {
     if (n.module === 'AFFECTATION')
@@ -1243,6 +1262,7 @@ export class NotesService {
           : n.module === 'NOMINATION'
             ? await this.contenuNomination(n)
             : await this.contenuMutation(n));
+    contenu.titre = this.titreNote(n, contenu.titre);
     // Structure : le sigle « DDEPPSA … », jamais le nom complet de la direction départementale,
     // même dans une note figée (DG, 01/11/2026) ; de même, le sigle des autres directions (DGEB…)
     const sigles = await siglesDesDirections(this.notes);
