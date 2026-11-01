@@ -8,6 +8,7 @@ import {
   ParseIntPipe,
   Patch,
   Post,
+  Put,
   Query,
   Res,
   UploadedFile,
@@ -249,6 +250,21 @@ export class NotesController {
     @Body() dto: IntroductionDto,
   ) {
     return this.service.modifierIntroduction(u, id, dto.introduction);
+  }
+
+  /** Ampliations décochées sur l'aperçu de la note : le nombre des archives suit. */
+  @Roles(...ROLES_TRAITEMENT)
+  @Put(':id/ampliations')
+  ampliations(
+    @Utilisateur() u: UtilisateurConnecte,
+    @Param('id') id: string,
+    @Body() body: { exclues: string[] },
+  ) {
+    return this.service.modifierAmpliations(
+      u,
+      id,
+      Array.isArray(body?.exclues) ? body.exclues.map(String) : [],
+    );
   }
 
   /** Réunir dans cette note les notes d'autres lots (même type, encore à soumettre). */

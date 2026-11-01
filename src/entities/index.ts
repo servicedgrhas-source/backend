@@ -459,6 +459,12 @@ export class NoteService {
    * « Je traite le quota MEPPSA et le quota Autres avec département » (DG, 30/10/2026).
    */
   @Column({ type: 'jsonb', default: () => "'[]'" }) groupes: string[];
+  /**
+   * Lignes d'ampliation décochées sur l'aperçu de la note (libellés) ; le nombre des archives est
+   * recalculé sur celles qui restent (DG, 01/11/2026).
+   */
+  @Column({ type: 'jsonb', default: () => "'[]'" })
+  ampliationsExclues: string[];
   /** Note d'enrôlement : campagne d'où viennent les volontaires. */
   @Column({ type: 'int', nullable: true }) campagneId: number | null;
   @Column() anneeScolaire: string;

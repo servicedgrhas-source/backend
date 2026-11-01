@@ -555,7 +555,9 @@ export async function noteWord(n: NoteWord, avecVisas = true): Promise<Buffer> {
                 cantSplit: true,
                 children: cles.map((cle) =>
                   cellule(String(l[cle] ?? ''), {
-                    centre: cle !== 'nom' && cle !== 'ancienPoste',
+                    // Grade aligné à gauche : seul son titre est centré (DG, 01/11/2026)
+                    centre:
+                      cle !== 'nom' && cle !== 'ancienPoste' && cle !== 'grade',
                     // La dernière ligne de la note reste avec la signature
                     // Les deux dernières lignes restent avec la signature (DG, 01/11/2026)
                     garder:
@@ -706,6 +708,8 @@ export async function noteWord(n: NoteWord, avecVisas = true): Promise<Buffer> {
                                   PageNumber.TOTAL_PAGES,
                                 ],
                                 size: 16,
+                                // En gras (DG, 01/11/2026)
+                                bold: true,
                                 font: POLICE,
                               }),
                             ],

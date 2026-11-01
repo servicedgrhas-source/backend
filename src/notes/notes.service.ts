@@ -246,6 +246,27 @@ export class NotesService {
     return n;
   }
 
+  /**
+   * Lignes d'ampliation gardées (les décochées sont retirées) ; les archives ne se décochent pas
+   * et valent 2 sur le total des exemplaires : 2 + somme des lignes gardées.
+   */
+  private ampliationsGardees(
+    toutes: ContenuNote['ampliations'],
+    exclues: string[],
+  ) {
+    const gardees = toutes.filter(
+      (a) => a.libelle === 'Archives' || !exclues.includes(a.libelle),
+    );
+    if (!exclues.length) return gardees;
+    const somme =
+      gardees
+        .filter((a) => a.libelle !== 'Archives')
+        .reduce((s, a) => s + (Number(a.nombre) || 0), 0) + 2;
+    return gardees.map((a) =>
+      a.libelle === 'Archives' ? { ...a, nombre: `2/${somme}` } : a,
+    );
+  }
+
   private ampliations(dg: string, nbDeps: number, total: number) {
     const fixes: [string, number][] = [
       ['MEPPSA-CAB', 2],
@@ -1147,6 +1168,13 @@ export class NotesService {
       for (const l of sec.lignes ?? [])
         if (typeof l.structure === 'string')
           l.structure = structureCourte(l.structure);
+    // Ampliations : toutes les lignes possibles (pour la fenêtre où on les coche), puis celles
+    // gardées, avec les archives recalculées (2 + somme des autres)
+    const ampliationsToutes = contenu.ampliations ?? [];
+    contenu.ampliations = this.ampliationsGardees(
+      ampliationsToutes,
+      n.ampliationsExclues ?? [],
+    );
     // Bas de page et repère : simple mise en page, recalculés même pour une note figée
     if (n.module === 'AFFECTATION') {
       const def = NOTES_AFFECTATION[n.typeNote as TypeNoteAffectation];
@@ -1169,6 +1197,7 @@ export class NotesService {
     return {
       ...n,
       contenu,
+      ampliationsToutes,
       lotNumero: lot?.numero ?? null,
       lotLibelle: lot ? libelleLot(lot) : null,
       lotsReunis: lotsReunis.map((x) => ({
@@ -1189,8 +1218,10 @@ export class NotesService {
     const fige = (
       contenu as { entete?: Entete & { piedDroiteModele?: string } }
     ).entete;
-    const modele =
-      fige?.piedDroiteModele ?? this.params.get('PIED_PAGE_DROITE');
+    // Les notes figées avec l'ancienne mention « MEPPSA 2026 » s'écrivent aussi « MEPPSA/2026 »
+    const modele = (
+      fige?.piedDroiteModele ?? this.params.get('PIED_PAGE_DROITE')
+    ).replace(/^MEPPSA \{an\}$/, 'MEPPSA/{an}');
     const an = (n.dateSignature ?? new Date().toISOString()).slice(0, 4);
     return {
       reference: fige?.reference ?? this.params.get('REFERENCE_NOTE'),
@@ -1228,6 +1259,27 @@ export class NotesService {
     if (!introduction?.trim())
       throw new BadRequestException('Introduction vide');
     await this.notes.update(id, { introduction: introduction.trim() });
+    await this.journal.log(u, 'MODIFICATION_NOTE', 'note_service', id);
+    return { ok: true };
+  }
+
+  /** Lignes d'ampliation décochées sur l'aperçu (tant que la note n'est pas signée). */
+  async modifierAmpliations(
+    u: UtilisateurConnecte,
+    id: string,
+    exclues: string[],
+  ) {
+    const n = await this.charger(id);
+    if (n.statut === 'SIGNEE')
+      throw new BadRequestException(
+        'La note est signée : ses ampliations ne changent plus',
+      );
+    const liste = [
+      ...new Set(
+        exclues.map((x) => x.trim()).filter((x) => x && x !== 'Archives'),
+      ),
+    ];
+    await this.notes.update(id, { ampliationsExclues: liste });
     await this.journal.log(u, 'MODIFICATION_NOTE', 'note_service', id);
     return { ok: true };
   }
@@ -1332,13 +1384,19 @@ export class NotesService {
     const n = await this.charger(id);
     if (n.statut !== 'SOUMISE')
       throw new BadRequestException('La note doit avoir été soumise au DG');
-    const { contenu, entete } = await this.obtenir(id);
+    const { contenu, entete, ampliationsToutes } = await this.obtenir(id);
     if (!contenu.total)
       throw new BadRequestException('La note ne contient aucun agent');
     const ids = contenu.sections.flatMap((s) => s.lignes.map((l) => l.id));
     // L'en-tête (signataire, référence, lieu) est figé avec le contenu : changer de
     // ministre plus tard ne modifie pas une note déjà validée ou signée
-    const fige = { ...contenu, bloques: undefined, entete };
+    // Toutes les ampliations sont gardées : les décochées restent à part (ampliationsExclues)
+    const fige = {
+      ...contenu,
+      ampliations: ampliationsToutes,
+      bloques: undefined,
+      entete,
+    };
     await this.notes.manager.transaction(async (m) => {
       if (n.module === 'AFFECTATION')
         await m.update(

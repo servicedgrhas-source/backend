@@ -125,7 +125,8 @@ export const PARAMETRES_DEFAUT: Record<string, [string, string]> = {
     'Suffixe du numéro de note : le chemin hiérarchique, du cabinet au service qui a initié la note',
   ],
   PIED_PAGE_DROITE: [
-    'MEPPSA {an}',
+    // « MEPPSA/2026 » et non plus « MEPPSA 2026 » (DG, 01/11/2026)
+    'MEPPSA/{an}',
     'Mention en bas à droite des notes ({an} = année d’édition)',
   ],
   SIGNATAIRE_LISTE_TITRE: [
@@ -268,6 +269,29 @@ export class ParametresService {
     const tous = await this.repo.find();
     this.cache = new Map(tous.map((p) => [p.cle, p.valeur]));
     await this.miseAJourReference();
+    await this.miseAJourPiedDroite();
+  }
+
+  /**
+   * Bas de page droit (DG, 01/11/2026) : « MEPPSA/2026 ». Une seule fois : l'ancienne valeur
+   * enregistrée telle quelle devient « MEPPSA/{an} » ; une mention écrite autrement est gardée.
+   */
+  private async miseAJourPiedDroite() {
+    const MARQUE = 'MIGRATION_PIED_DROITE_20261101';
+    if (this.cache.has(MARQUE)) return;
+    if (this.cache.get('PIED_PAGE_DROITE')?.trim() === 'MEPPSA {an}') {
+      await this.repo.update(
+        { cle: 'PIED_PAGE_DROITE' },
+        { valeur: PARAMETRES_DEFAUT.PIED_PAGE_DROITE[0] },
+      );
+      this.cache.set('PIED_PAGE_DROITE', PARAMETRES_DEFAUT.PIED_PAGE_DROITE[0]);
+    }
+    await this.repo.save({
+      cle: MARQUE,
+      valeur: new Date().toISOString(),
+      description: 'Bas de page droit des notes : « MEPPSA/{an} »',
+    });
+    this.cache.set(MARQUE, 'fait');
   }
 
   /**
