@@ -170,6 +170,12 @@ export class EnrolementController {
   }
 
   @Roles(...ROLES_TRAITEMENT)
+  @Get('dossiers/:id/fiche')
+  fiche(@Param('id') id: string) {
+    return this.service.fiche(id);
+  }
+
+  @Roles(...ROLES_TRAITEMENT)
   @Get('doublons')
   doublons(
     @Query('nom') nom: string,

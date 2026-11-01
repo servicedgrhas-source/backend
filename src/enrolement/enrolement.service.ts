@@ -402,6 +402,15 @@ export class EnrolementService {
 
   /* ------------------------------- Dossiers ------------------------------- */
 
+  /** Un dossier, tel que la liste le montre (ouvert depuis une recommandation). */
+  async fiche(id: string) {
+    const e = await this.enroles.findOne({ where: { id } });
+    if (!e) throw new NotFoundException('Dossier introuvable');
+    return (await this.liste({ campagneId: e.campagneId })).find(
+      (x) => x.id === id,
+    );
+  }
+
   async liste(f: {
     campagneId: number;
     etat?: string;
