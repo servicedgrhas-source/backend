@@ -24,12 +24,17 @@ import { Brackets, In, Not, Repository } from 'typeorm';
 import type { UtilisateurConnecte } from '../auth/auth';
 import {
   codeCycle,
+  cycleCompatible,
   LIBELLE_CYCLE,
   NOTES_AFFECTATION,
   type Cycle,
 } from '../common/referentiels';
 
-import { normaliser, structureCourte } from '../common/texte';
+import {
+  normaliser,
+  siglesDesDirections,
+  structureAbregee,
+} from '../common/texte';
 import { JournalService, ParametresService } from '../core/core.service';
 import {
   Affectation,
@@ -522,7 +527,7 @@ export class AffectationService {
         where: { code: dto.diplomeCode ?? a.diplomeCode ?? '' },
       });
       const lu = codeCycle(maj.cycleBrut);
-      const differe = !!regle && !!lu && lu !== regle.cycle;
+      const differe = !!regle && !cycleCompatible(lu, regle.cycle);
       const masque = (
         maj.anomaliesVerifiees ??
         a.anomaliesVerifiees ??
@@ -687,7 +692,7 @@ export class AffectationService {
             !x.alerte &&
             x.masquee &&
             codeCycle(x.cycleBrut) !== null &&
-            codeCycle(x.cycleBrut) !== x.cycleDiplome,
+            !cycleCompatible(codeCycle(x.cycleBrut), x.cycleDiplome),
         )
         .map(fiche),
     };
@@ -1027,8 +1032,12 @@ export class AffectationService {
       'obs',
     ] as const)
       if (dto[k] !== undefined) maj[k] = dto[k]?.toString().trim() || null;
-    // Sur la note : le sigle « DDEPPSA … », jamais le nom complet de la direction départementale
-    if (maj.structure) maj.structure = structureCourte(maj.structure);
+    // Sur la note : le sigle « DDEPPSA … », « DGEB »…, jamais le nom complet d'une direction
+    if (maj.structure)
+      maj.structure = structureAbregee(
+        maj.structure,
+        await siglesDesDirections(this.affectations),
+      );
     await this.affectations.update(id, maj);
     await this.journal.log(
       u,
@@ -1114,7 +1123,10 @@ export class AffectationService {
       etape: etapeInitiale(u.role),
       typeNote,
       departementId: dto.departementId ?? null,
-      structure: structureCourte(dto.structure),
+      structure: structureAbregee(
+        dto.structure,
+        await siglesDesDirections(this.affectations),
+      ),
       etablissement: dto.etablissement?.trim() || null,
       origine: dto.origine.trim(),
       motif: dto.motif?.trim() || null,
@@ -1182,7 +1194,11 @@ export class AffectationService {
         !r.etablissement
       )
         maj.etablissement = null;
-      if (r.structure) maj.structure = structureCourte(r.structure);
+      if (r.structure)
+        maj.structure = structureAbregee(
+          r.structure,
+          await siglesDesDirections(this.affectations),
+        );
       if (r.etablissement) maj.etablissement = r.etablissement;
       if (r.typeNote === 'ETS' && !aff.obs) maj.obs = 'Ens. actif';
       if (maj.typeNote === 'PERS_ADM' && !maj.structure && !aff.structure) {

@@ -34,6 +34,7 @@ import {
 import {
   type Cycle,
   codeCycle,
+  cycleCompatible,
   codeDepartement,
   LIBELLE_CYCLE,
   NOTES_AFFECTATION,
@@ -1072,7 +1073,7 @@ export class ImportBaseService {
     const cycleBrut = nettoyer(champ(l, 'CYCLE'));
     const regle = diplomeCode ? regles.get(diplomeCode) : undefined;
     const cb = codeCycle(cycleBrut);
-    if (regle && cb && cb !== regle.cycle)
+    if (regle && !cycleCompatible(cb, regle.cycle))
       anomalies.push('Cycle de la base différent de celui du diplôme');
 
     const lotBrut = nettoyer(champ(l, 'LOTDEPUBLICAT', 'LOTDEPUBLICATION'));

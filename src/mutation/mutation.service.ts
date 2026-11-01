@@ -878,6 +878,7 @@ export class MutationService {
       { cycle: 'ADMINISTRATION', specialite: null },
       { cycle: 'PRESCOLAIRE', specialite: null },
       { cycle: 'PRIMAIRE', specialite: null },
+      { cycle: 'ALPHABETISATION', specialite: null },
       ...SPECIALITES_STAT.COLLEGE.map((s) => ({
         cycle: 'COLLEGE',
         specialite: s,

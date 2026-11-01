@@ -2,7 +2,7 @@ import { Injectable, Logger, OnApplicationBootstrap } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { In, Repository } from 'typeorm';
 import { AncienRecrute, Agent, RegleDiplome } from '../entities';
-import { codeCycle } from './referentiels';
+import { codeCycle, cycleCompatible } from './referentiels';
 import { ageRevolu, normaliser } from './texte';
 
 /**
@@ -84,7 +84,7 @@ export function anomaliesAJour(
       if (!cycleDuDiplome || !f.diplomeCode) return true;
       const attendu = cycleDuDiplome(f.diplomeCode);
       const lu = codeCycle(f.cycleBrut);
-      return !!attendu && !!lu && attendu !== lu;
+      return !cycleCompatible(lu, attendu);
     }
     if (a.startsWith('Lot de publication sans numéro')) return !f.numeroTexte;
     if (a.startsWith('Lot de publication invalide')) return !f.lotPublicationId;

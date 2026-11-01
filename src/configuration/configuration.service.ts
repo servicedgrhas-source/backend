@@ -10,6 +10,7 @@ import { ImportBaseService } from '../affectation/import.service';
 import type { UtilisateurConnecte } from '../auth/auth';
 import {
   codeCycle,
+  cycleCompatible,
   CYCLES,
   ECRITURES_DEFAUT,
   GRADE_DU_DIPLOME_DEFAUT,
@@ -18,7 +19,12 @@ import {
   reconnaitreDiplome,
   REGLES_DIPLOMES,
 } from '../common/referentiels';
-import { cleCompacte, nettoyer, structureCourte } from '../common/texte';
+import {
+  cleCompacte,
+  nettoyer,
+  siglesDesDirections,
+  structureAbregee,
+} from '../common/texte';
 import { JournalService } from '../core/core.service';
 import { Affectation, Agent, Grade, RegleDiplome } from '../entities';
 
@@ -117,15 +123,17 @@ export class ConfigurationService implements OnApplicationBootstrap {
    * à chaque démarrage : seuls ces textes-là changent.
    */
   private async abregerStructures() {
+    // Les autres directions aussi : « DGEB » et non « Direction Générale de l'Education de Base »
+    const sigles = await siglesDesDirections(this.regles);
     for (const table of ['affectation', 'recommandation']) {
       const lignes = await this.regles.query<
         { id: string; structure: string }[]
       >(
         `SELECT id::text, structure FROM ${table}
-          WHERE structure ILIKE 'Direction d_partementale de l%enseignement pr_scolaire%'`,
+          WHERE structure ILIKE 'Direction%' OR structure ILIKE 'Inspection%'`,
       );
       for (const l of lignes) {
-        const court = structureCourte(l.structure);
+        const court = structureAbregee(l.structure, sigles);
         if (court && court !== l.structure)
           await this.regles.query(
             `UPDATE ${table} SET structure = $2 WHERE id::text = $1`,
@@ -587,8 +595,7 @@ export class ConfigurationService implements OnApplicationBootstrap {
       // Avertissement masqué (« j'ai vérifié ») : il ne revient pas
       if (
         regle &&
-        cb &&
-        cb !== regle.cycle &&
+        !cycleCompatible(cb, regle.cycle) &&
         !(a.anomaliesVerifiees ?? []).includes(ANOMALIE_CYCLE)
       )
         anomalies = [...anomalies, ANOMALIE_CYCLE];

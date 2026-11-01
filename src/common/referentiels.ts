@@ -107,6 +107,8 @@ export const CYCLES = [
   'PRIMAIRE',
   'COLLEGE',
   'LYCEE',
+  // Choisi pour certains titulaires du CFEEN primaire ou préscolaire, pas systématiquement (DG, 01/11/2026)
+  'ALPHABETISATION',
   'ADMINISTRATION',
 ] as const;
 export type Cycle = (typeof CYCLES)[number];
@@ -116,8 +118,24 @@ export const LIBELLE_CYCLE: Record<Cycle, string> = {
   PRIMAIRE: 'Primaire',
   COLLEGE: 'Collège',
   LYCEE: 'Lycée',
+  ALPHABETISATION: 'Alphabétisation',
   ADMINISTRATION: 'Administration',
 };
+
+/**
+ * Le cycle lu (fiche, base) va avec celui du diplôme : le même, ou l'alphabétisation pour un
+ * diplôme du préscolaire ou du primaire (CFEEN), sans que ce soit systématique (DG, 01/11/2026).
+ */
+export function cycleCompatible(
+  lu: string | null | undefined,
+  attendu: string | null | undefined,
+) {
+  if (!lu || !attendu || lu === attendu) return true;
+  return (
+    lu === 'ALPHABETISATION' &&
+    (attendu === 'PRIMAIRE' || attendu === 'PRESCOLAIRE')
+  );
+}
 
 export function codeCycle(brut: unknown): Cycle | null {
   const k = cleCompacte(sansPrefixeNumero(brut));
@@ -127,6 +145,7 @@ export function codeCycle(brut: unknown): Cycle | null {
   if (k.startsWith('PRIM')) return 'PRIMAIRE';
   if (k.startsWith('COLL')) return 'COLLEGE';
   if (k.startsWith('LYC')) return 'LYCEE';
+  if (k.startsWith('ALPHA')) return 'ALPHABETISATION';
   if (k.startsWith('ADMIN')) return 'ADMINISTRATION';
   return null;
 }
@@ -537,7 +556,7 @@ export const LIBELLE_GROUPE: Record<GroupeMutation, string> = {
 };
 
 export function groupeDuCycle(c: Cycle | null): GroupeMutation {
-  return c === 'PRESCOLAIRE' || c === 'PRIMAIRE'
+  return c === 'PRESCOLAIRE' || c === 'PRIMAIRE' || c === 'ALPHABETISATION'
     ? 'PRESCO_PRIMAIRE'
     : 'COLLEGE_LYCEE_ADMIN';
 }

@@ -186,3 +186,61 @@ export function structureCourte(s: string | null | undefined): string | null {
     )?.[1];
   return lieu?.trim() ? `DDEPPSA ${lieu.trim()}` : 'DDEPPSA';
 }
+
+/**
+ * Clé d'un nom de direction, pour le reconnaître quelle que soit l'écriture : sans accents, sans
+ * ponctuation, sans « l' » / « d' » (« de I'Enseignement » = « de l'enseignement ») ni sigle
+ * final entre parenthèses.
+ */
+export function cleStructure(s: string): string {
+  return cleCompacte(
+    s.replace(/\s*\([^)]*\)\s*$/, '').replace(/\b[a-z]\s*['’]\s*/gi, ''),
+  );
+}
+
+/**
+ * Structure écrite sur une note (DG, 01/11/2026) : le sigle des directions (« DGEB » et non
+ * « Direction Générale de l'Education de Base »), « DDEPPSA … » pour les directions
+ * départementales ; un autre texte reste tel quel.
+ */
+export function structureAbregee(
+  s: string | null | undefined,
+  sigles: Map<string, string>,
+): string | null {
+  const court = structureCourte(s);
+  if (!court || court.startsWith('DDEPPSA')) return court;
+  return sigles.get(cleStructure(court)) ?? court;
+}
+
+/** Types de structures dont le nom complet s'abrège en sigle sur les notes. */
+export const TYPES_DIRECTIONS = [
+  'DIRECTION_CENTRALE',
+  'DIRECTION_GENERALE',
+  'DIRECTION_DGRHAS',
+  'DGRHAS',
+  'INSPECTION_GENERALE',
+];
+
+/**
+ * Nom complet → sigle des directions de l'organigramme. Un nom porté par plusieurs directions
+ * (« Direction des Affaires Administratives et Financières » : DGEB, DGES, IGEPSA) n'est pas
+ * abrégé, faute de savoir laquelle.
+ */
+export async function siglesDesDirections(requete: {
+  query: <T>(sql: string, params?: unknown[]) => Promise<T>;
+}): Promise<Map<string, string>> {
+  const lignes = await requete.query<{ nom: string; sigle: string }[]>(
+    `SELECT nom, sigle FROM structure
+      WHERE type = ANY($1) AND coalesce(sigle, '') <> '' AND coalesce(nom, '') <> ''`,
+    [TYPES_DIRECTIONS],
+  );
+  const parCle = new Map<string, Set<string>>();
+  for (const l of lignes) {
+    const k = cleStructure(l.nom);
+    if (!parCle.has(k)) parCle.set(k, new Set());
+    parCle.get(k)!.add(l.sigle.trim());
+  }
+  return new Map(
+    [...parCle].filter(([, s]) => s.size === 1).map(([k, s]) => [k, [...s][0]]),
+  );
+}

@@ -23,7 +23,12 @@ import {
   type MotifMutation,
   type TypeNoteAffectation,
 } from '../common/referentiels';
-import { structureCourte, entierVersRomain, normaliser } from '../common/texte';
+import {
+  entierVersRomain,
+  normaliser,
+  siglesDesDirections,
+  structureAbregee,
+} from '../common/texte';
 import { JournalService, ParametresService } from '../core/core.service';
 import {
   GROUPES_QUOTA,
@@ -350,6 +355,7 @@ export class NotesService {
       note,
     );
     const deps = await this.deps.find({ order: { ordre: 'ASC' } });
+    const sigles = await siglesDesDirections(this.notes);
 
     const colonnes: Colonne[] = [
       { cle: 'nom', libelle: 'Noms et prénoms' },
@@ -373,7 +379,7 @@ export class NotesService {
       specialite: x.specialite,
       etablissement: x.etablissement,
       obs: x.obs ?? 'Ens. actif',
-      structure: structureCourte(x.structure),
+      structure: structureAbregee(x.structure, sigles),
       origine: x.origine,
     });
 
@@ -1162,11 +1168,12 @@ export class NotesService {
             ? await this.contenuNomination(n)
             : await this.contenuMutation(n));
     // Structure : le sigle « DDEPPSA … », jamais le nom complet de la direction départementale,
-    // même dans une note figée (DG, 01/11/2026)
+    // même dans une note figée (DG, 01/11/2026) ; de même, le sigle des autres directions (DGEB…)
+    const sigles = await siglesDesDirections(this.notes);
     for (const sec of contenu.sections ?? [])
       for (const l of sec.lignes ?? [])
         if (typeof l.structure === 'string')
-          l.structure = structureCourte(l.structure);
+          l.structure = structureAbregee(l.structure, sigles);
     // Ampliations : toutes les lignes possibles, ajoutées comprises (pour la fenêtre où on les
     // coche), puis celles gardées, avec les archives recalculées (2 + somme des autres)
     const base = contenu.ampliations ?? [];

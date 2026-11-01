@@ -12,7 +12,7 @@ import { In, Like, Repository } from 'typeorm';
 import type { UtilisateurConnecte } from '../auth/auth';
 import { TYPES_STRUCTURE } from '../circuit/catalogue';
 import { codeDepartement } from '../common/referentiels';
-import { cleCompacte, normaliser } from '../common/texte';
+import { cleCompacte, normaliser, TYPES_DIRECTIONS } from '../common/texte';
 import { JournalService } from '../core/core.service';
 import { RecensementService } from '../recensement/recensement.service';
 import { Departement, Referentiel, Structure } from '../entities';
@@ -529,11 +529,14 @@ export class ReferentielsService implements OnApplicationBootstrap {
           ORDER BY s.nom LIMIT ${n}`,
         params,
       );
+      // Directions (départementales, centrales, générales) : leur sigle, « DDEPPSA Brazzaville »,
+      // « DGEB »…, comme sur les notes (DG, 01/11/2026)
+      const enSigle = (l: { type: string; sigle: string | null }) =>
+        !!l.sigle &&
+        (l.type === 'DDEPPSA' || TYPES_DIRECTIONS.includes(l.type));
       return lignes.map((l) => ({
-        // Direction départementale : son sigle « DDEPPSA Brazzaville », comme sur les notes (DG, 01/11/2026)
-        valeur: l.type === 'DDEPPSA' && l.sigle ? l.sigle : l.nom,
-        libelle:
-          l.type === 'DDEPPSA' && l.sigle ? `${l.sigle} — ${l.nom}` : l.nom,
+        valeur: enSigle(l) ? l.sigle! : l.nom,
+        libelle: enSigle(l) ? `${l.sigle} — ${l.nom}` : l.nom,
         detail: [majuscule(l.cycle ?? ''), l.parent, l.localite, l.dep]
           .filter(Boolean)
           .join(' · '),
