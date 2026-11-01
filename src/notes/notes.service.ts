@@ -1099,6 +1099,29 @@ export class NotesService {
     return `Mutation – ${MOTIFS[n.motif as MotifMutation]?.libelle} – ${LIBELLE_GROUPE[n.typeNote as GroupeMutation]}${n.rang > 1 ? ` (suite ${n.rang - 1})` : ''}`;
   }
 
+  /** Cycle d'une note, pour la colonne « Cycle » de la liste (DG, 01/11/2026). */
+  private cycle(n: NoteService): string | null {
+    if (n.module === 'AFFECTATION')
+      return (
+        {
+          PRESCOLAIRE: 'Préscolaire',
+          PRIMAIRE: 'Primaire',
+          // Enseignants actifs placés dans les établissements du primaire (DGEB)
+          ETS: 'Primaire',
+          DEMA: 'Collège',
+          DECRET_COLLEGE: 'Collège',
+          DECRET_LYCEE: 'Lycée',
+          PERS_ADM: 'Administration',
+        }[n.typeNote] ?? null
+      );
+    if (n.module === 'MUTATION')
+      return LIBELLE_GROUPE[n.typeNote as GroupeMutation] ?? null;
+    if (n.module === 'ENROLEMENT')
+      return DIPLOMES_ENROLEMENT[n.typeNote]?.cycle || null;
+    const c = CATEGORIE_NOMINATION.get(n.typeNote)?.cycle;
+    return c ? LIBELLE_CYCLE[c] : null;
+  }
+
   /** Note réunie : son lot de départ et les lots réunis avec lui ; rien pour une note d'un seul lot. */
   private reunion(
     n: NoteService,
@@ -1185,6 +1208,7 @@ export class NotesService {
         libelle: this.libelle(n, lot, lots),
         // À titre d'information : la note de départ et les lots réunis avec elle (DG, 01/11/2026)
         reunion: this.reunion(n, lot, lots),
+        cycle: this.cycle(n),
         total,
         enAttente,
       });
