@@ -1448,12 +1448,53 @@ export class NotesService {
       );
     if (!n.lotsFusionnes?.length)
       throw new BadRequestException('Cette note ne réunit qu’un seul lot.');
-    const lots = await this.lots.find({ where: { id: In(n.lotsFusionnes) } });
+    const lots = (
+      await this.lots.find({ where: { id: In(n.lotsFusionnes) } })
+    ).filter((l) => l.id !== n.lotPublicationId);
     await this.notes.update(n.id, { lotsFusionnes: [] });
+    // Chaque lot sorti retrouve sa note « à soumettre au DG » (même type, mêmes quotas, même
+    // introduction) : on peut la réunir de nouveau (DG, 01/11/2026). Un lot sans personne prête
+    // n'a pas de note.
+    const recreees: NoteService[] = [];
+    for (const l of lots.sort(ordreLots)) {
+      const { prets } = await this.lignesAffectation(
+        [l.id],
+        n.typeNote,
+        n.groupes ?? [],
+      );
+      if (!prets.length) continue;
+      const rang =
+        (await this.notes.count({
+          where: {
+            module: 'AFFECTATION',
+            lotPublicationId: l.id,
+            typeNote: n.typeNote,
+          },
+        })) + 1;
+      recreees.push(
+        await this.notes.save({
+          module: 'AFFECTATION',
+          typeNote: n.typeNote,
+          lotPublicationId: l.id,
+          lotsFusionnes: [],
+          groupes: n.groupes ?? [],
+          anneeScolaire: n.anneeScolaire,
+          rang,
+          introduction: n.introduction,
+          statut: 'BROUILLON',
+          creePar: u.nom,
+        }),
+      );
+    }
     await this.journal.log(u, 'NOTES_SEPAREES', 'note_service', id, {
       lots: lots.map((l) => l.numero),
+      notesRecreees: recreees.length,
     });
-    return { ok: true, lots: lots.map((l) => l.numero) };
+    return {
+      ok: true,
+      lots: lots.map((l) => l.numero),
+      notes: recreees.map((x) => x.id),
+    };
   }
 
   async renvoyer(u: UtilisateurConnecte, id: string, commentaire: string) {
