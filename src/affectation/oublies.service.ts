@@ -52,39 +52,50 @@ export class OubliesService {
       PAS_AFFECTE: 1,
       DEJA_AFFECTE: 2,
     };
-    return fiches
-      .map((a) => {
-        const r = regleDeLAgent(a, regles);
-        const f = affs.get(a.id);
-        return {
-          id: a.id,
-          nomComplet: a.nomComplet,
-          dateNaissance: a.dateNaissance,
-          liste: a.feuille === 'QUOTA_AUTRES' ? 'Quota « Autres »' : 'MEPPSA',
-          diplome: r?.libelle ?? a.diplomeBrut,
-          grade: r?.grade ?? null,
-          specialite: a.specialite,
-          // Observation de la fiche (fichier ou saisie) : affichée en rouge (DG, 01/11/2026)
-          observation: a.observation,
-          departement: a.departement?.nom ?? null,
-          texte: a.numeroTexte,
-          typeTexte: a.typeTexte,
-          lot: a.lotPublication ? libelleLot(a.lotPublication) : null,
-          etat: a.oubli as EtatOubli,
-          ajouteLe: a.creeLe,
-          ajoutePar: a.saisiePar,
-          decidePar: a.oubliPar,
-          decideLe: a.oubliLe,
-          affectation: f
-            ? {
-                statut: f.statut,
-                dansUneNote: !!f.noteId,
-                motif: f.motifExclusion,
-              }
-            : null,
-        };
-      })
-      .sort((x, y) => ordre[x.etat] - ordre[y.etat]);
+    return (
+      fiches
+        .map((a) => {
+          const r = regleDeLAgent(a, regles);
+          const f = affs.get(a.id);
+          return {
+            id: a.id,
+            nomComplet: a.nomComplet,
+            dateNaissance: a.dateNaissance,
+            liste: a.feuille === 'QUOTA_AUTRES' ? 'Quota « Autres »' : 'MEPPSA',
+            diplome: r?.libelle ?? a.diplomeBrut,
+            grade: r?.grade ?? null,
+            specialite: a.specialite,
+            // Observation de la fiche (fichier ou saisie) : affichée en rouge (DG, 01/11/2026)
+            observation: a.observation,
+            departement: a.departement?.nom ?? null,
+            texte: a.numeroTexte,
+            typeTexte: a.typeTexte,
+            lot: a.lotPublication ? libelleLot(a.lotPublication) : null,
+            etat: a.oubli as EtatOubli,
+            ajouteLe: a.creeLe,
+            ajoutePar: a.saisiePar,
+            decidePar: a.oubliPar,
+            decideLe: a.oubliLe,
+            affectation: f
+              ? {
+                  statut: f.statut,
+                  dansUneNote: !!f.noteId,
+                  motif: f.motifExclusion,
+                }
+              : null,
+          };
+        })
+        // À contrôler : la plus récemment ajoutée d'abord ; déjà contrôlées : la décision la plus récente
+        // d'abord (DG, 01/11/2026)
+        .sort(
+          (x, y) =>
+            ordre[x.etat] - ordre[y.etat] ||
+            (x.etat === 'A_CONTROLER'
+              ? 0
+              : new Date(y.decideLe ?? 0).getTime() -
+                new Date(x.decideLe ?? 0).getTime()),
+        )
+    );
   }
 
   /** Nombre de personnes encore à contrôler (menu, bandeau). */
