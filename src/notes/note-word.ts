@@ -261,7 +261,8 @@ const cellule = (
         gras: o.gras,
         taille: 10,
         centre: o.centre,
-        garderAvecSuivant: o.garder,
+        // L'en-tête du tableau (cellules en gras ou fusionnées) reste avec sa première ligne
+        garderAvecSuivant: o.garder ?? (!!o.gras || !!o.fusion),
       }),
     ],
     verticalMerge:
@@ -558,11 +559,14 @@ export async function noteWord(n: NoteWord, avecVisas = true): Promise<Buffer> {
                     // Grade aligné à gauche : seul son titre est centré (DG, 01/11/2026)
                     centre:
                       cle !== 'nom' && cle !== 'ancienPoste' && cle !== 'grade',
-                    // La dernière ligne de la note reste avec la signature
-                    // Les deux dernières lignes restent avec la signature (DG, 01/11/2026)
-                    garder:
-                      derniere &&
-                      k >= s.lignes.length - (s.lignes.length >= 3 ? 2 : 1),
+                    // Au moins deux lignes d'un tableau sur une page (DG, 01/11/2026) : la
+                    // première reste avec la deuxième, l'avant-dernière avec la dernière (un
+                    // tableau de deux ou trois lignes passe donc entier, avec son titre) ; les
+                    // deux dernières lignes de la note restent avec la signature
+                    garder: derniere
+                      ? k === 0 || k >= s.lignes.length - 2
+                      : k < s.lignes.length - 1 &&
+                        (k === 0 || k === s.lignes.length - 2),
                   }),
                 ),
               }),
