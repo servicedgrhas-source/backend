@@ -446,7 +446,7 @@ export async function noteWord(n: NoteWord, avecVisas = true): Promise<Buffer> {
       layout: TableLayoutType.FIXED,
       width: { size: Math.round(LARGEUR_UTILE * MM), type: WidthType.DXA },
       columnWidths: [
-        // Le ministère un peu plus large : le numéro « N°____…/…-SR./ » tient sur une ligne
+        // Le ministère un peu plus large : le numéro « N°____…/…-SR » tient sur une ligne
         Math.round(LARGEUR_UTILE * 0.62 * MM),
         Math.round(LARGEUR_UTILE * 0.38 * MM),
       ],
@@ -484,12 +484,12 @@ export async function noteWord(n: NoteWord, avecVisas = true): Promise<Buffer> {
                 ligneVisa('ET DU SUIVI DES CARRIERES', 'DIRECTION'),
                 sep(),
                 // Le service suit le numéro : « …-DRSC-SR » (une note signée avant garde son en-tête)
-                ...(/-SR$/.test(e.reference)
+                ...(/-SR[./ ]*$/.test(e.reference)
                   ? [ligneVisa('SERVICE DES RECRUTEMENTS', 'SERVICE'), sep()]
                   : []),
                 p(
-                  // Plus de place pour écrire le numéro, et « ./ » après la référence (DG, 01/11/2026)
-                  `N°${n.numero ? ` ${n.numero}` : '______________________'}/${e.reference}./`,
+                  // Plus de place pour écrire le numéro (DG, 01/11/2026) ; la référence est un paramètre
+                  `N°${n.numero ? ` ${n.numero}` : '______________________'}/${e.reference}`,
                   {
                     centre: true,
                     gras: true,

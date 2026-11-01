@@ -1127,6 +1127,8 @@ export class NotesService {
     n: NoteService,
     lot?: LotPublication | null,
     lots?: Map<number, LotPublication>,
+    /** Personnes de la note venues de ce lot (note en préparation), sinon null. */
+    compte?: (lotId: number) => number | null,
   ) {
     if (n.module !== 'AFFECTATION' || !lot) return null;
     const reunis = this.lotsReunis(n, lot, lots);
@@ -1135,6 +1137,13 @@ export class NotesService {
       depart: libelleLot(lot),
       reunis: reunis.map((x) => libelleLot(x)),
       resume: libelleLots(reunis),
+      // Pour le menu déroulant de la liste : chaque lot, le départ d'abord
+      lots: [lot, ...reunis].map((x) => ({
+        id: x.id,
+        libelle: libelleLot(x),
+        depart: x.id === lot.id,
+        total: compte ? compte(x.id) : null,
+      })),
     };
   }
 
@@ -1207,7 +1216,9 @@ export class NotesService {
         lotLibelle: lot ? libelleLot(lot) : null,
         libelle: this.libelle(n, lot, lots),
         // À titre d'information : la note de départ et les lots réunis avec elle (DG, 01/11/2026)
-        reunion: this.reunion(n, lot, lots),
+        reunion: this.reunion(n, lot, lots, (lotId) =>
+          n.contenu ? null : (pretesParNote.get(`${lotId}|${n.typeNote}`) ?? 0),
+        ),
         cycle: this.cycle(n),
         total,
         enAttente,
