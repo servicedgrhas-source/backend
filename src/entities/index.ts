@@ -465,6 +465,9 @@ export class NoteService {
    */
   @Column({ type: 'jsonb', default: () => "'[]'" })
   ampliationsExclues: string[];
+  /** Lignes d'ampliation ajoutées à la main sur l'aperçu, avant les archives (DG, 01/11/2026). */
+  @Column({ type: 'jsonb', default: () => "'[]'" })
+  ampliationsAjoutees: { libelle: string; nombre: string }[];
   /** Note d'enrôlement : campagne d'où viennent les volontaires. */
   @Column({ type: 'int', nullable: true }) campagneId: number | null;
   @Column() anneeScolaire: string;

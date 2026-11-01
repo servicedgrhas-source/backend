@@ -258,12 +258,17 @@ export class NotesController {
   ampliations(
     @Utilisateur() u: UtilisateurConnecte,
     @Param('id') id: string,
-    @Body() body: { exclues: string[] },
+    @Body()
+    body: {
+      exclues: string[];
+      ajoutees?: { libelle: string; nombre: string }[];
+    },
   ) {
     return this.service.modifierAmpliations(
       u,
       id,
       Array.isArray(body?.exclues) ? body.exclues.map(String) : [],
+      Array.isArray(body?.ajoutees) ? body.ajoutees : undefined,
     );
   }
 

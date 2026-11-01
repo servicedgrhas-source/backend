@@ -254,10 +254,9 @@ export class NotesService {
     toutes: ContenuNote['ampliations'],
     exclues: string[],
   ) {
-    const gardees = toutes.filter(
-      (a) => a.libelle === 'Archives' || !exclues.includes(a.libelle),
-    );
-    if (!exclues.length) return gardees;
+    const gardees = toutes
+      .filter((a) => a.libelle === 'Archives' || !exclues.includes(a.libelle))
+      .map(({ libelle, nombre }) => ({ libelle, nombre }));
     const somme =
       gardees
         .filter((a) => a.libelle !== 'Archives')
@@ -1168,9 +1167,14 @@ export class NotesService {
       for (const l of sec.lignes ?? [])
         if (typeof l.structure === 'string')
           l.structure = structureCourte(l.structure);
-    // Ampliations : toutes les lignes possibles (pour la fenêtre où on les coche), puis celles
-    // gardées, avec les archives recalculées (2 + somme des autres)
-    const ampliationsToutes = contenu.ampliations ?? [];
+    // Ampliations : toutes les lignes possibles, ajoutées comprises (pour la fenêtre où on les
+    // coche), puis celles gardées, avec les archives recalculées (2 + somme des autres)
+    const base = contenu.ampliations ?? [];
+    const ampliationsToutes = [
+      ...base.filter((a) => a.libelle !== 'Archives'),
+      ...(n.ampliationsAjoutees ?? []).map((a) => ({ ...a, ajoutee: true })),
+      ...base.filter((a) => a.libelle === 'Archives'),
+    ];
     contenu.ampliations = this.ampliationsGardees(
       ampliationsToutes,
       n.ampliationsExclues ?? [],
@@ -1268,18 +1272,54 @@ export class NotesService {
     u: UtilisateurConnecte,
     id: string,
     exclues: string[],
+    ajoutees?: { libelle: string; nombre: string }[],
   ) {
     const n = await this.charger(id);
     if (n.statut === 'SIGNEE')
       throw new BadRequestException(
         'La note est signée : ses ampliations ne changent plus',
       );
+    // Lignes ajoutées : un destinataire et un nombre d'exemplaires (1 à 99), sans doublon
+    let ajout = n.ampliationsAjoutees ?? [];
+    if (ajoutees) {
+      const calculees = (await this.obtenir(id)).ampliationsToutes
+        .filter((a) => !('ajoutee' in a))
+        .map((a) => a.libelle.toLowerCase());
+      const vus = new Set<string>();
+      ajout = [];
+      for (const a of ajoutees) {
+        const libelle = String(a?.libelle ?? '')
+          .replace(/\s+/g, ' ')
+          .trim();
+        const nombre = Number(String(a?.nombre ?? '').trim());
+        if (!libelle)
+          throw new BadRequestException('Écrivez le destinataire de la copie');
+        if (libelle.length > 60)
+          throw new BadRequestException(
+            `« ${libelle.slice(0, 20)}… » : 60 caractères au plus`,
+          );
+        if (!Number.isInteger(nombre) || nombre < 1 || nombre > 99)
+          throw new BadRequestException(
+            `« ${libelle} » : nombre d'exemplaires entre 1 et 99`,
+          );
+        const cle = libelle.toLowerCase();
+        if (cle === 'archives' || calculees.includes(cle) || vus.has(cle))
+          throw new BadRequestException(
+            `« ${libelle} » figure déjà dans les ampliations`,
+          );
+        vus.add(cle);
+        ajout.push({ libelle, nombre: String(nombre) });
+      }
+    }
     const liste = [
       ...new Set(
         exclues.map((x) => x.trim()).filter((x) => x && x !== 'Archives'),
       ),
     ];
-    await this.notes.update(id, { ampliationsExclues: liste });
+    await this.notes.update(id, {
+      ampliationsExclues: liste,
+      ampliationsAjoutees: ajout,
+    });
     await this.journal.log(u, 'MODIFICATION_NOTE', 'note_service', id);
     return { ok: true };
   }
@@ -1390,10 +1430,11 @@ export class NotesService {
     const ids = contenu.sections.flatMap((s) => s.lignes.map((l) => l.id));
     // L'en-tête (signataire, référence, lieu) est figé avec le contenu : changer de
     // ministre plus tard ne modifie pas une note déjà validée ou signée
-    // Toutes les ampliations sont gardées : les décochées restent à part (ampliationsExclues)
+    // Toutes les ampliations calculées sont gardées : les décochées et les ajoutées restent à
+    // part (ampliationsExclues, ampliationsAjoutees)
     const fige = {
       ...contenu,
-      ampliations: ampliationsToutes,
+      ampliations: ampliationsToutes.filter((a) => !('ajoutee' in a)),
       bloques: undefined,
       entete,
     };
