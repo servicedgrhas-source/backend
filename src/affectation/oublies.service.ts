@@ -64,6 +64,8 @@ export class OubliesService {
           diplome: r?.libelle ?? a.diplomeBrut,
           grade: r?.grade ?? null,
           specialite: a.specialite,
+          // Observation de la fiche (fichier ou saisie) : affichée en rouge (DG, 01/11/2026)
+          observation: a.observation,
           departement: a.departement?.nom ?? null,
           texte: a.numeroTexte,
           typeTexte: a.typeTexte,
