@@ -135,6 +135,8 @@ export interface Entete {
   piedDroite: string;
   piedDroiteModele?: string;
   adresse: string;
+  /** Police de la note : Times New Roman ou Sylfaen (paramètre, jamais figé avec la note). */
+  police?: 'Times New Roman' | 'Sylfaen';
 }
 
 /** Notes d'enrôlement : introduction (modifiable par le DG) et repère par diplôme. */
@@ -1199,6 +1201,11 @@ export class NotesService {
       piedDroite: modele.replaceAll('{an}', an),
       piedDroiteModele: modele,
       adresse: fige?.adresse ?? this.params.get('ADRESSE_PIED'),
+      // Simple présentation : la police réglée s'applique aussi aux notes déjà figées
+      police:
+        this.params.get('POLICE_NOTES')?.trim().toLowerCase() === 'sylfaen'
+          ? 'Sylfaen'
+          : 'Times New Roman',
     };
   }
 

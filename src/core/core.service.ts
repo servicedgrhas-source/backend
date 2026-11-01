@@ -113,6 +113,11 @@ export const PARAMETRES_DEFAUT: Record<string, [string, string]> = {
   SIGNATAIRE_TITRE: ['Le Ministre,', 'Titre du signataire des notes'],
   SIGNATAIRE_NOM: ['Jean-Luc MOUTHOU', 'Nom du signataire des notes'],
   LIEU_SIGNATURE: ['Brazzaville', 'Lieu de signature (« Fait à … »)'],
+  // Police des notes (DG, 01/11/2026) : celle d'origine ou Sylfaen, à l'impression comme dans Word
+  POLICE_NOTES: [
+    'Times New Roman',
+    'Police des notes de service : Times New Roman ou Sylfaen',
+  ],
   // Le numéro dit le chemin de la note, du cabinet au service qui l'a initiée (DG, 24/10/2026 :
   // le Service de recrutement à la fin)
   REFERENCE_NOTE: [

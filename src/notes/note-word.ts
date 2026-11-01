@@ -97,7 +97,10 @@ const LARGEUR: Record<string, number> = {
 const MM = 56.7; // twips par millimètre
 const MARGE = 16; // mm, comme la version imprimée
 const LARGEUR_UTILE = 210 - 2 * MARGE;
-const POLICE = 'Times New Roman';
+/** Police de la note en cours d'écriture (Times New Roman par défaut, ou Sylfaen : paramètre). */
+let POLICE = 'Times New Roman';
+/** Sylfaen est jusqu'à 6 % plus large que Times New Roman : les largeurs estimées en tiennent compte. */
+let ELARGISSEMENT = 1;
 /**
  * « Fait à », le titre et le nom du signataire poussés de deux tabulations vers la droite
  * (DG, 31/10/2026), moins si la plus longue des trois lignes ne tiendrait plus avant la marge.
@@ -176,7 +179,9 @@ function largeurLigne(texte: string, taille = 11, gras = false) {
     unites += LARGEURS_TIMES[base] ?? (/\d/.test(base) ? 500 : 556);
   }
   // Le gras est un peu plus large
-  return ((unites / 1000) * taille * (gras ? 1.06 : 1) * 25.4) / 72;
+  return (
+    ((unites / 1000) * taille * (gras ? 1.06 : 1) * ELARGISSEMENT * 25.4) / 72
+  );
 }
 const SANS_BORD = {
   top: { style: BorderStyle.NONE, size: 0, color: 'FFFFFF' },
@@ -273,6 +278,9 @@ const cellule = (
   });
 
 export async function noteWord(n: NoteWord, avecVisas = true): Promise<Buffer> {
+  // Tout le document est construit d'un seul tenant (sans attente) avec cette police
+  POLICE = n.entete.police === 'Sylfaen' ? 'Sylfaen' : 'Times New Roman';
+  ELARGISSEMENT = POLICE === 'Sylfaen' ? 1.06 : 1;
   const c = n.contenu;
   const e = n.entete;
   // Visas de l'en-tête : service (chef de service, sinon de bureau), direction, direction générale
@@ -549,7 +557,10 @@ export async function noteWord(n: NoteWord, avecVisas = true): Promise<Buffer> {
                   cellule(String(l[cle] ?? ''), {
                     centre: cle !== 'nom' && cle !== 'ancienPoste',
                     // La dernière ligne de la note reste avec la signature
-                    garder: derniere && k === s.lignes.length - 1,
+                    // Les deux dernières lignes restent avec la signature (DG, 01/11/2026)
+                    garder:
+                      derniere &&
+                      k >= s.lignes.length - (s.lignes.length >= 3 ? 2 : 1),
                   }),
                 ),
               }),
