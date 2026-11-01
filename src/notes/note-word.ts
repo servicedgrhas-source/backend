@@ -430,7 +430,10 @@ export async function noteWord(n: NoteWord, avecVisas = true): Promise<Buffer> {
       ];
 
   const corps: (Paragraph | Table)[] = [];
-  const sep = () => p('-----------------', { centre: true, taille: 10 });
+  const sep = (retrait?: number) =>
+    p('-----------------', { centre: true, taille: 10, retrait });
+  // La République, dans la colonne de droite (38 %), décalée de 6 % : centrée à 84 % de la ligne
+  const DROITE_ENTETE = LARGEUR_UTILE * 0.06;
   // En-tête officiel : le ministère à gauche, la République à droite
   corps.push(
     p(`${new Date().toLocaleDateString('fr-FR')}/${c.repere}`, {
@@ -443,8 +446,9 @@ export async function noteWord(n: NoteWord, avecVisas = true): Promise<Buffer> {
       layout: TableLayoutType.FIXED,
       width: { size: Math.round(LARGEUR_UTILE * MM), type: WidthType.DXA },
       columnWidths: [
-        Math.round(LARGEUR_UTILE * 0.6 * MM),
-        Math.round(LARGEUR_UTILE * 0.4 * MM),
+        // Le ministère un peu plus large : le numéro « N°____…/…-SR./ » tient sur une ligne
+        Math.round(LARGEUR_UTILE * 0.62 * MM),
+        Math.round(LARGEUR_UTILE * 0.38 * MM),
       ],
       borders: SANS_BORD,
       rows: [
@@ -484,7 +488,8 @@ export async function noteWord(n: NoteWord, avecVisas = true): Promise<Buffer> {
                   ? [ligneVisa('SERVICE DES RECRUTEMENTS', 'SERVICE'), sep()]
                   : []),
                 p(
-                  `N°${n.numero ? ` ${n.numero}` : '__________'}/${e.reference}`,
+                  // Plus de place pour écrire le numéro, et « ./ » après la référence (DG, 01/11/2026)
+                  `N°${n.numero ? ` ${n.numero}` : '______________________'}/${e.reference}./`,
                   {
                     centre: true,
                     gras: true,
@@ -495,13 +500,19 @@ export async function noteWord(n: NoteWord, avecVisas = true): Promise<Buffer> {
             }),
             new TableCell({
               children: [
+                // Un peu plus à droite (DG, 01/11/2026) : centré sur les 32 % de droite
                 p('REPUBLIQUE DU CONGO', {
                   centre: true,
                   gras: true,
                   taille: 10,
+                  retrait: DROITE_ENTETE,
                 }),
-                p('Unité-Travail-Progrès', { centre: true, taille: 9.5 }),
-                sep(),
+                p('Unité-Travail-Progrès', {
+                  centre: true,
+                  taille: 9.5,
+                  retrait: DROITE_ENTETE,
+                }),
+                sep(DROITE_ENTETE),
               ],
             }),
           ],
