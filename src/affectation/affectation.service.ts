@@ -29,7 +29,7 @@ import {
   type Cycle,
 } from '../common/referentiels';
 
-import { normaliser } from '../common/texte';
+import { normaliser, structureCourte } from '../common/texte';
 import { JournalService, ParametresService } from '../core/core.service';
 import {
   Affectation,
@@ -1026,7 +1026,9 @@ export class AffectationService {
       'etablissement',
       'obs',
     ] as const)
-      if (k in dto) maj[k] = dto[k]?.toString().trim() || null;
+      if (dto[k] !== undefined) maj[k] = dto[k]?.toString().trim() || null;
+    // Sur la note : le sigle « DDEPPSA … », jamais le nom complet de la direction départementale
+    if (maj.structure) maj.structure = structureCourte(maj.structure);
     await this.affectations.update(id, maj);
     await this.journal.log(
       u,
@@ -1112,7 +1114,7 @@ export class AffectationService {
       etape: etapeInitiale(u.role),
       typeNote,
       departementId: dto.departementId ?? null,
-      structure: dto.structure?.trim() || null,
+      structure: structureCourte(dto.structure),
       etablissement: dto.etablissement?.trim() || null,
       origine: dto.origine.trim(),
       motif: dto.motif?.trim() || null,
@@ -1180,7 +1182,7 @@ export class AffectationService {
         !r.etablissement
       )
         maj.etablissement = null;
-      if (r.structure) maj.structure = r.structure;
+      if (r.structure) maj.structure = structureCourte(r.structure);
       if (r.etablissement) maj.etablissement = r.etablissement;
       if (r.typeNote === 'ETS' && !aff.obs) maj.obs = 'Ens. actif';
       if (maj.typeNote === 'PERS_ADM' && !maj.structure && !aff.structure) {

@@ -18,7 +18,7 @@ import {
   reconnaitreDiplome,
   REGLES_DIPLOMES,
 } from '../common/referentiels';
-import { cleCompacte, nettoyer } from '../common/texte';
+import { cleCompacte, nettoyer, structureCourte } from '../common/texte';
 import { JournalService } from '../core/core.service';
 import { Affectation, Agent, Grade, RegleDiplome } from '../entities';
 
@@ -108,6 +108,31 @@ export class ConfigurationService implements OnApplicationBootstrap {
     await this.synchroniserCopies();
     await this.miseAJourDuDG();
     await this.ajouterSansDiplome();
+    await this.abregerStructures();
+  }
+
+  /**
+   * Structures enregistrées avec le nom complet d'une direction départementale (choisi dans la
+   * liste de l'organigramme) : remplacées par le sigle « DDEPPSA … » (DG, 01/11/2026). Sans risque
+   * à chaque démarrage : seuls ces textes-là changent.
+   */
+  private async abregerStructures() {
+    for (const table of ['affectation', 'recommandation']) {
+      const lignes = await this.regles.query<
+        { id: string; structure: string }[]
+      >(
+        `SELECT id::text, structure FROM ${table}
+          WHERE structure ILIKE 'Direction d_partementale de l%enseignement pr_scolaire%'`,
+      );
+      for (const l of lignes) {
+        const court = structureCourte(l.structure);
+        if (court && court !== l.structure)
+          await this.regles.query(
+            `UPDATE ${table} SET structure = $2 WHERE id::text = $1`,
+            [l.id, court],
+          );
+      }
+    }
   }
 
   /** La règle « Sans diplôme », ajoutée une fois (supprimée à l'écran, elle ne revient pas). */

@@ -164,3 +164,25 @@ export function codeCategorie(brut: unknown): string | null {
   };
   return codes[k] ?? null;
 }
+
+/**
+ * Structure telle qu'elle s'écrit sur une note de service (DG, 01/11/2026) : jamais le nom complet
+ * d'une direction départementale (« Direction départementale de l'enseignement préscolaire,
+ * primaire, secondaire et de l'alphabétisation (Brazzaville) »), mais son sigle « DDEPPSA Brazzaville ».
+ */
+export function structureCourte(s: string | null | undefined): string | null {
+  const t = s?.replace(/\s+/g, ' ').trim();
+  if (!t) return null;
+  const plat = sansAccents(t).toLowerCase();
+  if (
+    !/^direction departementale de l.?\s*enseignement prescolaire\b/.test(plat)
+  )
+    return t;
+  // Le département : entre parenthèses (« … (Brazzaville) »), sinon après « alphabétisation de/du »
+  const lieu =
+    /\(([^)]+)\)\s*$/.exec(t)?.[1] ??
+    /alphab[ée]tisation\s+(?:de\s+la\s+|de\s+|du\s+|d[’']\s*)?(.+)$/i.exec(
+      t,
+    )?.[1];
+  return lieu?.trim() ? `DDEPPSA ${lieu.trim()}` : 'DDEPPSA';
+}

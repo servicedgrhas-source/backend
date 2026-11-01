@@ -513,13 +513,15 @@ export class ReferentielsService implements OnApplicationBootstrap {
       const lignes = await this.structures.query<
         {
           nom: string;
+          sigle: string | null;
+          type: string;
           cycle: string | null;
           localite: string | null;
           parent: string | null;
           dep: string | null;
         }[]
       >(
-        `SELECT s.nom, s.cycle, s.localite, p.sigle AS parent, d.nom AS dep
+        `SELECT s.nom, s.sigle, s.type, s.cycle, s.localite, p.sigle AS parent, d.nom AS dep
            FROM structure s
            LEFT JOIN structure p ON p.id = s."parentId"
            LEFT JOIN departement d ON d.id = s."departementId"
@@ -528,8 +530,10 @@ export class ReferentielsService implements OnApplicationBootstrap {
         params,
       );
       return lignes.map((l) => ({
-        valeur: l.nom,
-        libelle: l.nom,
+        // Direction départementale : son sigle « DDEPPSA Brazzaville », comme sur les notes (DG, 01/11/2026)
+        valeur: l.type === 'DDEPPSA' && l.sigle ? l.sigle : l.nom,
+        libelle:
+          l.type === 'DDEPPSA' && l.sigle ? `${l.sigle} — ${l.nom}` : l.nom,
         detail: [majuscule(l.cycle ?? ''), l.parent, l.localite, l.dep]
           .filter(Boolean)
           .join(' · '),

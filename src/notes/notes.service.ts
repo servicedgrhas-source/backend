@@ -23,7 +23,7 @@ import {
   type MotifMutation,
   type TypeNoteAffectation,
 } from '../common/referentiels';
-import { entierVersRomain, normaliser } from '../common/texte';
+import { structureCourte, entierVersRomain, normaliser } from '../common/texte';
 import { JournalService, ParametresService } from '../core/core.service';
 import {
   GROUPES_QUOTA,
@@ -351,7 +351,7 @@ export class NotesService {
       specialite: x.specialite,
       etablissement: x.etablissement,
       obs: x.obs ?? 'Ens. actif',
-      structure: x.structure,
+      structure: structureCourte(x.structure),
       origine: x.origine,
     });
 
@@ -1139,6 +1139,12 @@ export class NotesService {
           : n.module === 'NOMINATION'
             ? await this.contenuNomination(n)
             : await this.contenuMutation(n));
+    // Structure : le sigle « DDEPPSA … », jamais le nom complet de la direction départementale,
+    // même dans une note figée (DG, 01/11/2026)
+    for (const sec of contenu.sections ?? [])
+      for (const l of sec.lignes ?? [])
+        if (typeof l.structure === 'string')
+          l.structure = structureCourte(l.structure);
     // Bas de page et repère : simple mise en page, recalculés même pour une note figée
     if (n.module === 'AFFECTATION') {
       const def = NOTES_AFFECTATION[n.typeNote as TypeNoteAffectation];
