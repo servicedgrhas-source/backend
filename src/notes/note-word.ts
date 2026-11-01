@@ -341,15 +341,25 @@ export async function noteWord(n: NoteWord, avecVisas = true): Promise<Buffer> {
         plusLongGrade,
         largeurLigne(String(l.grade ?? ''), 10),
       );
+  // N° : le plus grand numéro tient sur une ligne (« 233 » et non « 23 / 3 », DG 01/11/2026)
+  let plusLongNumero = 0;
+  for (const s of c.sections)
+    for (const l of s.lignes)
+      plusLongNumero = Math.max(
+        plusLongNumero,
+        largeurLigne(String(l.n ?? ''), 10),
+      );
   const largeur = (k: string) =>
-    k === 'grade'
-      ? Math.min(36, Math.max(LARGEUR.grade, Math.ceil(plusLongGrade + 3)))
-      : k === 'specialite'
-        ? Math.min(
-            36,
-            Math.max(LARGEUR.specialite, Math.ceil(motSpecialite + 3)),
-          )
-        : (LARGEUR[k] ?? 20);
+    k === 'n'
+      ? Math.max(LARGEUR.n, Math.ceil(plusLongNumero + 3))
+      : k === 'grade'
+        ? Math.min(36, Math.max(LARGEUR.grade, Math.ceil(plusLongGrade + 3)))
+        : k === 'specialite'
+          ? Math.min(
+              36,
+              Math.max(LARGEUR.specialite, Math.ceil(motSpecialite + 3)),
+            )
+          : (LARGEUR[k] ?? 20);
   const fixes = cles
     .filter((k) => k !== 'nom')
     .reduce((s, k) => s + largeur(k), 0);
