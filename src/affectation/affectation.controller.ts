@@ -11,6 +11,7 @@ import {
   Patch,
   Post,
   Query,
+  Res,
   UploadedFile,
   UseInterceptors,
 } from '@nestjs/common';
@@ -44,6 +45,8 @@ import { LotsReceptionService } from './lots-reception.service';
 import { AffectationsPersonnelService } from '../recensement/affectations-personnel.service';
 import { DoublonsService } from './doublons.service';
 import { OubliesService } from './oublies.service';
+import type { Response } from 'express';
+import { listeExcel, listeWord } from './export-liste';
 
 const DATE = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -562,17 +565,68 @@ export class AffectationController {
     @Query('probleme') probleme?: 'bloquant' | 'avertissement',
     @Query('lots') lots?: string,
     @Query('groupes') groupes?: string,
+    @Query('cycle') cycle?: string,
   ) {
     return this.service.listeAffectations({
       lot: optInt(lot),
       lots: listeInt(lots),
       groupes: listeGroupes(groupes),
       typeNote,
-      departementId: optInt(departementId),
+      // « SANS » : les personnes encore sans département (DG, 01/11/2026)
+      departementId:
+        departementId === 'SANS' ? undefined : optInt(departementId),
+      sansDepartement: departementId === 'SANS',
+      cycle: cycle || undefined,
       statut,
       recherche,
       probleme,
     });
+  }
+
+  /** La même liste, filtrée, en Excel ou en Word (DG, 01/11/2026). */
+  @Get('affectations/export')
+  async exporter(
+    @Res() res: Response,
+    @Query('format') format: string,
+    @Query('titre') titre?: string,
+    @Query('typeNote') typeNote?: string,
+    @Query('departementId') departementId?: string,
+    @Query('statut') statut?: string,
+    @Query('lots') lots?: string,
+    @Query('groupes') groupes?: string,
+    @Query('cycle') cycle?: string,
+  ) {
+    if (format !== 'xlsx' && format !== 'docx')
+      throw new BadRequestException('Format : xlsx ou docx');
+    const personnes = await this.service.listeAffectations({
+      lots: listeInt(lots),
+      groupes: listeGroupes(groupes),
+      typeNote,
+      departementId:
+        departementId === 'SANS' ? undefined : optInt(departementId),
+      sansDepartement: departementId === 'SANS',
+      cycle: cycle || undefined,
+      statut,
+    });
+    const t =
+      (titre ?? '').replace(/\s+/g, ' ').trim().slice(0, 200) ||
+      'Liste des personnes à affecter';
+    const contenu =
+      format === 'xlsx'
+        ? await listeExcel(personnes, t)
+        : await listeWord(personnes, t);
+    const nom = `${t.replace(/[\\/:*?"<>|]/g, '-').slice(0, 120)}.${format}`;
+    res.setHeader(
+      'Content-Type',
+      format === 'xlsx'
+        ? 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+        : 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    );
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename*=UTF-8''${encodeURIComponent(nom)}`,
+    );
+    res.send(contenu);
   }
 
   @Roles(...ROLES_TRAITEMENT)

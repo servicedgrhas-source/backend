@@ -1,3 +1,4 @@
+import { CYCLE_DU_TYPE } from './export-liste';
 import {
   anomaliesAJour,
   cleTexte,
@@ -73,6 +74,10 @@ export interface FiltreAffectations {
   probleme?: 'bloquant' | 'avertissement';
   /** Personnes placées par une répartition du quota « Autres ». */
   repartitionId?: string;
+  /** Personnes encore sans département d'affectation (DG, 01/11/2026). */
+  sansDepartement?: boolean;
+  /** Cycle de la note : PRESCOLAIRE, PRIMAIRE, COLLEGE, LYCEE, ADMINISTRATION. */
+  cycle?: string;
 }
 
 /**
@@ -781,6 +786,15 @@ export class AffectationService {
     if (f.typeNote) q.andWhere('f.typeNote = :t', { t: f.typeNote });
     if (f.departementId)
       q.andWhere('f.departementId = :d', { d: f.departementId });
+    if (f.sansDepartement) q.andWhere('f.departementId IS NULL');
+    if (f.cycle) {
+      const types = Object.entries(CYCLE_DU_TYPE)
+        .filter(([, c]) => c === f.cycle)
+        .map(([t]) => t);
+      q.andWhere('f.typeNote IN (:...typesCycle)', {
+        typesCycle: types.length ? types : ['-'],
+      });
+    }
     if (f.statut) q.andWhere('f.statut = :s', { s: f.statut });
     if (f.repartitionId)
       q.andWhere('a.repartitionId = :rep', { rep: f.repartitionId });
