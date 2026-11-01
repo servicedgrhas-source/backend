@@ -34,6 +34,9 @@ import {
   GROUPES_QUOTA,
   groupeQuota,
   libelleLot,
+  libelleLots,
+  ordreLots,
+  enTete,
   repereLot,
 } from '../common/lots';
 import {
@@ -1057,23 +1060,59 @@ export class NotesService {
 
   /* ============================ Commun =============================== */
 
+  /**
+   * Lots réunis dans une note (sans son lot de départ), une seule fois chacun même après
+   * plusieurs réunions, dans l'ordre des lots du fichier (I, II, III…).
+   */
+  private lotsReunis(
+    n: NoteService,
+    lot?: LotPublication | null,
+    lots?: Map<number, LotPublication>,
+  ) {
+    const vus = new Set(lot ? [libelleLot(lot)] : []);
+    return [...new Set(n.lotsFusionnes ?? [])]
+      .filter((id) => id !== n.lotPublicationId)
+      .map((id) => lots?.get(id))
+      .filter((l): l is LotPublication => !!l)
+      .sort(ordreLots)
+      .filter((l) => {
+        const t = libelleLot(l);
+        if (vus.has(t)) return false;
+        vus.add(t);
+        return true;
+      });
+  }
+
   private libelle(
     n: NoteService,
     lot?: LotPublication | null,
     lots?: Map<number, LotPublication>,
   ) {
-    const reunis = (n.lotsFusionnes ?? [])
-      .map((id) => lots?.get(id))
-      .filter((l): l is LotPublication => !!l)
-      .map((l) => ` + ${libelleLot(l)}`)
-      .join('');
+    // Lots réunis : écrits en bref, « Arrêtés — lots VIII, I et II » (DG, 01/11/2026)
+    const reunis = this.lotsReunis(n, lot, lots);
     if (n.module === 'NOMINATION')
       return `Nomination – ${CATEGORIE_NOMINATION.get(n.typeNote)?.formule ?? n.typeNote} – ${n.anneeScolaire}${n.rang > 1 ? ` (suite ${n.rang - 1})` : ''}`;
     if (n.module === 'ENROLEMENT')
       return `Enrôlement – ${DIPLOMES_ENROLEMENT[n.typeNote]?.libelle ?? n.typeNote} – ${n.anneeScolaire}${n.rang > 1 ? ` (suite ${n.rang - 1})` : ''}`;
     if (n.module === 'AFFECTATION')
-      return `Affectation – ${NOTES_AFFECTATION[n.typeNote as TypeNoteAffectation]?.libelle ?? n.typeNote} – ${lot ? libelleLot(lot) : 'lot ?'}${reunis}${n.rang > 1 ? ` (suite ${n.rang - 1})` : ''}`;
+      return `Affectation – ${NOTES_AFFECTATION[n.typeNote as TypeNoteAffectation]?.libelle ?? n.typeNote} – ${lot ? libelleLots(enTete(lot, reunis)) : 'lot ?'}${n.rang > 1 ? ` (suite ${n.rang - 1})` : ''}`;
     return `Mutation – ${MOTIFS[n.motif as MotifMutation]?.libelle} – ${LIBELLE_GROUPE[n.typeNote as GroupeMutation]}${n.rang > 1 ? ` (suite ${n.rang - 1})` : ''}`;
+  }
+
+  /** Note réunie : son lot de départ et les lots réunis avec lui ; rien pour une note d'un seul lot. */
+  private reunion(
+    n: NoteService,
+    lot?: LotPublication | null,
+    lots?: Map<number, LotPublication>,
+  ) {
+    if (n.module !== 'AFFECTATION' || !lot) return null;
+    const reunis = this.lotsReunis(n, lot, lots);
+    if (!reunis.length) return null;
+    return {
+      depart: libelleLot(lot),
+      reunis: reunis.map((x) => libelleLot(x)),
+      resume: libelleLots(reunis),
+    };
   }
 
   async liste(module?: string, lot?: number) {
@@ -1144,6 +1183,8 @@ export class NotesService {
         lotNumero,
         lotLibelle: lot ? libelleLot(lot) : null,
         libelle: this.libelle(n, lot, lots),
+        // À titre d'information : la note de départ et les lots réunis avec elle (DG, 01/11/2026)
+        reunion: this.reunion(n, lot, lots),
         total,
         enAttente,
       });
@@ -1202,9 +1243,14 @@ export class NotesService {
       contenu.piedDePage = `${OBJET_MUTATION[motif]}/${GROUPE_COURT[n.typeNote as GroupeMutation]}/${n.anneeScolaire}`;
       contenu.repere = `Mut./${ABREGE_MOTIF[motif]}`;
     }
-    const lotsReunis = n.lotsFusionnes?.length
-      ? await this.lots.find({ where: { id: In(n.lotsFusionnes) } })
-      : [];
+    const parId = new Map(
+      (n.lotsFusionnes?.length
+        ? await this.lots.find({ where: { id: In(n.lotsFusionnes) } })
+        : []
+      ).map((x) => [x.id, x]),
+    );
+    // Une fois chacun, dans l'ordre du fichier, sans le lot de départ
+    const lotsReunis = this.lotsReunis(n, lot, parId);
     return {
       ...n,
       contenu,

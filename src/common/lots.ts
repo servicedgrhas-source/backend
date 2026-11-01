@@ -148,3 +148,58 @@ export const sqlLibelleLot = (
   ELSE (CASE ${l}."typeTexte" WHEN 'ARRETE' THEN 'Arrêtés' WHEN 'DECRET_PM' THEN 'Décrets PM' ELSE 'Décrets PR' END)
     || ' ' || (CASE WHEN ${l}.autres THEN 'quota « Autres »' WHEN ${l}.quota IS NULL THEN 'sans quota' ELSE 'quota ' || ${l}.quota END)
     || ' — lot ' || ${l}.rang END`;
+
+/**
+ * Plusieurs lots en une fois, groupés par famille de textes : « Arrêtés — lots I, II et VIII »,
+ * « Arrêtés — lot VIII + Décrets — lot III ». Un lot en double (même libellé) n'est écrit qu'une fois.
+ */
+export function libelleLots(lots: Parameters<typeof libelleLot>[0][]): string {
+  const familles = new Map<string, string[]>();
+  for (const l of lots) {
+    const texte = libelleLot(l);
+    const i = texte.lastIndexOf(' — lot ');
+    const [famille, numero] =
+      i >= 0 ? [texte.slice(0, i), texte.slice(i + 7)] : [texte, ''];
+    if (!familles.has(famille)) familles.set(famille, []);
+    const n = familles.get(famille)!;
+    if (!n.includes(numero)) n.push(numero);
+  }
+  return [...familles]
+    .map(([famille, n]) => {
+      const numeros = n.filter(Boolean);
+      if (!numeros.length) return famille;
+      const liste =
+        numeros.length === 1
+          ? numeros[0]
+          : `${numeros.slice(0, -1).join(', ')} et ${numeros[numeros.length - 1]}`;
+      return `${famille} — lot${numeros.length > 1 ? 's' : ''} ${liste}`;
+    })
+    .join(' + ');
+}
+
+/** Ordre des lots du fichier : I, II, III… (à défaut, le numéro du lot). */
+export function ordreLots(
+  a: { numero: number; numeroFichier?: number | null },
+  b: { numero: number; numeroFichier?: number | null },
+) {
+  return (
+    (a.numeroFichier ?? a.numero) - (b.numeroFichier ?? b.numero) ||
+    a.numero - b.numero
+  );
+}
+
+/**
+ * Lots d’une note réunie, pour son titre : d’abord la famille du lot de départ, puis les autres,
+ * chacune dans l’ordre du fichier.
+ */
+export function enTete<T extends Parameters<typeof libelleLot>[0]>(
+  depart: T,
+  reunis: T[],
+): T[] {
+  const famille = (l: T) => libelleLot(l).replace(/ — lot [^—]*$/, '');
+  const tous = [depart, ...reunis].sort(ordreLots);
+  return [
+    ...tous.filter((l) => famille(l) === famille(depart)),
+    ...tous.filter((l) => famille(l) !== famille(depart)),
+  ];
+}
