@@ -74,6 +74,11 @@ import { SuiviController } from './etablissements/suivi.controller';
 import { SuiviService } from './etablissements/suivi.service';
 import { DemandesController } from './circuit/demandes.controller';
 import { DemandesService } from './circuit/demandes.service';
+import {
+  PortailPrestationsController,
+  PrestationsController,
+} from './prestations/prestations.controller';
+import { PrestationsService } from './prestations/prestations.service';
 import { LiaisonVolontairesService } from './recensement/liaison-volontaires.service';
 import { AffectationsPersonnelService } from './recensement/affectations-personnel.service';
 import { DoublonsService } from './affectation/doublons.service';
@@ -114,6 +119,8 @@ import { ReferentielsService } from './referentiels/referentiels.service';
   controllers: [
     SauvegardeController,
     DemandesController,
+    PrestationsController,
+    PortailPrestationsController,
     DoublonsController,
     RattachementController,
     EtablissementsController,
@@ -193,6 +200,7 @@ import { ReferentielsService } from './referentiels/referentiels.service';
     NominationsService,
     SuiviService,
     DemandesService,
+    PrestationsService,
     ExcelRecensementService,
     LiaisonVolontairesService,
     AffectationsPersonnelService,

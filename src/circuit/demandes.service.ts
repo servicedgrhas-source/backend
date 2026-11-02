@@ -17,6 +17,7 @@ import {
   type DemandeDto,
 } from '../mutation/mutation.service';
 import { RecensementService } from '../recensement/recensement.service';
+import { CODES_PRESTATIONS } from '../prestations/definitions';
 import { CircuitService } from './circuit.service';
 
 /**
@@ -57,7 +58,10 @@ export class DemandesService {
 
   /** Types ouverts aux demandes, séparés en mutations et autres prestations. */
   async types() {
-    const types = await this.circuit.listeTypes(true);
+    // Les prestations qui ont leur propre module (prestations/) n'y passent pas
+    const types = (await this.circuit.listeTypes(true)).filter(
+      (t) => !CODES_PRESTATIONS.has(t.code),
+    );
     return Promise.all(
       types.map(async (t) => ({
         code: t.code,

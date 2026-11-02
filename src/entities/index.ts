@@ -1696,6 +1696,80 @@ export class Nomination {
   @UpdateDateColumn() modifieLe: Date;
 }
 
+/* ===================== Demandes de prestations (module) ===================== */
+
+/**
+ * Demande de prestation d'un agent de la base du personnel (affectation, nomination…), à part des
+ * mutations : déposée par sa structure ou sur le portail, elle suit le circuit du formulaire de
+ * la DGRHAS (voie hiérarchique, circuit interne, décision) jusqu'à l'acte délivré.
+ */
+@Entity('demande_prestation')
+export class DemandePrestation {
+  @PrimaryGeneratedColumn('uuid') id: string;
+  /** N° d'enregistrement (affiché « P-12 »), propre à ces demandes. */
+  @Index({ unique: true }) @Column({ type: 'int' }) numero: number;
+  /** Code de la prestation (prestations/definitions.ts). */
+  @Index() @Column() type: string;
+  /** Fiche de la base du personnel : obligatoire. */
+  @Index() @Column({ type: 'int' }) agentId: number;
+  /** Ce que disait la fiche au dépôt (le formulaire reste lisible si la fiche change). */
+  @Column({ type: 'jsonb' }) agent: {
+    nomComplet: string;
+    genre: 'M' | 'F';
+    matricule: string | null;
+    numeroFiche: string | null;
+    statut: string;
+    grade: string | null;
+    categorie: string | null;
+    echelle: string | null;
+    echelon: string | null;
+    fonction: string | null;
+    lieuService: string | null;
+    ville: string | null;
+    departementId: number | null;
+    departement: string | null;
+    structureId: number | null;
+    telephone: string | null;
+  };
+  @Column({ type: 'text' }) objet: string;
+  @Column({ type: 'text', nullable: true }) precisions: string | null;
+  /** Champs propres à la prestation (département souhaité, poste sollicité…). */
+  @Column({ type: 'jsonb', default: {} }) details: Record<string, unknown>;
+  /** STRUCTURE (déposée depuis un compte) ou PORTAIL (par l'agent). */
+  @Column({ default: 'STRUCTURE' }) canal: string;
+  @Column({ type: 'varchar', nullable: true, select: false }) codeSuivi:
+    string | null;
+  @Column({ type: 'jsonb', default: () => "'[]'" }) circuit: EtapeCircuit[];
+  /** Étape en cours ; null une fois la décision prise (accordée ou rejetée). */
+  @Column({ type: 'int', nullable: true }) etapeCourante: number | null;
+  @Column({ type: 'varchar', nullable: true }) decideur: string | null;
+  /** ACCORDEE, REJETEE ou EN_INSTANCE. */
+  @Index() @Column({ type: 'varchar', nullable: true }) decision: string | null;
+  @Column({ type: 'text', nullable: true }) decisionMotivation: string | null;
+  @Column({ type: 'varchar', nullable: true }) decisionPar: string | null;
+  @Column({ type: 'timestamptz', nullable: true }) decisionLe: Date | null;
+  /** Retirée (déposée par erreur) : hors du circuit, gardée pour l'historique. */
+  @Column({ type: 'boolean', default: false }) retiree: boolean;
+  @Column({ type: 'text', nullable: true }) motifRetrait: string | null;
+  @Column({ type: 'varchar', nullable: true }) creePar: string | null;
+  @CreateDateColumn() creeLe: Date;
+  @UpdateDateColumn() modifieLe: Date;
+}
+
+/** Pièce (scan ou photo) d'une demande de prestation. */
+@Entity('piece_prestation')
+export class PiecePrestation {
+  @PrimaryGeneratedColumn('uuid') id: string;
+  @Index() @Column({ type: 'uuid' }) demandeId: string;
+  @Column() libelle: string;
+  @Column() nomOrigine: string;
+  @Column() fichier: string;
+  @Column() mime: string;
+  @Column({ type: 'int' }) taille: number;
+  @Column({ type: 'varchar', nullable: true }) ajoutePar: string | null;
+  @CreateDateColumn() creeLe: Date;
+}
+
 export const ENTITES = [
   Utilisateur,
   Journal,
@@ -1754,4 +1828,6 @@ export const ENTITES = [
   BesoinPersonnel,
   Nomination,
   DoublonDistinct,
+  DemandePrestation,
+  PiecePrestation,
 ];

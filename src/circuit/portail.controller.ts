@@ -20,6 +20,7 @@ import { MOTIFS, MOTIFS_MUTATION, LIBELLE_CYCLE } from '../common/referentiels';
 import { Departement } from '../entities';
 import { StockageService } from '../common/stockage';
 import { MutationService } from '../mutation/mutation.service';
+import { CODES_PRESTATIONS } from '../prestations/definitions';
 import { CircuitService } from './circuit.service';
 
 /** Demandes reçues par adresse IP (limite contre les envois en masse). */
@@ -45,7 +46,9 @@ export class PortailController {
   /** Ce qu'il faut pour remplir le formulaire : départements, structures, types ouverts. */
   @Get('references')
   async references() {
-    const types = await this.circuit.listeTypes(true);
+    const types = (await this.circuit.listeTypes(true)).filter(
+      (t) => !CODES_PRESTATIONS.has(t.code),
+    );
     return {
       departements: (await this.deps.find({ order: { ordre: 'ASC' } })).map(
         (d) => ({ id: d.id, nom: d.nom }),
@@ -122,7 +125,9 @@ export class PortailController {
       typeof dto[k] === 'string' ? dto[k].slice(0, max) : null;
     const entier = (k: string) =>
       Number.isInteger(dto[k]) ? (dto[k] as number) : null;
-    const types = await this.circuit.listeTypes(true);
+    const types = (await this.circuit.listeTypes(true)).filter(
+      (t) => !CODES_PRESTATIONS.has(t.code),
+    );
     const type = types.find((t) => t.code === dto.typePrestation);
     if (!type) {
       await effacer();

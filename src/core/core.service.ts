@@ -163,6 +163,14 @@ export const PARAMETRES_DEFAUT: Record<string, [string, string]> = {
     'Monsieur le Directeur de Cabinet et cher collègue,',
     'Formule d’appel du soit-transmis',
   ],
+  SOIT_TRANSMIS_BUDGET_DESTINATAIRE: [
+    'Monsieur le Directeur de Cabinet du Ministre des Finances et du Budget',
+    'Destinataire des soit-transmis au Budget (demandes de prestations : prise en charge en solde, primes…)',
+  ],
+  SOIT_TRANSMIS_BUDGET_APPEL: [
+    'Monsieur le Directeur de Cabinet et cher collègue,',
+    'Formule d’appel des soit-transmis au Budget',
+  ],
   ADRESSE_PIED: [
     'Contacts : BP : 169 avenue des 1ers Jeux Africains, face Stade Marchand Brazzaville',
     'Adresse imprimée en pied de page',

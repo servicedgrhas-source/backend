@@ -17,6 +17,7 @@ import {
   Alerte,
   AlerteLue,
   DemandeMutation,
+  DemandePrestation,
   Departement,
   InstructionDemande,
   Structure,
@@ -125,6 +126,8 @@ export class CircuitService implements OnModuleInit {
     private readonly types: Repository<TypePrestation>,
     @InjectRepository(DemandeMutation)
     private readonly demandes: Repository<DemandeMutation>,
+    @InjectRepository(DemandePrestation)
+    private readonly prestations: Repository<DemandePrestation>,
     @InjectRepository(Alerte) private readonly alertes: Repository<Alerte>,
     @InjectRepository(AlerteLue) private readonly lues: Repository<AlerteLue>,
     @InjectRepository(InstructionDemande)
@@ -1037,6 +1040,23 @@ export class CircuitService implements OnModuleInit {
     ).map((s) => s.id);
   }
 
+  /**
+   * Nom écrit sous le visa d'une étape : celui du compte, ou « X, par délégation de Y » quand il
+   * vise pour un collègue absent (utilisé par le module des demandes de prestations).
+   */
+  async nomDuVisa(u: UtilisateurConnecte, structureId: number | null) {
+    if (
+      u.role === 'ADMIN' ||
+      !structureId ||
+      (await this.structuresPropres(u)).includes(structureId)
+    )
+      return u.nom;
+    for (const t of await this.delegationsRecues(u.id))
+      if ((await this.structuresPropres(this.profil(t))).includes(structureId))
+        return `${u.nom}, par délégation de ${t.nom}`;
+    return u.nom;
+  }
+
   /** Le compte peut-il viser et donner son avis à l'étape en cours ? */
   async peutAgir(u: UtilisateurConnecte, d: DemandeMutation) {
     if (d.etapeCourante === null || !d.circuit || d.retiree || d.noteId)
@@ -1410,8 +1430,21 @@ export class CircuitService implements OnModuleInit {
         : []
       ).map((d) => [d.id, d]),
     );
+    // Alertes des demandes de prestations (module à part) : même suivi, autre page
+    const absentes = [...new Set(page.map((a) => a.demandeId))].filter(
+      (id) => !demandes.has(id),
+    );
+    const prestations = new Map(
+      (absentes.length
+        ? await this.prestations.find({
+            where: { id: In(absentes) },
+            select: ['id', 'retiree', 'decision', 'circuit', 'etapeCourante'],
+          })
+        : []
+      ).map((d) => [d.id, d]),
+    );
     const aujourdhui = (id: string) => {
-      const d = demandes.get(id);
+      const d = demandes.get(id) ?? prestations.get(id);
       if (!d) return 'Demande supprimée';
       if (d.retiree) return 'Demande retirée';
       if (d.decision === 'ACCORDEE') return 'Accordée';
@@ -1427,6 +1460,9 @@ export class CircuitService implements OnModuleInit {
         ...a,
         lue: !!a.lue,
         aujourdhui: aujourdhui(a.demandeId),
+        lien: prestations.has(a.demandeId)
+          ? `/prestations/${a.demandeId}`
+          : `/mutation/${a.demandeId}`,
       })),
       suite,
     };
