@@ -1046,6 +1046,23 @@ export class PrestationsService {
     return this.fiche(u, id);
   }
 
+  /**
+   * « Modifier l'introduction » du soit-transmis (comme pour les notes) : le paragraphe écrit à la
+   * main remplace celui du modèle ; vide, le modèle revient.
+   */
+  async modifierLettre(u: UtilisateurConnecte, id: string, texte: unknown) {
+    if (!this.toutVoir(u)) throw new ForbiddenException('Réservé à la DGRHAS.');
+    const d = await this.obtenir(u, id);
+    if (!definition(d.type)?.acteModele.transmission)
+      throw new BadRequestException('Cette demande n’a pas de soit-transmis.');
+    const t = typeof texte === 'string' ? texte.trim().slice(0, 4000) : '';
+    await this.demandes.update(id, { texteLettre: t || null });
+    await this.journal.log(u, 'PRESTATION_LETTRE', 'demande_prestation', id, {
+      modele: !t,
+    });
+    return this.acte(u, id);
+  }
+
   /** Fiche du moment, pour compléter un instantané ancien (indice, prise de service…). */
   private async agentComplet(d: DemandePrestation) {
     const manque = ['indice', 'texteRecrutement', 'datePriseService'].some(
@@ -1120,7 +1137,7 @@ export class PrestationsService {
       // Comme les modèles : « Le directeur général des ressources humaines et de l’administration scolaire »
       expediteur: cabinet
         ? rendre(def.signataire, ctx).replace(/,$/, '')
-        : 'Le directeur général des ressources humaines et de l’administration scolaire',
+        : 'Le Directeur général des ressources humaines et de l’administration scolaire',
       signataireNom: cabinet
         ? this.params.get('SIGNATAIRE_LISTE_NOM') || null
         : this.params.get('DG_NOM') || d.decisionPar || null,
@@ -1287,6 +1304,7 @@ export class PrestationsService {
       transmission: m.transmission
         ? ecrireTransmission(def, [d], () => ctx, {
             ...this.parametresLettre(def, ctx, d),
+            corps: d.texteLettre,
           })
         : null,
       retour: this.retourDe(d),

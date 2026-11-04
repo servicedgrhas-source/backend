@@ -159,6 +159,14 @@ export interface LettreTransmission {
   objet: [string, string];
   appel: string;
   corps: string;
+  /**
+   * Ce qui ressort dans le paragraphe (remarque du 05/11/2026) : la demande (« une (01) demande de
+   * prise en charge en solde ») en gras et soulignée, le nom de l'intéressé en gras. Appliqué aussi
+   * à un texte modifié à la main, là où ces mots y sont encore.
+   */
+  miseEnValeur: { grasSouligne: string[]; gras: string[] };
+  /** Le paragraphe a été modifié à la main (« Modifier l'introduction »). */
+  texteModifie: boolean;
   colonnes: { cle: ColonneTransmission; libelle: string }[];
   lignes: { numero: string; nomComplet: string; valeurs: string[]; reference: string }[];
   politesse: string;
@@ -191,6 +199,8 @@ export function ecrireTransmission(
     suffixeNumero: string;
     lieu: string;
     reference: (n: number) => string;
+    /** Paragraphe écrit à la main à la place de celui du modèle (demande seule). */
+    corps?: string | null;
   },
 ): LettreTransmission {
   const premier = contexte(demandes[0]);
@@ -207,9 +217,27 @@ export function ecrireTransmission(
       `${o.apres}.`,
     ],
     appel: p.appel,
-    corps: collective
-      ? `J’ai l’honneur de vous faire parvenir, pour compétence, ${nombre} ${corpsObjet}, formulées par les agents dont les noms et prénoms suivent, conformément au tableau ci-après :`
-      : `J’ai l’honneur de vous faire parvenir, pour compétence, ${phraseIndividuelle(def, premier)}`,
+    corps:
+      p.corps?.trim() ||
+      (collective
+        ? `J’ai l’honneur de vous faire parvenir, pour compétence, ${nombre} ${corpsObjet}, formulées par les agents dont les noms et prénoms suivent, conformément au tableau ci-après :`
+        : `J’ai l’honneur de vous faire parvenir, pour compétence, ${phraseIndividuelle(def, premier)}`),
+    texteModifie: !!p.corps?.trim(),
+    miseEnValeur: {
+      grasSouligne: [
+        collective
+          ? `${nombre} ${corpsObjet}`
+          : `${t.article === 'la' ? 'la demande' : nombreDemandes(1)} ${corpsObjet}`,
+      ],
+      gras: collective
+        ? []
+        : [
+            demandes[0].agent.nomComplet,
+            ...(typeof demandes[0].details?.ayantDroit === 'string'
+              ? [demandes[0].details.ayantDroit]
+              : []),
+          ],
+    },
     colonnes: collective
       ? t.colonnes.map((cle) => ({ cle, libelle: COLONNES[cle] }))
       : [],

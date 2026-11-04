@@ -165,11 +165,11 @@ export const PARAMETRES_DEFAUT: Record<string, [string, string]> = {
   ],
   // Comme les modèles de la DGRHAS (04/11/2026) : la lettre va au Directeur général du budget
   SOIT_TRANSMIS_BUDGET_DESTINATAIRE: [
-    'Monsieur le directeur général du budget',
+    'Monsieur le Directeur général du budget',
     'Destinataire des soit-transmis au Budget (demandes de prestations : prise en charge en solde, primes…)',
   ],
   SOIT_TRANSMIS_BUDGET_APPEL: [
-    'Monsieur le directeur général et cher collègue,',
+    'Monsieur le Directeur général et cher collègue,',
     'Formule d’appel des soit-transmis au Budget',
   ],
   SOIT_TRANSMIS_PRESTATION_REFERENCE: [

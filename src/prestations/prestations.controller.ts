@@ -9,6 +9,7 @@ import {
   Param,
   ParseIntPipe,
   Post,
+  Put,
   Query,
   Req,
   Res,
@@ -121,6 +122,16 @@ export class PrestationsController {
   @Get(':id')
   fiche(@Utilisateur() u: UtilisateurConnecte, @Param('id') id: string) {
     return this.service.fiche(u, id);
+  }
+
+  /** Paragraphe du soit-transmis écrit à la main (vide : celui du modèle). */
+  @Put(':id/lettre')
+  modifierLettre(
+    @Utilisateur() u: UtilisateurConnecte,
+    @Param('id') id: string,
+    @Body('texte') texte?: string,
+  ) {
+    return this.service.modifierLettre(u, id, texte);
   }
 
   /** Retour du service destinataire (Budget, Fonction publique) : traité ou non traité. */

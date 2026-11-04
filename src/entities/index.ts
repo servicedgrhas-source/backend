@@ -1765,6 +1765,8 @@ export class DemandePrestation {
    * 03/11/2026) : TRAITE ou NON_TRAITE ; vide tant qu'il n'est pas revenu (« en attente »).
    */
   @Column({ type: 'varchar', nullable: true }) retourEtat: string | null;
+  /** Paragraphe du soit-transmis modifié à la main (« Modifier l'introduction »), sinon celui du modèle. */
+  @Column({ type: 'text', nullable: true }) texteLettre: string | null;
   @Column({ type: 'text', nullable: true }) retourNote: string | null;
   @Column({ type: 'varchar', nullable: true }) retourPar: string | null;
   @Column({ type: 'timestamptz', nullable: true }) retourLe: Date | null;

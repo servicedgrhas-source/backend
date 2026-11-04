@@ -68,8 +68,14 @@ export function valeurRepere(repere: string, c: ContexteActe): string | null {
   const a = c.agent;
   const manque = (v: string | null | undefined) => (v ? String(v) : MANQUE);
   if (repere === 'civilite') return femme ? 'madame' : 'monsieur';
+  // « Instituteur » → « instituteur » ; un grade écrit en capitales (« CONTRACTUEL CATEG. C… »)
+  // reste tel quel, sinon il deviendrait « cONTRACTUEL »
   if (repere === 'grade')
-    return a.grade ? a.grade.charAt(0).toLowerCase() + a.grade.slice(1) : null;
+    return a.grade
+      ? /[a-zà-ÿ]/.test(a.grade.slice(1))
+        ? a.grade.charAt(0).toLowerCase() + a.grade.slice(1)
+        : a.grade
+      : null;
   if (repere === 'echelon')
     return a.echelon
       ? `${a.echelon}${a.echelon === '1' ? 'er' : 'e'} échelon`

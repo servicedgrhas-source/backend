@@ -158,6 +158,23 @@ describe('Soit-transmis des demandes de prestation (modèles de la DGRHAS)', () 
     expect(l.corps).toMatch(/pour compétence, la demande de mandatement de la prime de risque et santé formulée par monsieur ZZTESTFICTIF Agent 7, /);
   });
 
+  it('grade écrit en capitales dans la fiche : gardé tel quel (pas « cONTRACTUEL »)', () => {
+    const d = demande('PRISE_EN_CHARGE_SOLDE', 8);
+    (d.agent as unknown as Record<string, string>).grade = 'CONTRACTUEL CATEG. C ECHELLE 8';
+    (d.agent as unknown as Record<string, string>).statut = 'CONTRACTUEL';
+    const l = ecrireTransmission(definition('PRISE_EN_CHARGE_SOLDE')!, [d], ctxDe('PRISE_EN_CHARGE_SOLDE'), P);
+    expect(l.corps).toContain('monsieur ZZTESTFICTIF Agent 8, CONTRACTUEL CATEG. C ECHELLE 8 de 1er échelon, indice 488, engagé dans la fonction publique par');
+  });
+
+  it('mise en valeur : la demande en gras soulignée, le nom en gras ; introduction modifiée gardée', () => {
+    let l = seule('PRISE_EN_CHARGE_SOLDE');
+    expect(l.miseEnValeur).toEqual({ grasSouligne: ['une (01) demande de prise en charge en solde'], gras: ['ZZTESTFICTIF Agent 7'] });
+    expect(l.corps).toContain(l.miseEnValeur.grasSouligne[0]);
+    const d = demande('PRISE_EN_CHARGE_SOLDE', 7);
+    l = ecrireTransmission(definition('PRISE_EN_CHARGE_SOLDE')!, [d], ctxDe('PRISE_EN_CHARGE_SOLDE'), { ...P, corps: 'Texte ZZ écrit à la main.' });
+    expect([l.corps, l.texteModifie]).toEqual(['Texte ZZ écrit à la main.', true]);
+  });
+
   it('modèles à l’objet coupé : situation matrimoniale, fin de carrière, RCA, cessation de paiement', () => {
     let l = seule('RECTIFICATIF_IDENTITE', { nature: 'SITUATION_MATRIMONIALE' });
     expect(l.objet).toEqual(['Transmission d’une (01) demande de changement', 'de la situation matrimoniale sur le bulletin de solde.']);
