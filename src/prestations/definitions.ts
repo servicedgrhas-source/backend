@@ -48,6 +48,38 @@ export interface ModeleActe {
   lettre?: { destinataire: string; objet: string; appel: string };
   articles: string[];
   ampliations: string[];
+  /**
+   * Soit-transmis écrit comme les modèles de la DGRHAS (04/11/2026) : « Transmission d’une (01)
+   * demande de … », ou de plusieurs, avec le tableau des agents (transmission collective).
+   */
+  transmission?: TransmissionModele;
+}
+
+/** Colonnes du tableau d'une transmission collective (après « N° » et « Noms et prénoms »). */
+export type ColonneTransmission =
+  | 'GRADE'
+  | 'FONCTION'
+  | 'TEXTE_RECRUTEMENT'
+  | 'TEXTE_PROMOTION'
+  | 'NOTE_NOMINATION'
+  | 'DATE_PRISE_SERVICE'
+  | 'MATRICULE'
+  | 'STRUCTURE'
+  | 'DEPARTEMENT';
+
+export interface TransmissionModele {
+  /** Ce qui suit « demande(s) » : « de prise en charge en solde » (repères permis). */
+  demande: string;
+  /** Après l'identité de l'agent, avant « en service à » (« intégré par l'arrêté… »). */
+  apresIdentite?: string;
+  /** À la fin de la phrase (« , depuis le 12/09/2025 »). */
+  suite?: string;
+  /**
+   * Toute la phrase après « pour compétence, », quand elle ne suit pas le modèle commun (capital
+   * décès : la demande vient de l'ayant droit).
+   */
+  corps?: string;
+  colonnes: ColonneTransmission[];
 }
 
 export interface PieceExigee {
@@ -125,8 +157,12 @@ const BULLETIN: PieceExigee = {
 const CV: PieceExigee = { libelle: 'Curriculum vitae', obligatoire: true };
 
 /** Repères communs des modèles d'acte. */
+/**
+ * Dernière ligne avant les articles (DG, 03/11/2026) : le signataire est en bas de l'acte, on
+ * n'écrit plus « Le Ministre… DÉCIDE ».
+ */
 const VU_DEMANDE =
-  'Vu la demande de {f:l’intéressé|l’intéressée} et les avis recueillis dans l’ordre hiérarchique ;';
+  'Au vu de la demande de {f:l’intéressé|l’intéressée} et des avis :';
 const EFFET =
   'La présente note de service prend effet à compter de sa date de signature.';
 const DDEPPSA_DE =
@@ -141,7 +177,7 @@ const AMPLIATIONS = [
 const NOTE_MINISTRE = {
   entete: 'DGRHAS' as const,
   preambule: [VU_DEMANDE],
-  formule: 'DÉCIDE' as const,
+  formule: null,
   forme: 'ARTICLES' as const,
   ampliations: AMPLIATIONS,
 };
@@ -244,6 +280,50 @@ const AU_BUDGET = {
   appel: '{param:SOIT_TRANSMIS_BUDGET_APPEL}',
 };
 const SIGNE_CABINET = '{param:SIGNATAIRE_LISTE_TITRE}';
+/** Colonnes des tableaux des modèles de la DGRHAS (transmissions de plusieurs demandes). */
+const COLS_BASE: ColonneTransmission[] = [
+  'GRADE',
+  'FONCTION',
+  'DATE_PRISE_SERVICE',
+  'MATRICULE',
+  'STRUCTURE',
+  'DEPARTEMENT',
+];
+const COLS_RECRUTEMENT: ColonneTransmission[] = [
+  'GRADE',
+  'FONCTION',
+  'TEXTE_RECRUTEMENT',
+  'DATE_PRISE_SERVICE',
+  'MATRICULE',
+  'STRUCTURE',
+  'DEPARTEMENT',
+];
+const COLS_NOMINATION: ColonneTransmission[] = [
+  'GRADE',
+  'FONCTION',
+  'NOTE_NOMINATION',
+  'DATE_PRISE_SERVICE',
+  'MATRICULE',
+  'STRUCTURE',
+  'DEPARTEMENT',
+];
+const COLS_PROMOTION: ColonneTransmission[] = [
+  'GRADE',
+  'FONCTION',
+  'TEXTE_PROMOTION',
+  'DATE_PRISE_SERVICE',
+  'MATRICULE',
+  'STRUCTURE',
+  'DEPARTEMENT',
+];
+const COLS_STATUT: ColonneTransmission[] = [
+  'GRADE',
+  'FONCTION',
+  'TEXTE_PROMOTION',
+  'MATRICULE',
+  'STRUCTURE',
+  'DEPARTEMENT',
+];
 const PIECES_JOINTES =
   'Vous trouverez ci-joint les pièces du dossier, énumérées dans le tableau ci-dessous.';
 const DDEPPSA_DU =
@@ -262,7 +342,12 @@ const PIECES_PRIME = (
   ...autres,
 ];
 /** Soit-transmis au Budget d'un dossier de prime : le texte ne change que par le nom de la prime. */
-const SOIT_TRANSMIS_PRIME = (prime: string, suite = '') => ({
+const SOIT_TRANSMIS_PRIME = (
+  prime: string,
+  suite = '',
+  demande = `de mandatement de la ${prime}`,
+  colonnes: ColonneTransmission[] = COLS_BASE,
+) => ({
   ...LETTRE_FP,
   titre: 'Soit-transmis',
   lettre: {
@@ -273,6 +358,7 @@ const SOIT_TRANSMIS_PRIME = (prime: string, suite = '') => ({
     `J’ai l’honneur de vous transmettre, pour compétence, le dossier ${/^[aeiouéè]/i.test(prime) ? 'd’' : 'de '}${prime} de {agent}{enService}${suite}.`,
     PIECES_JOINTES,
   ],
+  transmission: { demande, suite, colonnes },
 });
 const A_COMPTER_DU: ChampPrestation = {
   cle: 'dateDebut',
@@ -328,11 +414,27 @@ export const PRESTATIONS: DefinitionPrestation[] = [
         type: 'texte',
         exemple: 'Ex. une ville, un établissement',
       },
+      // Le texte en trois champs, sans rien écrire à la main (DG, 03/11/2026)
       {
-        cle: 'texteIntegration',
-        libelle: 'Texte d’intégration (n° et date)',
+        cle: 'natureTexteIntegration',
+        libelle: 'Texte d’intégration : nature',
+        type: 'liste',
+        options: [
+          { valeur: 'ARRETE', libelle: 'Arrêté' },
+          { valeur: 'DECRET', libelle: 'Décret' },
+        ],
+        aide: 'Arrêté (catégories II et III) ou décret (catégorie I).',
+      },
+      {
+        cle: 'numeroTexteIntegration',
+        libelle: 'Texte d’intégration : numéro',
         type: 'texte',
-        exemple: 'Ex. Arrêté n° 1234 du 12/03/2025',
+        exemple: 'Ex. 4717/MFPTSS/DGFP',
+      },
+      {
+        cle: 'dateTexteIntegration',
+        libelle: 'Texte d’intégration : date de signature',
+        type: 'date',
       },
     ],
     pieces: [DEMANDE, INTEGRATION],
@@ -394,7 +496,7 @@ export const PRESTATIONS: DefinitionPrestation[] = [
         'Vu la note d’affectation ou de mutation ministérielle ({champ:noteMinisterielle}) ;',
         VU_DEMANDE,
       ],
-      formule: 'DÉCIDE',
+      formule: null,
       forme: 'ARTICLES',
       articles: [
         '{agent}{enService}, est {f:affecté|affectée} à {champ:lieuSouhaite}[[ (circonscription scolaire : {champ:circonscription})]][[, département de {agent.departement}]].',
@@ -1551,7 +1653,7 @@ export const PRESTATIONS: DefinitionPrestation[] = [
       entete: 'STRUCTURE',
       titre: 'Note de service portant cessation de service',
       preambule: [VU_DEMANDE],
-      formule: 'DÉCIDE',
+      formule: null,
       forme: 'ARTICLES',
       articles: [
         '{agent}, en service à {decideur.nom}, cesse ses fonctions le {champ:dateCessation}, pour motif de {acte:motif}[[ ({champ:texteMotif})]].',
@@ -1926,6 +2028,12 @@ export const PRESTATIONS: DefinitionPrestation[] = [
         'J’ai l’honneur de vous transmettre, pour compétence, le projet de texte portant changement de statut, de contractuel à fonctionnaire, de {agent}{enService}, {f:engagé|engagée} par le texte {champ:texteEngagement}[[ et {f:titularisé|titularisée} par le texte {champ:texteTitularisation}]].',
         PIECES_JOINTES,
       ],
+      transmission: {
+        demande: 'de changement de statut',
+        suite:
+          ', {f:engagé|engagée} par le texte {champ:texteEngagement}[[ et {f:titularisé|titularisée} par le texte {champ:texteTitularisation}]]',
+        colonnes: COLS_STATUT,
+      },
     },
   },
   {
@@ -2036,6 +2144,12 @@ export const PRESTATIONS: DefinitionPrestation[] = [
         'J’ai l’honneur de vous transmettre, pour compétence, le projet d’arrêté portant {acte:nature} de {agent}{enService}, de la situation « {champ:situationActuelle} » à la situation « {champ:situationDemandee} ».',
         PIECES_JOINTES,
       ],
+      transmission: {
+        demande: 'de {acte:nature}',
+        suite:
+          ', de la situation « {champ:situationActuelle} » à la situation « {champ:situationDemandee} »',
+        colonnes: COLS_STATUT,
+      },
     },
   },
   {
@@ -2082,6 +2196,12 @@ export const PRESTATIONS: DefinitionPrestation[] = [
         'La situation proposée est : {champ:situationDemandee}.',
         PIECES_JOINTES,
       ],
+      transmission: {
+        demande: 'd’avancement à titre exceptionnel',
+        suite:
+          ', au motif suivant : {champ:motif} (situation proposée : {champ:situationDemandee})',
+        colonnes: COLS_STATUT,
+      },
     },
   },
   {
@@ -2140,6 +2260,12 @@ export const PRESTATIONS: DefinitionPrestation[] = [
         'J’ai l’honneur de vous transmettre, pour compétence, la demande de rectificatif du texte {champ:texteARectifier}, en ce qui concerne {agent} : au lieu de « {champ:auLieuDe} », lire « {champ:lire} ».',
         PIECES_JOINTES,
       ],
+      transmission: {
+        demande: 'de rectificatif de texte d’intégration',
+        suite:
+          ', pour le texte {champ:texteARectifier} : au lieu de « {champ:auLieuDe} », lire « {champ:lire} »',
+        colonnes: COLS_RECRUTEMENT,
+      },
     },
   },
   {
@@ -2188,6 +2314,11 @@ export const PRESTATIONS: DefinitionPrestation[] = [
         'J’ai l’honneur de vous transmettre, pour compétence, le projet d’arrêté portant promotion de {agent}{enService}, au grade de {champ:grade}, au titre de la {champ:liste}.',
         PIECES_JOINTES,
       ],
+      transmission: {
+        demande: 'de promotion sur liste d’aptitude',
+        suite: ', au grade de {champ:grade}, au titre de la {champ:liste}',
+        colonnes: COLS_STATUT,
+      },
     },
   },
   {
@@ -2286,6 +2417,13 @@ export const PRESTATIONS: DefinitionPrestation[] = [
         'J’ai l’honneur de vous transmettre, pour compétence, le dossier de prise en charge en solde de {agent}{enService}, en service depuis le {champ:datePriseService}[[ (banque : {champ:banque})]].',
         PIECES_JOINTES,
       ],
+      transmission: {
+        demande: 'de prise en charge en solde',
+        apresIdentite:
+          '[[, {f:intégré|intégrée} ou {f:engagé|engagée} dans la Fonction publique par {agent.texteRecrutement}]]',
+        suite: ', depuis le {champ:datePriseService}',
+        colonnes: COLS_RECRUTEMENT,
+      },
     },
   },
   {
@@ -2381,6 +2519,10 @@ export const PRESTATIONS: DefinitionPrestation[] = [
         'J’ai l’honneur de vous transmettre, pour compétence, la demande de changement de mode de règlement du salaire de {agent}{enService}, qui sera désormais versé auprès de {champ:nouvelleBanque}[[ (au lieu de {champ:ancienneBanque})]].',
         PIECES_JOINTES,
       ],
+      transmission: {
+        demande: 'de changement de mode de règlement (MDR)',
+        colonnes: COLS_RECRUTEMENT,
+      },
     },
   },
   {
@@ -2454,6 +2596,12 @@ export const PRESTATIONS: DefinitionPrestation[] = [
         'J’ai l’honneur de vous transmettre, pour compétence, la demande de rectificatif {acte:nature} porté sur le bulletin de solde de {agent}{enService} : au lieu de « {champ:auLieuDe} », lire « {champ:lire} ».',
         PIECES_JOINTES,
       ],
+      transmission: {
+        demande: 'de rectificatif sur le bulletin de solde',
+        suite:
+          ' (rectificatif {acte:nature} : au lieu de « {champ:auLieuDe} », lire « {champ:lire} »)',
+        colonnes: COLS_RECRUTEMENT,
+      },
     },
   },
   {
@@ -2712,6 +2860,8 @@ export const PRESTATIONS: DefinitionPrestation[] = [
     acteModele: SOIT_TRANSMIS_PRIME(
       'l’indemnité de fonction',
       ', {f:nommé|nommée} {champ:fonction} par le texte {champ:texteNomination} et en fonction depuis le {champ:datePriseFonction}',
+      'de mandatement de l’indemnité de fonction',
+      COLS_NOMINATION,
     ),
   },
   {
@@ -2764,6 +2914,12 @@ export const PRESTATIONS: DefinitionPrestation[] = [
         'J’ai l’honneur de vous transmettre, pour compétence, le projet d’arrêté portant rappel de l’indemnité de fonction de {agent}{enService}, {f:nommé|nommée} {champ:fonction} par le texte {champ:texteNomination}, pour la période du {champ:dateDebut}[[ au {champ:dateFin}]].',
         PIECES_JOINTES,
       ],
+      transmission: {
+        demande: 'de rappel de l’indemnité de fonction',
+        suite:
+          ', {f:nommé|nommée} {champ:fonction} par le texte {champ:texteNomination}, pour la période du {champ:dateDebut}[[ au {champ:dateFin}]]',
+        colonnes: COLS_NOMINATION,
+      },
     },
   },
   {
@@ -2802,6 +2958,8 @@ export const PRESTATIONS: DefinitionPrestation[] = [
     acteModele: SOIT_TRANSMIS_PRIME(
       'rappel de solde d’activités',
       ', en service depuis le {champ:datePriseService}[[ et {f:payé|payée} seulement à partir du {champ:datePremierSalaire}]]',
+      'de mandatement de rappel de solde d’activité',
+      COLS_RECRUTEMENT,
     ),
   },
   {
@@ -2854,6 +3012,8 @@ export const PRESTATIONS: DefinitionPrestation[] = [
     acteModele: SOIT_TRANSMIS_PRIME(
       'rappel de promotion',
       ', {f:promu|promue} par le texte {champ:textePromotion} avec effet au {champ:dateEffet}',
+      'de mandatement de rappel de promotion',
+      COLS_PROMOTION,
     ),
   },
   {
@@ -2913,6 +3073,7 @@ export const PRESTATIONS: DefinitionPrestation[] = [
     acteModele: SOIT_TRANSMIS_PRIME(
       'allocations familiales',
       ', pour {champ:nombreEnfants} enfant(s) à charge',
+      'de paiement des allocations familiales',
     ),
   },
   {
@@ -3010,6 +3171,12 @@ export const PRESTATIONS: DefinitionPrestation[] = [
         'J’ai l’honneur de vous transmettre, pour compétence, le dossier de capital décès de feu {agent.nomComplet}[[, {agent.grade}]][[, matricule {agent.matricule}]][[, en service à {agent.lieuService}]], {f:décédé|décédée} le {champ:dateDeces}, au profit de {champ:ayantDroit}, {acte:lien} {f:du défunt|de la défunte}.',
         PIECES_JOINTES,
       ],
+      transmission: {
+        demande: 'de paiement du capital décès',
+        corps:
+          'la demande de paiement du capital décès, formulée par {champ:ayantDroit}, {acte:lien} de feu {agent.nomComplet}[[, précédemment {agent.grade}]][[, matricule de solde n° {agent.matricule}]], {f:décédé|décédée} le {champ:dateDeces}.',
+        colonnes: COLS_BASE,
+      },
       ampliations: ['Ayant droit', 'DGRHAS', 'Archives'],
     },
   },

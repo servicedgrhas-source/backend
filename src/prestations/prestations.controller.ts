@@ -79,7 +79,9 @@ export class PrestationsController {
     @Query() q: Record<string, string | undefined>,
   ) {
     return this.service.liste(u, {
-      onglet: ['aTraiter', 'aSuivre', 'toutes'].includes(q.onglet ?? '')
+      onglet: ['aTraiter', 'aSuivre', 'toutes', 'transmissions'].includes(
+        q.onglet ?? '',
+      )
         ? (q.onglet as FiltresPrestations['onglet'])
         : 'aTraiter',
       type: q.type || undefined,
@@ -107,9 +109,28 @@ export class PrestationsController {
     return this.service.deposerPourAgent(u, agentId, l.dto, l.fichiers);
   }
 
+  /** Soit-transmis de plusieurs demandes du même type (?ids=…,…), à imprimer. */
+  @Get('transmission')
+  transmission(
+    @Utilisateur() u: UtilisateurConnecte,
+    @Query('ids') ids?: string,
+  ) {
+    return this.service.transmissionCollective(u, (ids ?? '').split(','));
+  }
+
   @Get(':id')
   fiche(@Utilisateur() u: UtilisateurConnecte, @Param('id') id: string) {
     return this.service.fiche(u, id);
+  }
+
+  /** Retour du service destinataire (Budget, Fonction publique) : traité ou non traité. */
+  @Post(':id/retour')
+  retour(
+    @Utilisateur() u: UtilisateurConnecte,
+    @Param('id') id: string,
+    @Body() dto: { etat?: string; note?: string },
+  ) {
+    return this.service.noterRetour(u, id, dto ?? {});
   }
 
   @Get(':id/circuit')

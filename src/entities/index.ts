@@ -1737,6 +1737,11 @@ export class DemandePrestation {
     departement: string | null;
     structureId: number | null;
     telephone: string | null;
+    /** Pour les soit-transmis (modèles de la DGRHAS, 04/11/2026) ; absents des demandes plus anciennes. */
+    indice?: string | null;
+    texteRecrutement?: string | null;
+    datePriseService?: string | null;
+    dateRecrutement?: string | null;
   };
   @Column({ type: 'text' }) objet: string;
   @Column({ type: 'text', nullable: true }) precisions: string | null;
@@ -1755,6 +1760,14 @@ export class DemandePrestation {
   @Column({ type: 'text', nullable: true }) decisionMotivation: string | null;
   @Column({ type: 'varchar', nullable: true }) decisionPar: string | null;
   @Column({ type: 'timestamptz', nullable: true }) decisionLe: Date | null;
+  /**
+   * Retour du service destinataire (Budget, Fonction publique) après la transmission (DG,
+   * 03/11/2026) : TRAITE ou NON_TRAITE ; vide tant qu'il n'est pas revenu (« en attente »).
+   */
+  @Column({ type: 'varchar', nullable: true }) retourEtat: string | null;
+  @Column({ type: 'text', nullable: true }) retourNote: string | null;
+  @Column({ type: 'varchar', nullable: true }) retourPar: string | null;
+  @Column({ type: 'timestamptz', nullable: true }) retourLe: Date | null;
   /** Retirée (déposée par erreur) : hors du circuit, gardée pour l'historique. */
   @Column({ type: 'boolean', default: false }) retiree: boolean;
   @Column({ type: 'text', nullable: true }) motifRetrait: string | null;

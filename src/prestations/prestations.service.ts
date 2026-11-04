@@ -31,6 +31,7 @@ import {
 } from '../entities';
 import { RecensementService } from '../recensement/recensement.service';
 import { type ContexteActe, rendre } from './moteur';
+import { ecrireTransmission } from './transmission';
 import {
   definition,
   PRESTATIONS,
@@ -45,7 +46,7 @@ export interface DepotPrestation {
 }
 
 export interface FiltresPrestations {
-  onglet?: 'aTraiter' | 'aSuivre' | 'toutes';
+  onglet?: 'aTraiter' | 'aSuivre' | 'toutes' | 'transmissions';
   type?: string;
   etat?: string;
   recherche?: string;
@@ -208,6 +209,11 @@ export class PrestationsService {
       departement: dep?.nom ?? null,
       structureId: a.structureId,
       telephone: a.telephone,
+      // Pour les soit-transmis au Budget (indice, texte de recrutement, prise de service)
+      indice: t('INDICE_SOLDE'),
+      texteRecrutement: t('TEXTE_RECRUTEMENT'),
+      datePriseService: t('DATE_PRISE_SERVICE'),
+      dateRecrutement: t('DATE_RECRUTEMENT'),
     };
   }
 
@@ -446,12 +452,19 @@ export class PrestationsService {
       : `((d.agent ->> 'structureId')::int = ANY(:mes)
           OR EXISTS (SELECT 1 FROM jsonb_array_elements(d.circuit) x WHERE (x ->> 'structureId')::int = ANY(:mes))
           ${u.role === 'DDEPPSA' && u.departementId ? `OR (d.agent ->> 'departementId')::int = :dep` : ''})`;
+    // Accordées dont l'acte est un soit-transmis, sans retour du service destinataire (DGRHAS)
+    const codesLettres = PRESTATIONS.filter(
+      (p) => p.acteModele.transmission,
+    ).map((p) => p.code);
     const conditions: Record<string, string> = {
       aTraiter: `${enCircuit} AND ${chezMoi}`,
       aSuivre: `${perimetre} AND ${enCircuit} AND NOT coalesce(${chezMoi}, false)`,
       toutes: perimetre,
+      transmissions: this.toutVoir(u)
+        ? `d.decision = 'ACCORDEE' AND NOT d.retiree AND d."retourEtat" IS NULL AND d.type = ANY(:lettres)`
+        : 'FALSE',
     };
-    const valeurs = { mes, dep: u.departementId ?? -1 };
+    const valeurs = { mes, dep: u.departementId ?? -1, lettres: codesLettres };
     const compte = async (cond: string) =>
       this.demandes.createQueryBuilder('d').where(cond, valeurs).getCount();
     const onglet = f.onglet ?? 'aTraiter';
@@ -481,6 +494,7 @@ export class PrestationsService {
       aTraiter: await compte(conditions.aTraiter),
       aSuivre: await compte(conditions.aSuivre),
       toutes: await compte(conditions.toutes),
+      transmissions: await compte(conditions.transmissions),
     };
     return {
       onglet,
@@ -515,6 +529,12 @@ export class PrestationsService {
       etapes: d.circuit.length,
       depuis,
       creeLe: d.creeLe,
+      // Soit-transmis : on peut réunir plusieurs demandes du même type
+      transmissible:
+        !!definition(d.type)?.acteModele.transmission &&
+        d.decision === 'ACCORDEE' &&
+        !d.retiree,
+      retour: this.retourDe(d)?.etat ?? null,
     };
   }
 
@@ -563,6 +583,7 @@ export class PrestationsService {
       decisionPar: d.decisionPar,
       decisionLe: d.decisionLe,
       motifRetrait: d.motifRetrait,
+      retour: this.retourDe(d),
       circuit: d.circuit,
       etapeCourante: d.etapeCourante,
       pieces,
@@ -958,11 +979,150 @@ export class PrestationsService {
    * Acte proposé (modèle provisoire, en attendant les modèles officiels) : en-tête du ministère,
    * visas, articles, signataire, ampliations. Disponible une fois la demande accordée.
    */
+  /**
+   * Retour du service destinataire (DG, 03/11/2026) : une demande accordée dont l'acte est un
+   * soit-transmis part au Budget ou à la Fonction publique ; la DGRHAS note ce qui en revient.
+   */
+  private retourDe(d: DemandePrestation) {
+    const t = definition(d.type)?.acteModele.transmission;
+    if (!t || d.decision !== 'ACCORDEE' || d.retiree) return null;
+    const lettre = definition(d.type)!.acteModele.lettre;
+    return {
+      service: /BUDGET/.test(lettre?.destinataire ?? '')
+        ? 'Direction générale du budget'
+        : 'Fonction publique',
+      etat: (d.retourEtat ?? 'EN_ATTENTE') as
+        | 'EN_ATTENTE'
+        | 'TRAITE'
+        | 'NON_TRAITE',
+      note: d.retourNote,
+      par: d.retourPar,
+      le: d.retourLe,
+    };
+  }
+
+  /** Le retour du service destinataire : traité, non traité, ou de nouveau en attente. */
+  async noterRetour(
+    u: UtilisateurConnecte,
+    id: string,
+    dto: { etat?: string; note?: string },
+  ) {
+    if (!this.toutVoir(u)) throw new ForbiddenException('Réservé à la DGRHAS.');
+    const d = await this.obtenir(u, id);
+    if (!this.retourDe(d))
+      throw new BadRequestException(
+        'Seule une demande accordée et transmise par soit-transmis attend un retour.',
+      );
+    const etat = dto?.etat;
+    if (etat !== 'TRAITE' && etat !== 'NON_TRAITE' && etat !== 'EN_ATTENTE')
+      throw new BadRequestException(
+        'Choisissez : traité, non traité, ou en attente.',
+      );
+    const note = nettoyer(dto.note)?.slice(0, 1000) ?? null;
+    if (etat === 'NON_TRAITE' && !note)
+      throw new BadRequestException(
+        'Dites pourquoi le dossier n’a pas été traité (ce que le service a répondu).',
+      );
+    await this.demandes.update(id, {
+      retourEtat: etat === 'EN_ATTENTE' ? null : etat,
+      retourNote: etat === 'EN_ATTENTE' ? null : note,
+      retourPar: etat === 'EN_ATTENTE' ? null : u.nom,
+      retourLe: etat === 'EN_ATTENTE' ? null : new Date(),
+    });
+    await this.journal.log(u, 'PRESTATION_RETOUR', 'demande_prestation', id, {
+      etat,
+      note,
+    });
+    return this.fiche(u, id);
+  }
+
+  /** Fiche du moment, pour compléter un instantané ancien (indice, prise de service…). */
+  private async agentComplet(d: DemandePrestation) {
+    const manque = ['indice', 'texteRecrutement', 'datePriseService'].some(
+      (k) => !(k in d.agent),
+    );
+    if (!manque) return d.agent;
+    const a = await this.agents.findOne({ where: { id: d.agentId } });
+    return a ? { ...(await this.instantane(a)), ...d.agent } : d.agent;
+  }
+
+  /** Paramètres d'un soit-transmis : à qui, qui envoie et signe, suffixe du n°. */
+  private parametresLettre(def: DefinitionPrestation, ctx: ContexteActe, d: DemandePrestation) {
+    const l = def.acteModele.lettre!;
+    const cabinet = def.signataire.includes('SIGNATAIRE_LISTE');
+    return {
+      destinataire: rendre(l.destinataire, ctx),
+      appel: rendre(l.appel, ctx),
+      expediteur: rendre(def.signataire, ctx).replace(/,$/, ''),
+      signataireNom: cabinet
+        ? this.params.get('SIGNATAIRE_LISTE_NOM') || null
+        : this.params.get('DG_NOM') || d.decisionPar || null,
+      suffixeNumero:
+        this.params.get('SOIT_TRANSMIS_PRESTATION_REFERENCE') ||
+        'MEPPSA-CAB-DGRHAS-DRSC-SSC',
+      lieu: this.params.get('LIEU_SIGNATURE') || 'Brazzaville',
+      reference,
+    };
+  }
+
+  /**
+   * Soit-transmis collectif (DG, 03/11/2026 : le plus souvent 5, 10 dossiers à la fois) : des
+   * demandes du même type, accordées, dans un seul envoi, avec le tableau des agents.
+   */
+  async transmissionCollective(u: UtilisateurConnecte, ids: string[]) {
+    if (!this.toutVoir(u)) throw new ForbiddenException('Réservé à la DGRHAS.');
+    const uniques = [...new Set(ids.filter((x) => /^[0-9a-f-]{36}$/i.test(x)))];
+    if (!uniques.length)
+      throw new BadRequestException('Cochez les demandes à transmettre ensemble.');
+    if (uniques.length > 200)
+      throw new BadRequestException('200 demandes au plus dans un même envoi.');
+    const demandes = await this.demandes.find({ where: { id: In(uniques) } });
+    if (demandes.length !== uniques.length)
+      throw new NotFoundException('Une des demandes est introuvable.');
+    const types = new Set(demandes.map((d) => d.type));
+    if (types.size > 1)
+      throw new BadRequestException(
+        'Un soit-transmis ne réunit que des demandes du même type (par exemple, toutes des prises en charge en solde).',
+      );
+    const def = definition(demandes[0].type);
+    if (!def?.acteModele.transmission)
+      throw new BadRequestException(
+        'Ce type de demande ne se transmet pas par soit-transmis.',
+      );
+    const pasPretes = demandes.filter(
+      (d) => d.decision !== 'ACCORDEE' || d.retiree,
+    );
+    if (pasPretes.length)
+      throw new BadRequestException(
+        `Seules les demandes accordées partent : ${pasPretes.map((d) => reference(d.numero)).join(', ')} ne le ${pasPretes.length > 1 ? 'sont' : 'est'} pas.`,
+      );
+    demandes.sort((a, b) => a.numero - b.numero);
+    for (const d of demandes) d.agent = await this.agentComplet(d);
+    const contexte = (d: DemandePrestation): ContexteActe => ({
+      agent: d.agent as unknown as ContexteActe['agent'],
+      details: d.details,
+      champs: def.champs,
+      param: (cle) => this.params.get(cle) || null,
+    });
+    return {
+      type: def.code,
+      prestation: def.libelle,
+      demandes: demandes.map((d) => reference(d.numero)),
+      lettre: ecrireTransmission(
+        def,
+        demandes,
+        contexte,
+        this.parametresLettre(def, contexte(demandes[0]), demandes[0]),
+      ),
+    };
+  }
+
   private async contenuActe(d: DemandePrestation) {
     if (d.decision !== 'ACCORDEE' || d.retiree)
       throw new BadRequestException(
         'L’acte n’est préparé qu’une fois la demande accordée.',
       );
+    d.agent = await this.agentComplet(d);
     const def = definition(d.type)!;
     const m = def.acteModele;
     const decideur =
@@ -1035,6 +1195,13 @@ export class PrestationsService {
         'Brazzaville',
       decisionLe: d.decisionLe,
       demande: { date: d.creeLe },
+      // Soit-transmis : écrit comme les modèles de la DGRHAS
+      transmission: m.transmission
+        ? ecrireTransmission(def, [d], () => ctx, {
+            ...this.parametresLettre(def, ctx, d),
+          })
+        : null,
+      retour: this.retourDe(d),
     };
   }
 
@@ -1188,7 +1355,19 @@ export class PrestationsService {
           ? d.decisionMotivation
           : null,
       motifRetrait: d.retiree ? d.motifRetrait : null,
-      acteDisponible: etat === 'ACCORDEE',
+      // Un soit-transmis (Budget, Fonction publique) n'est pas remis à l'agent : il suit le retour
+      acteDisponible:
+        etat === 'ACCORDEE' && !def?.acteModele.transmission,
+      retour: (() => {
+        const r = this.retourDe(d);
+        return r
+          ? {
+              service: r.service,
+              etat: r.etat,
+              note: r.etat === 'NON_TRAITE' ? r.note : null,
+            }
+          : null;
+      })(),
       etapes: d.circuit.map((e, i) => ({
         sigle: e.sigle,
         nom: e.nom,
@@ -1203,6 +1382,11 @@ export class PrestationsService {
   }
 
   async actePublic(numero: string, code: string) {
-    return this.contenuActe(await this.parNumeroCode(numero, code));
+    const d = await this.parNumeroCode(numero, code);
+    if (definition(d.type)?.acteModele.transmission)
+      throw new BadRequestException(
+        'Cette demande est transmise par la DGRHAS au service destinataire : il n’y a pas d’acte à imprimer. Suivez ici le retour du service.',
+      );
+    return this.contenuActe(d);
   }
 }
