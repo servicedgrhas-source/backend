@@ -177,7 +177,8 @@ export const PARAMETRES_DEFAUT: Record<string, [string, string]> = {
     'Suffixe du numéro des soit-transmis des demandes de prestation (service du suivi des carrières)',
   ],
   ADRESSE_PIED: [
-    'Contacts : BP : 169 avenue des 1ers Jeux Africains, face Stade Marchand Brazzaville',
+    // « Adresse » et non « Contacts » (retour du 05/11/2026)
+    'Adresse : BP : 169 avenue des 1ers Jeux Africains, face Stade Marchand Brazzaville',
     'Adresse imprimée en pied de page',
   ],
 };
