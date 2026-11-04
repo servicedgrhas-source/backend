@@ -8,12 +8,14 @@ import {
   UnauthorizedException,
 } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
-import type { Request } from 'express';
-import { ParametresService } from '../core/core.service';
+import type { Request, Response } from 'express';
+import { JournalService, ParametresService } from '../core/core.service';
 import type { Role } from '../entities';
 import {
   decider,
+  deciderVisiteur,
   droitsDe,
+  rubriqueDuChemin,
   rolePersoDe,
   type Niveau,
   validerDroits,
@@ -38,6 +40,53 @@ export interface UtilisateurConnecte {
   droits?: Record<string, Niveau>;
   /** Nom du rôle personnalisé donné par le DG (« Secrétariat DRSC »), sinon absent. */
   rolePerso?: string | null;
+  /** Dernier jour d'accès (comptes visiteurs), sinon absent. */
+  finAcces?: string | null;
+}
+
+/** Types de fichiers qu'un visiteur ne reçoit jamais (filet de sécurité derrière les adresses). */
+const TYPES_FICHIERS =
+  /officedocument|msword|ms-excel|application\/pdf|zip|gzip|octet-stream|sql|text\/csv/i;
+
+/**
+ * Filet de sécurité du compte visiteur : toute réponse qui serait un fichier (Excel, Word, PDF,
+ * archive) ou un téléchargement est remplacée par un refus, quelle que soit l'adresse.
+ */
+export function bloquerFichiers(res: Response) {
+  const setHeader = res.setHeader.bind(res);
+  const write = res.write.bind(res) as (...a: unknown[]) => boolean;
+  const end = res.end.bind(res) as (...a: unknown[]) => Response;
+  let bloque = false;
+  res.setHeader = ((nom: string, valeur: number | string | readonly string[]) => {
+    const n = nom.toLowerCase();
+    if (
+      n === 'content-disposition' ||
+      (n === 'content-type' && TYPES_FICHIERS.test(String(valeur)))
+    ) {
+      bloque = true;
+      return res;
+    }
+    return setHeader(nom, valeur);
+  }) as Response['setHeader'];
+  // Le contenu du fichier n'est jamais envoyé
+  res.write = ((...a: unknown[]) => {
+    if (!bloque) return write(...a);
+    (a.find((x) => typeof x === 'function') as (() => void) | undefined)?.();
+    return true;
+  }) as Response['write'];
+  res.end = ((...a: unknown[]) => {
+    if (!bloque) return end(...a);
+    res.statusCode = 403;
+    res.removeHeader('Content-Length');
+    setHeader('Content-Type', 'application/json; charset=utf-8');
+    return end(
+      JSON.stringify({
+        statusCode: 403,
+        message:
+          'Compte visiteur : la consultation est permise, pas l’impression ni le téléchargement.',
+      }),
+    );
+  }) as Response['end'];
 }
 
 const CLE_PUBLIC = 'public';
@@ -77,6 +126,15 @@ export const TOUS_LES_ROLES: Role[] = [
   'STRUCTURE',
 ];
 
+/**
+ * Voit tout le pays : l'administrateur, la DGRHAS, et un visiteur sans département ni structure
+ * (dans les rubriques qui lui sont ouvertes en lecture).
+ */
+export const voitToutLePays = (u: UtilisateurConnecte) =>
+  u.role === 'ADMIN' ||
+  ROLES_TRAITEMENT.includes(u.role) ||
+  (u.role === 'VISITEUR' && !u.departementId && !u.structureId);
+
 /** Contrôle du travail saisi (chef de service, DRSC, bureau d'études). */
 export const ROLES_CONTROLE: Role[] = [
   'CHEF_SERVICE',
@@ -91,7 +149,24 @@ export class AuthGuard implements CanActivate {
     private readonly sessions: SessionService,
     private readonly reflector: Reflector,
     private readonly params: ParametresService,
+    private readonly journal: JournalService,
   ) {}
+
+  /** Dernière consultation notée par visiteur et rubrique (une ligne de journal par heure). */
+  private readonly consultations = new Map<string, number>();
+
+  /** Le journal garde ce qu'un visiteur a consulté : quelle rubrique, quand. */
+  private consultation(u: UtilisateurConnecte, chemin: string) {
+    const rubrique = rubriqueDuChemin(chemin);
+    if (!rubrique) return;
+    const cle = `${u.id}|${rubrique}`;
+    const maintenant = Date.now();
+    if (maintenant - (this.consultations.get(cle) ?? 0) < 3_600_000) return;
+    this.consultations.set(cle, maintenant);
+    void this.journal
+      .log(u, 'CONSULTATION_VISITEUR', 'rubrique', null, { rubrique })
+      .catch(() => undefined);
+  }
 
   /** Réglages enregistrés (une valeur illisible vaut « aucun réglage »). */
   private config(): ConfigDroits {
@@ -122,6 +197,15 @@ export class AuthGuard implements CanActivate {
 
     // Droits par rubrique : lecture seule, rubrique fermée, ou rubrique ouverte en plus du rôle
     const chemin = (req.path ?? '').replace(/^\/api(?=\/|$)/, '');
+
+    // Visiteur : seulement ses rubriques en lecture, sans enregistrement ni fichier
+    if (req.user.role === 'VISITEUR') {
+      const v = deciderVisiteur(droits, chemin, req.method);
+      if (v.decision === 'refuse') throw new ForbiddenException(v.message);
+      bloquerFichiers(ctx.switchToHttp().getResponse<Response>());
+      this.consultation(req.user, chemin);
+      return true;
+    }
     const d = decider(droits, chemin, req.method);
     if (d.decision === 'refuse') throw new ForbiddenException(d.message);
     // Un compte d'école ou d'inspection n'est jamais ouvert au-delà de ses routes

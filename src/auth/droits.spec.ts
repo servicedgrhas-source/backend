@@ -1,5 +1,6 @@
 import {
   decider,
+  deciderVisiteur,
   droitsDe,
   rolePersoDe,
   rubriquesDe,
@@ -146,5 +147,46 @@ describe('Droits par rubrique', () => {
         },
       }),
     ).toThrow();
+  });
+
+  describe('Compte visiteur', () => {
+    const d = { '/personnel/agents': 'LECTURE' as const };
+    const v = (chemin: string, methode = 'GET') =>
+      deciderVisiteur(d, chemin, methode).decision;
+
+    it('consulte seulement les rubriques ouvertes en lecture', () => {
+      expect(v('/recensement/agents')).toBe('permis');
+      expect(v('/recensement/agents/12')).toBe('permis');
+      expect(v('/candidats')).toBe('refuse');
+      expect(v('/tableau-de-bord')).toBe('refuse');
+      expect(v('/inconnu')).toBe('refuse');
+    });
+
+    it('lit toujours les réglages communs des pages', () => {
+      expect(v('/parametres')).toBe('permis');
+      expect(v('/referentiels')).toBe('permis');
+      expect(v('/auth/moi')).toBe('permis');
+    });
+
+    it('n’enregistre rien, sauf son propre mot de passe', () => {
+      expect(v('/recensement/agents/12', 'PUT')).toBe('refuse');
+      expect(v('/parametres/X', 'PUT')).toBe('refuse');
+      expect(v('/auth/mot-de-passe', 'POST')).toBe('permis');
+    });
+
+    it('ne télécharge ni n’imprime aucun fichier, même dans sa rubrique', () => {
+      expect(v('/recensement/export')).toBe('refuse');
+      expect(v('/recensement/agents/12/pieces/5')).toBe('refuse');
+      expect(v('/notes/3/word')).toBe('refuse');
+      expect(v('/structures/modele')).toBe('refuse');
+    });
+
+    it('ne reçoit jamais plus que la lecture', () => {
+      const r = droitsDe(
+        { roles: { VISITEUR: { '/candidats': 'MODIFICATION' } }, utilisateurs: {} },
+        { id: 'x', role: 'VISITEUR' },
+      );
+      expect(r['/candidats']).toBe('LECTURE');
+    });
   });
 });

@@ -7,7 +7,7 @@ import {
 import { InjectRepository } from '@nestjs/typeorm';
 import ExcelJS from 'exceljs';
 import { In, IsNull, Repository } from 'typeorm';
-import { ROLES_TRAITEMENT, type UtilisateurConnecte } from '../auth/auth';
+import { type UtilisateurConnecte, voitToutLePays } from '../auth/auth';
 import { champ, lireClasseur } from '../common/excel';
 import { IndexNoms } from '../common/index-noms';
 import { RattachementService } from '../rattachement/rattachement.service';
@@ -76,7 +76,7 @@ export class NominationsService {
   ) {}
 
   private dgrhas(u: UtilisateurConnecte) {
-    return u.role === 'ADMIN' || ROLES_TRAITEMENT.includes(u.role);
+    return voitToutLePays(u);
   }
 
   /** Année en cours des nominations : la plus récente, sinon l'année scolaire des paramètres. */

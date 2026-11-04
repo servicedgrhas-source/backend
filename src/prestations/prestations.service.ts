@@ -8,7 +8,11 @@ import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
 import { createHmac, randomInt, timingSafeEqual } from 'node:crypto';
 import { In, Repository } from 'typeorm';
-import { ROLES_TRAITEMENT, type UtilisateurConnecte } from '../auth/auth';
+import {
+  ROLES_TRAITEMENT,
+  type UtilisateurConnecte,
+  voitToutLePays,
+} from '../auth/auth';
 import { posteResponsable } from '../circuit/catalogue';
 import { CircuitService } from '../circuit/circuit.service';
 import { StockageService } from '../common/stockage';
@@ -404,7 +408,7 @@ export class PrestationsService {
   /* ------------------------------ Accès ------------------------------ */
 
   private toutVoir(u: UtilisateurConnecte) {
-    return u.role === 'ADMIN' || ROLES_TRAITEMENT.includes(u.role);
+    return voitToutLePays(u);
   }
 
   /** Voit la demande : DGRHAS, sa structure, une structure du circuit, sa DDEPPSA. */

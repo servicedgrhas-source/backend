@@ -6,7 +6,7 @@ import {
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { In, Repository } from 'typeorm';
-import { ROLES_TRAITEMENT, type UtilisateurConnecte } from '../auth/auth';
+import { type UtilisateurConnecte, voitToutLePays } from '../auth/auth';
 import { posteResponsable } from '../circuit/catalogue';
 import { cleCompacte } from '../common/texte';
 import { JournalService } from '../core/core.service';
@@ -56,7 +56,7 @@ export class BesoinsAdministratifsService {
   ) {}
 
   private dgrhas(u: UtilisateurConnecte) {
-    return u.role === 'ADMIN' || ROLES_TRAITEMENT.includes(u.role);
+    return voitToutLePays(u);
   }
 
   /** Structure du périmètre, administrative (pas une école : elles ont leurs propres besoins). */

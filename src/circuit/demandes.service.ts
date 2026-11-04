@@ -6,7 +6,7 @@ import {
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
-import { ROLES_TRAITEMENT, type UtilisateurConnecte } from '../auth/auth';
+import { type UtilisateurConnecte, voitToutLePays } from '../auth/auth';
 import { StockageService } from '../common/stockage';
 import { normaliser } from '../common/texte';
 import { ParametresService } from '../core/core.service';
@@ -208,7 +208,7 @@ export class DemandesService {
   async acte(u: UtilisateurConnecte, id: string) {
     const d = await this.demandes.findOne({ where: { id } });
     if (!d) throw new NotFoundException('Demande introuvable');
-    const toutVoir = u.role === 'ADMIN' || ROLES_TRAITEMENT.includes(u.role);
+    const toutVoir = voitToutLePays(u);
     if (!toutVoir) {
       const mes = await this.circuit.structuresDe(u);
       const dansCircuit = (d.circuit ?? []).some(

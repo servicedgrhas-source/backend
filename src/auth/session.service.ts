@@ -94,6 +94,17 @@ function tropDEssais(ms: number): HttpException {
   );
 }
 
+/** Aujourd'hui à Brazzaville (AAAA-MM-JJ). */
+const aujourdhuiCongo = () =>
+  new Date().toLocaleDateString('en-CA', { timeZone: 'Africa/Brazzaville' });
+
+/** L'accès s'arrête le soir du dernier jour : refusé dès le lendemain. */
+export const accesTermine = (fin: string | null | undefined) =>
+  !!fin && fin < aujourdhuiCongo();
+
+const finAccesMessage = (fin: string) =>
+  `L’accès de ce compte a pris fin le ${fin.split('-').reverse().join('/')}. Adressez-vous à la DGRHAS pour le prolonger.`;
+
 @Injectable()
 export class SessionService {
   private readonly parIp = new CompteurEchecs(ESSAIS_MAX_IP, BLOCAGE_MS);
@@ -148,6 +159,7 @@ export class SessionService {
         'u.actif',
         'u.codeCreeLe',
         'u.versionSession',
+        'u.finAcces',
       ])
       .where('u.id = :id', { id: contenu.id })
       .getOne();
@@ -155,6 +167,8 @@ export class SessionService {
       throw new UnauthorizedException(
         'Ce compte est désactivé ou n’existe plus.',
       );
+    if (accesTermine(u.finAcces))
+      throw new UnauthorizedException(finAccesMessage(u.finAcces!));
     if ((contenu.v ?? 0) !== u.versionSession)
       throw new UnauthorizedException(
         'Votre session a été fermée (mot de passe ou code changé, ou déconnexion demandée). Reconnectez-vous.',
@@ -168,6 +182,7 @@ export class SessionService {
       departementId: u.departementId,
       structureId: u.structureId,
       aCode: !!u.codeCreeLe,
+      finAcces: u.finAcces,
     };
   }
 
@@ -234,6 +249,17 @@ export class SessionService {
       return this.refuser(u, email, ip, motif);
     }
 
+    // Date de fin d'accès passée : refus clair (ce n'est pas un essai raté)
+    if (accesTermine(u.finAcces)) {
+      await this.journal.log(
+        { id: u.id, nom: u.nom } as UtilisateurConnecte,
+        'CONNEXION_REFUSEE',
+        'utilisateur',
+        u.id,
+        { email, ip, motif: 'accès terminé' },
+      );
+      throw new UnauthorizedException(finAccesMessage(u.finAcces!));
+    }
     if (u.bloqueJusqua) await this.debloquer(u.id);
     else
       await this.users.update(u.id, { echecsConnexion: 0, dernierEchec: null });
@@ -247,6 +273,7 @@ export class SessionService {
       departementId: u.departementId,
       structureId: u.structureId,
       aCode: !!u.codeCreeLe,
+      finAcces: u.finAcces,
     };
     await this.journal.log(utilisateur, 'CONNEXION', 'utilisateur', u.id, {
       ip,

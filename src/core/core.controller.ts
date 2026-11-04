@@ -26,6 +26,7 @@ import {
   IsOptional,
   IsString,
   IsUUID,
+  Matches,
   MaxLength,
   MinLength,
 } from 'class-validator';
@@ -111,6 +112,10 @@ class UtilisateurDto {
   @MaxLength(128, { message: 'Mot de passe : 128 caractères au plus.' })
   motDePasse?: string;
   @IsOptional() @IsBoolean() actif?: boolean;
+  /** Dernier jour d'accès (facultatif, surtout pour les visiteurs) ; vide : sans fin. */
+  @IsOptional()
+  @Matches(/^\d{4}-\d{2}-\d{2}$/, { message: 'Date de fin d’accès invalide.' })
+  finAcces?: string | null;
 }
 
 @Controller()
@@ -377,6 +382,7 @@ export class CoreController {
       role: dto.role,
       departementId: dto.departementId ?? null,
       structureId: dto.structureId ?? null,
+      finAcces: dto.finAcces || null,
       actif: dto.actif ?? true,
       motDePasseHash: await bcrypt.hash(dto.motDePasse, 10),
       // Chaque nouveau compte reçoit tout de suite son code personnel
@@ -386,6 +392,7 @@ export class CoreController {
     await this.journal.log(moi, 'CREATION_UTILISATEUR', 'utilisateur', u.id, {
       email: u.email,
       role: u.role,
+      ...(u.finAcces ? { finAcces: u.finAcces } : {}),
     });
     // Le code n'est montré qu'ici (et ensuite après vérification) : à remettre à la personne
     return { ...u, motDePasseHash: undefined, codeChiffre: undefined, code };
@@ -420,6 +427,7 @@ export class CoreController {
       role: dto.role,
       departementId: dto.departementId ?? null,
       structureId: dto.structureId ?? null,
+      finAcces: dto.finAcces || null,
       actif,
     };
     const nouveauMotDePasse = !!dto.motDePasse;
@@ -439,6 +447,7 @@ export class CoreController {
     await this.journal.log(moi, 'MODIFICATION_UTILISATEUR', 'utilisateur', id, {
       role: dto.role,
       actif,
+      finAcces: maj.finAcces,
       ...(nouveauMotDePasse ? { motDePasse: 'changé' } : {}),
     });
     return this.users.findOne({ where: { id } });

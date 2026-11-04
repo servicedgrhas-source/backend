@@ -33,6 +33,11 @@ export const ROLES = [
    * centrale ou générale) : vise et donne son avis sur les demandes de son circuit.
    */
   'STRUCTURE',
+  /**
+   * Visiteur (inspection, audit, partenaire…) : consulte seulement les rubriques que le DG lui
+   * ouvre, sans rien enregistrer, imprimer ni télécharger (DG, 04/11/2026).
+   */
+  'VISITEUR',
 ] as const;
 export type Role = (typeof ROLES)[number];
 
@@ -52,6 +57,8 @@ export class Utilisateur {
   /** Délégation pendant une absence : ce collègue agit à sa place jusqu'à la date de fin. */
   @Column({ type: 'uuid', nullable: true }) delegueId: string | null;
   @Column({ type: 'date', nullable: true }) delegationFin: string | null;
+  /** Dernier jour d'accès (facultatif) : le lendemain, la connexion est refusée. */
+  @Column({ type: 'date', nullable: true }) finAcces: string | null;
   @Column({ select: false }) motDePasseHash: string;
   /**
    * Code personnel de 12 caractères demandé à la connexion (avec l'e-mail et le mot de passe).

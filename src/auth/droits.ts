@@ -29,7 +29,7 @@ export interface ConfigDroits {
 }
 
 /** Rôles qui ne peuvent pas servir de départ à un rôle personnalisé. */
-export const BASES_INTERDITES: Role[] = ['ADMIN', 'DG', 'STRUCTURE'];
+export const BASES_INTERDITES: Role[] = ['ADMIN', 'DG', 'STRUCTURE', 'VISITEUR'];
 const CODE_PERSO = /^PERSO_[A-Z0-9_]{1,40}$/;
 
 /** Rôles que l'on ne règle pas : ils voient et font tout. */
@@ -43,6 +43,7 @@ export const ROLES_LIBRES: Role[] = ['ADMIN', 'DG'];
  * organigramme) ne sont pas citées : elles servent à toutes les pages.
  */
 export const RUBRIQUES_API: Record<string, string[]> = {
+  '/': ['tableau-de-bord'],
   '/candidats': ['candidats'],
   '/transmission': ['transmissions'],
   '/reception': ['reception'],
@@ -220,11 +221,81 @@ export function droitsDe(
 ): Record<string, Niveau> {
   if (ROLES_LIBRES.includes(u.role)) return {};
   const perso = c.attributions?.[u.id];
-  return {
+  const d: Record<string, Niveau> = {
     ...(c.roles[u.role] ?? {}),
     ...(perso && c.rolesPerso?.[perso] ? (c.roles[perso] ?? {}) : {}),
     ...(c.utilisateurs[u.id] ?? {}),
   };
+  // Un visiteur ne reçoit jamais plus que la lecture
+  if (u.role === 'VISITEUR')
+    for (const r of Object.keys(d)) if (d[r] === 'MODIFICATION') d[r] = 'LECTURE';
+  return d;
+}
+
+/* ------------------------------ Compte visiteur ------------------------------ */
+
+/** Ce qu'un visiteur peut enregistrer : seulement son propre compte. */
+const ECRITURES_VISITEUR = ['auth/mot-de-passe', 'auth/deconnecter-ailleurs'];
+
+/**
+ * Lectures communes à toutes les pages (réglages et référentiels, sans liste de personnes) :
+ * permises au visiteur quelles que soient ses rubriques.
+ */
+const LECTURES_VISITEUR = [
+  'auth/moi',
+  'auth/delegation',
+  'referentiels',
+  'parametres',
+  'configuration',
+  'menu',
+  'structures',
+  'enrolement/diplomes',
+  'enrolement/referentiel',
+  'enrolement/configuration',
+  'recensement/configuration',
+];
+
+/** Téléchargements (Excel, Word, PDF, scans, pièces, modèles) : jamais pour un visiteur. */
+const FICHIER =
+  /(^|\/)(export|excel|word|pdf|scan|modele|fichier|justificatif|telecharger)(\/|$)|\/pieces\/[^/]+$/;
+
+/** Libellé d'une rubrique pour le journal des consultations. */
+export function rubriqueDuChemin(chemin: string): string | null {
+  return rubriquesDe(chemin)[0] ?? null;
+}
+
+/**
+ * Décision pour un compte visiteur (DG, 04/11/2026) : il consulte les rubriques ouvertes en
+ * lecture, et rien d'autre ; aucun enregistrement, aucun téléchargement.
+ */
+export function deciderVisiteur(
+  droits: Record<string, Niveau>,
+  chemin: string,
+  methode: string,
+): { decision: 'permis' } | { decision: 'refuse'; message: string } {
+  const c = chemin.replace(/^\/+|\/+$/g, '');
+  const sous = (p: string) => c === p || c.startsWith(`${p}/`);
+  if (!['GET', 'HEAD', 'OPTIONS'].includes(methode.toUpperCase()))
+    return ECRITURES_VISITEUR.some(sous)
+      ? { decision: 'permis' }
+      : {
+          decision: 'refuse',
+          message:
+            'Compte visiteur : vous pouvez consulter, pas enregistrer ni modifier.',
+        };
+  if (FICHIER.test(c))
+    return {
+      decision: 'refuse',
+      message:
+        'Compte visiteur : la consultation est permise, pas l’impression ni le téléchargement.',
+    };
+  if (LECTURES_VISITEUR.some(sous)) return { decision: 'permis' };
+  return rubriquesDe(c).some((r) => droits[r] === 'LECTURE')
+    ? { decision: 'permis' }
+    : {
+        decision: 'refuse',
+        message: 'Cette rubrique n’est pas ouverte à votre compte visiteur.',
+      };
 }
 
 /** Nom du rôle personnalisé d'un compte (affiché à la place de son rôle), sinon null. */

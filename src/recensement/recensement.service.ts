@@ -6,7 +6,7 @@ import {
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { In, Repository } from 'typeorm';
-import { ROLES_TRAITEMENT, type UtilisateurConnecte } from '../auth/auth';
+import { type UtilisateurConnecte, voitToutLePays } from '../auth/auth';
 import {
   ENVOIS_SIMULTANES,
   parallele,
@@ -155,8 +155,10 @@ export class RecensementService {
   /* ------------------------------ Périmètre ------------------------------ */
 
   async perimetre(u: UtilisateurConnecte): Promise<Perimetre> {
-    if (u.role === 'ADMIN' || ROLES_TRAITEMENT.includes(u.role))
-      return { tous: true };
+    if (voitToutLePays(u)) return { tous: true };
+    // Visiteur limité à un département (ou à une structure, plus bas) par son compte
+    if (u.role === 'VISITEUR' && u.departementId && !u.structureId)
+      return { departementId: u.departementId };
     if (u.role === 'DDEPPSA') {
       if (!u.departementId)
         throw new ForbiddenException(
@@ -164,7 +166,7 @@ export class RecensementService {
         );
       return { departementId: u.departementId };
     }
-    if (u.role === 'STRUCTURE') {
+    if (u.role === 'STRUCTURE' || (u.role === 'VISITEUR' && u.structureId)) {
       if (!u.structureId)
         throw new ForbiddenException(
           'Compte de structure sans établissement : l’administrateur doit indiquer sa structure (Administration › Utilisateurs).',
