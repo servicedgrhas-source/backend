@@ -11,6 +11,8 @@
  * definitions.spec.ts vérifie qu'elle est complète et que son modèle s'écrit).
  */
 
+import { MODELES_TRANSMISSION } from './modeles-transmission';
+
 export type TypeChamp = 'texte' | 'zone' | 'departement' | 'liste' | 'date';
 
 export interface ChampPrestation {
@@ -53,6 +55,18 @@ export interface ModeleActe {
    * demande de … », ou de plusieurs, avec le tableau des agents (transmission collective).
    */
   transmission?: TransmissionModele;
+  /**
+   * Modèle officiel de la DGRHAS (photo de l'autorisation de tutelle, 04/11/2026) : la direction et
+   * le service sous la DGRHAS dans l'en-tête, le suffixe du n°, un sous-titre (« (Régularisation) »),
+   * la signature au seul nom du Directeur général, « PJ : … », l'adresse en pied de page, et pas de
+   * référence de la demande. Les ampliations s'écrivent « Libellé|nombre » (le total suit).
+   */
+  officiel?: {
+    services: string[];
+    suffixeNumero: string;
+    sousTitre?: string;
+    pj?: string;
+  };
 }
 
 /** Colonnes du tableau d'une transmission collective (après « N° » et « Noms et prénoms »). */
@@ -67,19 +81,30 @@ export type ColonneTransmission =
   | 'STRUCTURE'
   | 'DEPARTEMENT';
 
+/**
+ * Un soit-transmis tel que le modèle Word de la DGRHAS l'écrit (modeles-transmission.ts) :
+ * - `objet` : ce qui suit « demande(s) » dans l'objet ; « | » marque la fin de la première ligne
+ *   (« de paiement|de l’indemnité de fin de carrière » : « Transmission d’une (01) demande de
+ *   paiement », puis « de l’indemnité de fin de carrière. ») ;
+ * - `article` : la demande seule commence par « la demande de … » ou « une (01) demande de … » ;
+ * - `phrase` : la suite de la phrase de la demande seule (« , formulée par {identite}, … ») ;
+ * - `corpsObjet` : dans les phrases, s'il diffère de l'objet (les primes : l'objet dit « des
+ *   primes », la phrase nomme la prime) ;
+ * - `selon` : variantes selon un renseignement (rectificatif : de nom, de situation matrimoniale…).
+ */
 export interface TransmissionModele {
-  /** Ce qui suit « demande(s) » : « de prise en charge en solde » (repères permis). */
-  demande: string;
-  /** Après l'identité de l'agent, avant « en service à » (« intégré par l'arrêté… »). */
-  apresIdentite?: string;
-  /** À la fin de la phrase (« , depuis le 12/09/2025 »). */
-  suite?: string;
-  /**
-   * Toute la phrase après « pour compétence, », quand elle ne suit pas le modèle commun (capital
-   * décès : la demande vient de l'ayant droit).
-   */
-  corps?: string;
+  objet: string;
+  corpsObjet?: string;
+  article: 'la' | 'une';
+  phrase: string;
   colonnes: ColonneTransmission[];
+  selon?: {
+    champ: string;
+    valeurs: Record<
+      string,
+      Partial<Pick<TransmissionModele, 'objet' | 'corpsObjet' | 'article'>>
+    >;
+  };
 }
 
 export interface PieceExigee {
@@ -280,50 +305,6 @@ const AU_BUDGET = {
   appel: '{param:SOIT_TRANSMIS_BUDGET_APPEL}',
 };
 const SIGNE_CABINET = '{param:SIGNATAIRE_LISTE_TITRE}';
-/** Colonnes des tableaux des modèles de la DGRHAS (transmissions de plusieurs demandes). */
-const COLS_BASE: ColonneTransmission[] = [
-  'GRADE',
-  'FONCTION',
-  'DATE_PRISE_SERVICE',
-  'MATRICULE',
-  'STRUCTURE',
-  'DEPARTEMENT',
-];
-const COLS_RECRUTEMENT: ColonneTransmission[] = [
-  'GRADE',
-  'FONCTION',
-  'TEXTE_RECRUTEMENT',
-  'DATE_PRISE_SERVICE',
-  'MATRICULE',
-  'STRUCTURE',
-  'DEPARTEMENT',
-];
-const COLS_NOMINATION: ColonneTransmission[] = [
-  'GRADE',
-  'FONCTION',
-  'NOTE_NOMINATION',
-  'DATE_PRISE_SERVICE',
-  'MATRICULE',
-  'STRUCTURE',
-  'DEPARTEMENT',
-];
-const COLS_PROMOTION: ColonneTransmission[] = [
-  'GRADE',
-  'FONCTION',
-  'TEXTE_PROMOTION',
-  'DATE_PRISE_SERVICE',
-  'MATRICULE',
-  'STRUCTURE',
-  'DEPARTEMENT',
-];
-const COLS_STATUT: ColonneTransmission[] = [
-  'GRADE',
-  'FONCTION',
-  'TEXTE_PROMOTION',
-  'MATRICULE',
-  'STRUCTURE',
-  'DEPARTEMENT',
-];
 const PIECES_JOINTES =
   'Vous trouverez ci-joint les pièces du dossier, énumérées dans le tableau ci-dessous.';
 const DDEPPSA_DU =
@@ -342,12 +323,7 @@ const PIECES_PRIME = (
   ...autres,
 ];
 /** Soit-transmis au Budget d'un dossier de prime : le texte ne change que par le nom de la prime. */
-const SOIT_TRANSMIS_PRIME = (
-  prime: string,
-  suite = '',
-  demande = `de mandatement de la ${prime}`,
-  colonnes: ColonneTransmission[] = COLS_BASE,
-) => ({
+const SOIT_TRANSMIS_PRIME = (prime: string, suite = '') => ({
   ...LETTRE_FP,
   titre: 'Soit-transmis',
   lettre: {
@@ -358,8 +334,19 @@ const SOIT_TRANSMIS_PRIME = (
     `J’ai l’honneur de vous transmettre, pour compétence, le dossier ${/^[aeiouéè]/i.test(prime) ? 'd’' : 'de '}${prime} de {agent}{enService}${suite}.`,
     PIECES_JOINTES,
   ],
-  transmission: { demande, suite, colonnes },
 });
+/** « monsieur / madame / mademoiselle (le veuf / la veuve) » des modèles du capital décès. */
+const CIVILITE_AYANT_DROIT: ChampPrestation = {
+  cle: 'civiliteAyantDroit',
+  libelle: 'L’héritier est',
+  type: 'liste',
+  obligatoire: true,
+  options: [
+    { valeur: 'M', libelle: 'Monsieur', acte: 'monsieur' },
+    { valeur: 'MME', libelle: 'Madame', acte: 'madame' },
+    { valeur: 'MLLE', libelle: 'Mademoiselle', acte: 'mademoiselle' },
+  ],
+};
 const A_COMPTER_DU: ChampPrestation = {
   cle: 'dateDebut',
   libelle: 'À compter du (facultatif)',
@@ -1315,6 +1302,7 @@ export const PRESTATIONS: DefinitionPrestation[] = [
     niveauDecision: 'DGRHAS',
     signataire: LE_DG,
     objet: 'Demande d’autorisation de la tutelle',
+    // Les renseignements de l'autorisation officielle (photo du 04/11/2026)
     champs: [
       {
         cle: 'pourQuoi',
@@ -1323,36 +1311,58 @@ export const PRESTATIONS: DefinitionPrestation[] = [
         obligatoire: true,
         options: [
           {
-            valeur: 'CONCOURS',
-            libelle: 'Présenter un concours',
-            acte: 'à présenter le concours',
+            valeur: 'STAGE',
+            libelle: 'S’inscrire à une formation',
+            acte: 'à s’inscrire à',
           },
           {
-            valeur: 'STAGE',
-            libelle: 'Suivre un stage de formation',
-            acte: 'à suivre la formation',
+            valeur: 'CONCOURS',
+            libelle: 'Présenter un concours',
+            acte: 'à présenter le concours de',
           },
         ],
       },
       {
-        cle: 'intitule',
-        libelle: 'Concours ou formation',
-        type: 'texte',
-        obligatoire: true,
-        exemple: 'Ex. d’entrée à l’ENS, section lettres modernes',
-      },
-      {
         cle: 'ecole',
-        libelle: 'École ou centre de formation',
+        libelle: 'Établissement de formation (ou concours)',
         type: 'texte',
         obligatoire: true,
-        exemple: 'Ex. École normale supérieure de Brazzaville',
+        exemple:
+          'Ex. la faculté des lettres, des arts et des sciences humaines (FLASH) de Brazzaville',
       },
       {
-        cle: 'session',
-        libelle: 'Session ou année (facultatif)',
+        cle: 'duree',
+        libelle: 'Durée (facultatif)',
         type: 'texte',
-        exemple: 'Ex. 2027',
+        exemple: 'Ex. deux (02) ans',
+      },
+      {
+        cle: 'anneeAcademique',
+        libelle: 'À compter de l’année académique (facultatif)',
+        type: 'texte',
+        exemple: 'Ex. 2025-2026',
+      },
+      {
+        cle: 'option',
+        libelle: 'Option (facultatif)',
+        type: 'texte',
+        exemple: 'Ex. littérature francophone',
+      },
+      {
+        cle: 'cycle',
+        libelle: 'Cycle (facultatif)',
+        type: 'texte',
+        exemple: 'Ex. master',
+      },
+      {
+        cle: 'regularisation',
+        libelle: 'Régularisation',
+        type: 'liste',
+        aide: 'Oui si l’agent est déjà en formation : l’autorisation porte la mention « (Régularisation) ».',
+        options: [
+          { valeur: 'NON', libelle: 'Non', acte: '' },
+          { valeur: 'OUI', libelle: 'Oui', acte: '(Régularisation)' },
+        ],
       },
     ],
     pieces: [
@@ -1371,13 +1381,33 @@ export const PRESTATIONS: DefinitionPrestation[] = [
       PRISE,
       PRESENCE,
     ],
+    // Comme le modèle officiel (photo du 04/11/2026)
     acteModele: {
       ...ATTESTATION_DGRHAS,
       titre: 'Autorisation de la tutelle',
+      officiel: {
+        services: [
+          'DIRECTION DE LA FORMATION CONTINUE',
+          'SERVICE DU SUIVI DES STAGES',
+        ],
+        suffixeNumero: 'MEPPSA-CAB/DGRHAS-DFC-SSS',
+        sousTitre: '[[{acte:regularisation}]]',
+        pj: 'Dossier de l’intéressé',
+      },
       articles: [
-        `${LE_DG} autorise {agent}{enService}, {acte:pourQuoi} {champ:intitule} ({champ:ecole})[[, session {champ:session}]].`,
-        'En cas d’admission, la mise en stage fera l’objet d’un acte distinct ; jusque-là, {f:l’intéressé|l’intéressée} demeure à son poste.',
-        EN_FOI_AUTORISATION,
+        'Le Directeur Général des Ressources Humaines et de l’Administration Scolaire soussigné, autorise {civilite} {agent.nomComplet}, {grade} de la catégorie {agent.categorie}, échelle {agent.echelle}, {echelon}, {enServiceA}[[ ({agent.ville})]], {acte:pourQuoi} {champ:ecole}[[, pour une durée de {champ:duree}]][[ à compter de l’année académique {champ:anneeAcademique}]].',
+        '[[Option : {champ:option}]]',
+        '[[Cycle : {champ:cycle}]]',
+        'En foi de quoi, la présente autorisation lui est établie pour servir et valoir ce que de droit./',
+      ],
+      ampliations: [
+        'MEPPSA-CAB|1',
+        'DGRHAS-DAAF|1',
+        'DGFP|1',
+        'DFC|1',
+        '{f:Intéressé|Intéressée}|1',
+        'Dossier|1',
+        'Archives|2',
       ],
     },
   },
@@ -2028,12 +2058,6 @@ export const PRESTATIONS: DefinitionPrestation[] = [
         'J’ai l’honneur de vous transmettre, pour compétence, le projet de texte portant changement de statut, de contractuel à fonctionnaire, de {agent}{enService}, {f:engagé|engagée} par le texte {champ:texteEngagement}[[ et {f:titularisé|titularisée} par le texte {champ:texteTitularisation}]].',
         PIECES_JOINTES,
       ],
-      transmission: {
-        demande: 'de changement de statut',
-        suite:
-          ', {f:engagé|engagée} par le texte {champ:texteEngagement}[[ et {f:titularisé|titularisée} par le texte {champ:texteTitularisation}]]',
-        colonnes: COLS_STATUT,
-      },
     },
   },
   {
@@ -2144,12 +2168,6 @@ export const PRESTATIONS: DefinitionPrestation[] = [
         'J’ai l’honneur de vous transmettre, pour compétence, le projet d’arrêté portant {acte:nature} de {agent}{enService}, de la situation « {champ:situationActuelle} » à la situation « {champ:situationDemandee} ».',
         PIECES_JOINTES,
       ],
-      transmission: {
-        demande: 'de {acte:nature}',
-        suite:
-          ', de la situation « {champ:situationActuelle} » à la situation « {champ:situationDemandee} »',
-        colonnes: COLS_STATUT,
-      },
     },
   },
   {
@@ -2196,12 +2214,6 @@ export const PRESTATIONS: DefinitionPrestation[] = [
         'La situation proposée est : {champ:situationDemandee}.',
         PIECES_JOINTES,
       ],
-      transmission: {
-        demande: 'd’avancement à titre exceptionnel',
-        suite:
-          ', au motif suivant : {champ:motif} (situation proposée : {champ:situationDemandee})',
-        colonnes: COLS_STATUT,
-      },
     },
   },
   {
@@ -2260,12 +2272,6 @@ export const PRESTATIONS: DefinitionPrestation[] = [
         'J’ai l’honneur de vous transmettre, pour compétence, la demande de rectificatif du texte {champ:texteARectifier}, en ce qui concerne {agent} : au lieu de « {champ:auLieuDe} », lire « {champ:lire} ».',
         PIECES_JOINTES,
       ],
-      transmission: {
-        demande: 'de rectificatif de texte d’intégration',
-        suite:
-          ', pour le texte {champ:texteARectifier} : au lieu de « {champ:auLieuDe} », lire « {champ:lire} »',
-        colonnes: COLS_RECRUTEMENT,
-      },
     },
   },
   {
@@ -2314,11 +2320,6 @@ export const PRESTATIONS: DefinitionPrestation[] = [
         'J’ai l’honneur de vous transmettre, pour compétence, le projet d’arrêté portant promotion de {agent}{enService}, au grade de {champ:grade}, au titre de la {champ:liste}.',
         PIECES_JOINTES,
       ],
-      transmission: {
-        demande: 'de promotion sur liste d’aptitude',
-        suite: ', au grade de {champ:grade}, au titre de la {champ:liste}',
-        colonnes: COLS_STATUT,
-      },
     },
   },
   {
@@ -2417,13 +2418,6 @@ export const PRESTATIONS: DefinitionPrestation[] = [
         'J’ai l’honneur de vous transmettre, pour compétence, le dossier de prise en charge en solde de {agent}{enService}, en service depuis le {champ:datePriseService}[[ (banque : {champ:banque})]].',
         PIECES_JOINTES,
       ],
-      transmission: {
-        demande: 'de prise en charge en solde',
-        apresIdentite:
-          '[[, {f:intégré|intégrée} ou {f:engagé|engagée} dans la Fonction publique par {agent.texteRecrutement}]]',
-        suite: ', depuis le {champ:datePriseService}',
-        colonnes: COLS_RECRUTEMENT,
-      },
     },
   },
   {
@@ -2432,11 +2426,11 @@ export const PRESTATIONS: DefinitionPrestation[] = [
     libelle: 'Domiciliation de salaire',
     famille: 'SOLDE',
     pourQui:
-      'Un agent qui veut que son salaire soit versé dans une banque (souvent demandé par la banque pour un prêt) : la DGRHAS l’atteste.',
-    acte: 'Attestation',
+      'Un agent qui veut que son salaire soit versé dans une banque (souvent demandé par la banque pour un prêt) : la DGRHAS transmet la demande au Budget.',
+    acte: 'Soit-transmis au Budget',
     niveauDecision: 'DGRHAS',
     signataire: LE_DG,
-    objet: 'Demande d’attestation de domiciliation de salaire',
+    objet: 'Demande de domiciliation de salaire',
     champs: [
       {
         cle: 'banque',
@@ -2461,12 +2455,13 @@ export const PRESTATIONS: DefinitionPrestation[] = [
       BULLETIN,
       { libelle: 'Relevé d’identité bancaire', obligatoire: true },
     ],
+    // Modèle « Transmission d'une (01) demande de domiciliation de salaire » (04/11/2026)
     acteModele: {
-      ...ATTESTATION_DGRHAS,
-      titre: 'Attestation de domiciliation de salaire',
+      ...LETTRE_FP,
+      titre: 'Soit-transmis',
+      lettre: { ...AU_BUDGET, objet: 'Domiciliation de salaire' },
       articles: [
-        `${LE_DG} atteste que le salaire de {agent}{enService}, est domicilié auprès de {champ:banque}[[, agence {champ:agence}]], au vu du relevé d’identité bancaire joint.`,
-        EN_FOI_ATTESTATION,
+        'J’ai l’honneur de vous faire parvenir, pour compétence, la demande de domiciliation de salaire de {agent}{enService}, auprès de {champ:banque}[[, agence {champ:agence}]].',
       ],
     },
   },
@@ -2519,10 +2514,6 @@ export const PRESTATIONS: DefinitionPrestation[] = [
         'J’ai l’honneur de vous transmettre, pour compétence, la demande de changement de mode de règlement du salaire de {agent}{enService}, qui sera désormais versé auprès de {champ:nouvelleBanque}[[ (au lieu de {champ:ancienneBanque})]].',
         PIECES_JOINTES,
       ],
-      transmission: {
-        demande: 'de changement de mode de règlement (MDR)',
-        colonnes: COLS_RECRUTEMENT,
-      },
     },
   },
   {
@@ -2596,12 +2587,6 @@ export const PRESTATIONS: DefinitionPrestation[] = [
         'J’ai l’honneur de vous transmettre, pour compétence, la demande de rectificatif {acte:nature} porté sur le bulletin de solde de {agent}{enService} : au lieu de « {champ:auLieuDe} », lire « {champ:lire} ».',
         PIECES_JOINTES,
       ],
-      transmission: {
-        demande: 'de rectificatif sur le bulletin de solde',
-        suite:
-          ' (rectificatif {acte:nature} : au lieu de « {champ:auLieuDe} », lire « {champ:lire} »)',
-        colonnes: COLS_RECRUTEMENT,
-      },
     },
   },
   {
@@ -2860,8 +2845,6 @@ export const PRESTATIONS: DefinitionPrestation[] = [
     acteModele: SOIT_TRANSMIS_PRIME(
       'l’indemnité de fonction',
       ', {f:nommé|nommée} {champ:fonction} par le texte {champ:texteNomination} et en fonction depuis le {champ:datePriseFonction}',
-      'de mandatement de l’indemnité de fonction',
-      COLS_NOMINATION,
     ),
   },
   {
@@ -2914,12 +2897,6 @@ export const PRESTATIONS: DefinitionPrestation[] = [
         'J’ai l’honneur de vous transmettre, pour compétence, le projet d’arrêté portant rappel de l’indemnité de fonction de {agent}{enService}, {f:nommé|nommée} {champ:fonction} par le texte {champ:texteNomination}, pour la période du {champ:dateDebut}[[ au {champ:dateFin}]].',
         PIECES_JOINTES,
       ],
-      transmission: {
-        demande: 'de rappel de l’indemnité de fonction',
-        suite:
-          ', {f:nommé|nommée} {champ:fonction} par le texte {champ:texteNomination}, pour la période du {champ:dateDebut}[[ au {champ:dateFin}]]',
-        colonnes: COLS_NOMINATION,
-      },
     },
   },
   {
@@ -2958,8 +2935,6 @@ export const PRESTATIONS: DefinitionPrestation[] = [
     acteModele: SOIT_TRANSMIS_PRIME(
       'rappel de solde d’activités',
       ', en service depuis le {champ:datePriseService}[[ et {f:payé|payée} seulement à partir du {champ:datePremierSalaire}]]',
-      'de mandatement de rappel de solde d’activité',
-      COLS_RECRUTEMENT,
     ),
   },
   {
@@ -3012,8 +2987,6 @@ export const PRESTATIONS: DefinitionPrestation[] = [
     acteModele: SOIT_TRANSMIS_PRIME(
       'rappel de promotion',
       ', {f:promu|promue} par le texte {champ:textePromotion} avec effet au {champ:dateEffet}',
-      'de mandatement de rappel de promotion',
-      COLS_PROMOTION,
     ),
   },
   {
@@ -3073,7 +3046,6 @@ export const PRESTATIONS: DefinitionPrestation[] = [
     acteModele: SOIT_TRANSMIS_PRIME(
       'allocations familiales',
       ', pour {champ:nombreEnfants} enfant(s) à charge',
-      'de paiement des allocations familiales',
     ),
   },
   {
@@ -3095,11 +3067,18 @@ export const PRESTATIONS: DefinitionPrestation[] = [
         obligatoire: true,
       },
       {
+        cle: 'lieuDeces',
+        libelle: 'Lieu du décès',
+        type: 'texte',
+        exemple: 'Ex. Brazzaville',
+      },
+      CIVILITE_AYANT_DROIT,
+      {
         cle: 'ayantDroit',
         libelle: 'Nom et prénoms de l’héritier qui fait la demande',
         type: 'texte',
         obligatoire: true,
-        aide: 'Celui que désigne le jugement d’hérédité.',
+        aide: 'Celui que désigne le jugement d’hérédité : l’administrateur (ou l’administratrice) des biens du défunt.',
       },
       {
         cle: 'lien',
@@ -3171,16 +3150,190 @@ export const PRESTATIONS: DefinitionPrestation[] = [
         'J’ai l’honneur de vous transmettre, pour compétence, le dossier de capital décès de feu {agent.nomComplet}[[, {agent.grade}]][[, matricule {agent.matricule}]][[, en service à {agent.lieuService}]], {f:décédé|décédée} le {champ:dateDeces}, au profit de {champ:ayantDroit}, {acte:lien} {f:du défunt|de la défunte}.',
         PIECES_JOINTES,
       ],
-      transmission: {
-        demande: 'de paiement du capital décès',
-        corps:
-          'la demande de paiement du capital décès, formulée par {champ:ayantDroit}, {acte:lien} de feu {agent.nomComplet}[[, précédemment {agent.grade}]][[, matricule de solde n° {agent.matricule}]], {f:décédé|décédée} le {champ:dateDeces}.',
-        colonnes: COLS_BASE,
-      },
       ampliations: ['Ayant droit', 'DGRHAS', 'Archives'],
     },
   },
+  // Prestations des modèles Word de la DGRHAS sans équivalent dans le document des 58 (04/11/2026)
+  {
+    code: 'CESSATION_PAIEMENT',
+    numero: 59,
+    libelle: 'Certificat de cessation de paiement (agent décédé)',
+    famille: 'SOCIAL',
+    pourQui:
+      'La famille d’un agent décédé : l’administrateur des biens demande le certificat de cessation de paiement. L’agent à choisir est la personne décédée.',
+    acte: 'Soit-transmis au Budget',
+    niveauDecision: 'DGRHAS',
+    signataire: LE_DG,
+    objet: 'Demande de certificat de cessation de paiement',
+    champs: [
+      { cle: 'dateDeces', libelle: 'Date du décès', type: 'date', obligatoire: true },
+      { cle: 'lieuDeces', libelle: 'Lieu du décès', type: 'texte', exemple: 'Ex. CHU de Brazzaville' },
+      CIVILITE_AYANT_DROIT,
+      {
+        cle: 'ayantDroit',
+        libelle: 'Nom et prénoms de l’administrateur des biens',
+        type: 'texte',
+        obligatoire: true,
+      },
+    ],
+    pieces: [
+      DEMANDE,
+      { libelle: 'Acte de décès', obligatoire: true },
+      { libelle: 'Procès-verbal du conseil de famille', obligatoire: true },
+      BULLETIN,
+    ],
+    acteModele: {
+      ...LETTRE_FP,
+      titre: 'Soit-transmis',
+      lettre: { ...AU_BUDGET, objet: 'Certificat de cessation de paiement' },
+      articles: [
+        'J’ai l’honneur de vous faire parvenir, pour compétence, la demande d’obtention d’un certificat de cessation de paiement de feu {agent.nomComplet}.',
+      ],
+    },
+  },
+  {
+    code: 'INDEMNITE_FIN_CARRIERE',
+    numero: 60,
+    libelle: 'Indemnité de fin de carrière',
+    famille: 'SOLDE',
+    pourQui:
+      'Un agent admis à la retraite qui demande le paiement de son indemnité de fin de carrière : la DGRHAS transmet la demande au Budget.',
+    acte: 'Soit-transmis au Budget',
+    niveauDecision: 'DGRHAS',
+    signataire: LE_DG,
+    objet: 'Demande de paiement de l’indemnité de fin de carrière',
+    champs: [
+      {
+        cle: 'dateRetraite',
+        libelle: 'Admis(e) à la retraite depuis le',
+        type: 'date',
+        obligatoire: true,
+      },
+    ],
+    pieces: [
+      DEMANDE,
+      { libelle: 'Arrêté d’admission à la retraite', obligatoire: true },
+      { libelle: 'Certificat de cessation d’activité', obligatoire: true },
+      BULLETIN,
+    ],
+    acteModele: {
+      ...LETTRE_FP,
+      titre: 'Soit-transmis',
+      lettre: { ...AU_BUDGET, objet: 'Indemnité de fin de carrière' },
+      articles: [
+        'J’ai l’honneur de vous faire parvenir, pour compétence, la demande de paiement de l’indemnité de fin de carrière de {agent}.',
+      ],
+    },
+  },
+  {
+    code: 'RCA_SOLDE',
+    numero: 61,
+    libelle: 'Prise en compte de la reconstitution de carrière (RCA) à la solde',
+    famille: 'SOLDE',
+    pourQui:
+      'Un agent dont la carrière a été reconstituée (arrêté de RCA signé) : la DGRHAS demande au Budget de l’appliquer sur la solde.',
+    acte: 'Soit-transmis au Budget',
+    niveauDecision: 'DGRHAS',
+    signataire: LE_DG,
+    objet: 'Demande de prise en compte de la RCA à la solde',
+    champs: [
+      {
+        cle: 'textePromotion',
+        libelle: 'Arrêté de reconstitution de carrière (n° et date)',
+        type: 'texte',
+        obligatoire: true,
+        exemple: 'Ex. Arrêté n° 1234/MFPTSS/DGFP du 12/03/2026',
+      },
+    ],
+    pieces: [
+      DEMANDE,
+      { libelle: 'Arrêté de reconstitution de carrière', obligatoire: true },
+      BULLETIN,
+    ],
+    acteModele: {
+      ...LETTRE_FP,
+      titre: 'Soit-transmis',
+      lettre: { ...AU_BUDGET, objet: 'Reconstitution de carrière à la solde' },
+      articles: [
+        'J’ai l’honneur de vous faire parvenir, pour compétence, la demande de prise en compte de la reconstitution de la carrière administrative à la solde de {agent}.',
+      ],
+    },
+  },
+  {
+    code: 'ARRETE_PROMOTION_SOLDE',
+    numero: 62,
+    libelle: 'Prise en compte de l’arrêté de dernière promotion à la solde',
+    famille: 'SOLDE',
+    pourQui:
+      'Un agent promu (arrêté signé) dont la solde n’a pas encore changé : la DGRHAS demande au Budget de prendre l’arrêté en compte.',
+    acte: 'Soit-transmis au Budget',
+    niveauDecision: 'DGRHAS',
+    signataire: LE_DG,
+    objet: 'Demande de prise en compte de l’arrêté de dernière promotion à la solde',
+    champs: [
+      {
+        cle: 'textePromotion',
+        libelle: 'Arrêté de dernière promotion (n° et date)',
+        type: 'texte',
+        obligatoire: true,
+        exemple: 'Ex. Arrêté n° 1234/MFPTSS/DGFP du 12/03/2026',
+      },
+    ],
+    pieces: [
+      DEMANDE,
+      { libelle: 'Arrêté de dernière promotion', obligatoire: true },
+      BULLETIN,
+    ],
+    acteModele: {
+      ...LETTRE_FP,
+      titre: 'Soit-transmis',
+      lettre: { ...AU_BUDGET, objet: 'Arrêté de dernière promotion à la solde' },
+      articles: [
+        'J’ai l’honneur de vous faire parvenir, pour compétence, la demande de prise en compte de l’arrêté de dernière promotion à la solde de {agent}.',
+      ],
+    },
+  },
+  {
+    code: 'RETABLISSEMENT_INDEMNITE',
+    numero: 63,
+    libelle: 'Rétablissement de l’indemnité de fonction',
+    famille: 'PRIME',
+    pourQui:
+      'Un agent nommé dont l’indemnité de fonction a été suspendue ou supprimée : la DGRHAS demande au Budget de la rétablir.',
+    acte: 'Soit-transmis au Budget',
+    niveauDecision: 'DGRHAS',
+    signataire: LE_DG,
+    objet: 'Demande de rétablissement de l’indemnité de fonction',
+    champs: [
+      {
+        cle: 'texteNomination',
+        libelle: 'Note de nomination (n° et date)',
+        type: 'texte',
+        obligatoire: true,
+        exemple: 'Ex. N/S n° 456/MEPPSA-CAB du 05/09/2025',
+      },
+    ],
+    pieces: [
+      DEMANDE,
+      { libelle: 'Note de nomination', obligatoire: true },
+      PRISE,
+      BULLETIN,
+    ],
+    acteModele: {
+      ...LETTRE_FP,
+      titre: 'Soit-transmis',
+      lettre: { ...AU_BUDGET, objet: 'Rétablissement de l’indemnité de fonction' },
+      articles: [
+        'J’ai l’honneur de vous faire parvenir, pour compétence, la demande de rétablissement de l’indemnité de fonction de {agent}{enService}, {f:nommé|nommée} par la note {champ:texteNomination}.',
+      ],
+    },
+  },
 ];
+
+// Le texte des soit-transmis vient des modèles Word (modeles-transmission.ts)
+for (const p of PRESTATIONS)
+  if (MODELES_TRANSMISSION[p.code])
+    p.acteModele.transmission = MODELES_TRANSMISSION[p.code];
 
 export const CODES_PRESTATIONS = new Set(PRESTATIONS.map((p) => p.code));
 

@@ -55,6 +55,11 @@ export interface FiltresPrestations {
 type Fichier = { libelle: string; f: Express.Multer.File };
 
 const maintenant = () => new Date().toISOString();
+/**
+ * L'acte signé, scanné et déposé sur la demande : c'est lui, et lui seul, que l'agent voit et
+ * imprime sur le portail (DG, 03/11/2026 : pas d'acte avant la signature).
+ */
+export const ACTE_SIGNE = 'Acte signé (scanné)';
 /** « P-12 » : le n° des demandes de prestation, distinct de celui des mutations. */
 export const reference = (n: number) => `P-${n}`;
 const dateFr = (d: string | Date | null) =>
@@ -584,6 +589,11 @@ export class PrestationsService {
       decisionLe: d.decisionLe,
       motifRetrait: d.motifRetrait,
       retour: this.retourDe(d),
+      acteSigne: pieces.find((p) => p.libelle === ACTE_SIGNE) ?? null,
+      peutDeposerActeSigne:
+        d.decision === 'ACCORDEE' &&
+        !d.retiree &&
+        (await this.peutDeposerActeSigne(u, d)),
       circuit: d.circuit,
       etapeCourante: d.etapeCourante,
       pieces,
@@ -1046,6 +1056,60 @@ export class PrestationsService {
     return a ? { ...(await this.instantane(a)), ...d.agent } : d.agent;
   }
 
+  /** La DGRHAS, ou la structure qui a décidé (certificat du lieu de service), dépose l'acte signé. */
+  private async peutDeposerActeSigne(
+    u: UtilisateurConnecte,
+    d: DemandePrestation,
+  ) {
+    if (this.toutVoir(u)) return true;
+    const decideur = [...d.circuit]
+      .reverse()
+      .find((x) => x.visaLe && !x.sautee);
+    if (!decideur?.structureId) return false;
+    return (await this.circuit.structuresDe(u)).includes(decideur.structureId);
+  }
+
+  /** Dépose (ou remplace) le scan de l'acte signé : l'agent pourra le voir et l'imprimer. */
+  async deposerActeSigne(u: UtilisateurConnecte, id: string, fichiers: Fichier[]) {
+    const d = await this.obtenir(u, id);
+    if (d.decision !== 'ACCORDEE' || d.retiree)
+      throw new BadRequestException(
+        'L’acte signé se dépose sur une demande accordée.',
+      );
+    if (!(await this.peutDeposerActeSigne(u, d)))
+      throw new ForbiddenException(
+        'Seule la DGRHAS, ou la structure qui a décidé, dépose l’acte signé.',
+      );
+    const f = fichiers[0]?.f;
+    if (!f) throw new BadRequestException('Joignez le scan de l’acte signé.');
+    if (!/pdf|image\//i.test(f.mimetype))
+      throw new BadRequestException(
+        'Le scan doit être un PDF ou une image (photo de l’acte signé).',
+      );
+    // Pièces complètes (avec le fichier stocké) : l'ancien scan est retiré du stockage
+    const anciens = await this.pieces.find({
+      where: { demandeId: id, libelle: ACTE_SIGNE },
+    });
+    await this.stockage.enregistrerTous('justificatifs', [f]);
+    await this.pieces.save({
+      demandeId: id,
+      libelle: ACTE_SIGNE,
+      nomOrigine: f.originalname.slice(0, 200),
+      fichier: f.filename,
+      mime: f.mimetype,
+      taille: f.size,
+      ajoutePar: u.nom,
+    });
+    for (const p of anciens) {
+      await this.pieces.delete(p.id);
+      await this.stockage.supprimer('justificatifs', p.fichier);
+    }
+    await this.journal.log(u, 'PRESTATION_ACTE_SIGNE', 'demande_prestation', id, {
+      remplace: anciens.length > 0,
+    });
+    return this.fiche(u, id);
+  }
+
   /** Paramètres d'un soit-transmis : à qui, qui envoie et signe, suffixe du n°. */
   private parametresLettre(def: DefinitionPrestation, ctx: ContexteActe, d: DemandePrestation) {
     const l = def.acteModele.lettre!;
@@ -1053,7 +1117,10 @@ export class PrestationsService {
     return {
       destinataire: rendre(l.destinataire, ctx),
       appel: rendre(l.appel, ctx),
-      expediteur: rendre(def.signataire, ctx).replace(/,$/, ''),
+      // Comme les modèles : « Le directeur général des ressources humaines et de l’administration scolaire »
+      expediteur: cabinet
+        ? rendre(def.signataire, ctx).replace(/,$/, '')
+        : 'Le directeur général des ressources humaines et de l’administration scolaire',
       signataireNom: cabinet
         ? this.params.get('SIGNATAIRE_LISTE_NOM') || null
         : this.params.get('DG_NOM') || d.decisionPar || null,
@@ -1187,7 +1254,28 @@ export class PrestationsService {
             par: decideur.visaPar?.replace(/ \(recopié.*\)$/, '') ?? null,
           }
         : null,
-      ampliations: ecrire(m.ampliations),
+      // « MEPPSA-CAB|1 » : le destinataire et le nombre d'exemplaires (modèle officiel)
+      ampliations: ecrire(m.ampliations).map((x) => x.split('|')[0]),
+      ampliationsComptees: m.officiel
+        ? ecrire(m.ampliations).map((x) => {
+            const [libelle, n] = x.split('|');
+            return { libelle, nombre: Number(n) || 1 };
+          })
+        : null,
+      // Modèle officiel (autorisation de tutelle) : en-tête du service, sous-titre, PJ, adresse,
+      // signature au nom du Directeur général
+      officiel: m.officiel
+        ? {
+            services: m.officiel.services,
+            suffixeNumero: m.officiel.suffixeNumero,
+            sousTitre: m.officiel.sousTitre
+              ? rendre(m.officiel.sousTitre, ctx) || null
+              : null,
+            pj: m.officiel.pj ?? null,
+            adresse: this.params.get('ADRESSE_PIED') || null,
+            signataireNom: this.params.get('DG_NOM') || d.decisionPar || null,
+          }
+        : null,
       // Certificat du lieu de service : fait dans la ville de l'agent
       lieu:
         (m.entete === 'STRUCTURE' ? d.agent.ville : null) ||
@@ -1290,6 +1378,13 @@ export class PrestationsService {
         grade: agent.grade,
         lieuService: agent.lieuService,
         departement: agent.departement,
+        // Pour remplir la demande de mutation depuis la fiche (DG, 03/11/2026) : rien à retaper
+        genre: agent.genre,
+        echelon: agent.echelon,
+        statut: agent.statut,
+        departementId: agent.departementId,
+        structureId: agent.structureId,
+        datePriseService: agent.datePriseService ?? null,
       },
     };
   }
@@ -1356,8 +1451,15 @@ export class PrestationsService {
           : null,
       motifRetrait: d.retiree ? d.motifRetrait : null,
       // Un soit-transmis (Budget, Fonction publique) n'est pas remis à l'agent : il suit le retour
+      // L'acte n'est remis qu'une fois signé et scanné (DG, 03/11/2026)
       acteDisponible:
-        etat === 'ACCORDEE' && !def?.acteModele.transmission,
+        etat === 'ACCORDEE' &&
+        !def?.acteModele.transmission &&
+        !!(await this.acteSigneDe(d.id)),
+      acteEnSignature:
+        etat === 'ACCORDEE' &&
+        !def?.acteModele.transmission &&
+        !(await this.acteSigneDe(d.id)),
       retour: (() => {
         const r = this.retourDe(d);
         return r
@@ -1381,12 +1483,28 @@ export class PrestationsService {
     };
   }
 
+  /** La pièce complète (avec le nom du fichier stocké) de l'acte signé. */
+  private async acteSigneDe(id: string) {
+    return this.pieces.findOne({
+      where: { demandeId: id, libelle: ACTE_SIGNE },
+      order: { creeLe: 'DESC' },
+    });
+  }
+
+  /** Le scan de l'acte signé, pour l'agent (numéro et code de suivi). */
   async actePublic(numero: string, code: string) {
     const d = await this.parNumeroCode(numero, code);
     if (definition(d.type)?.acteModele.transmission)
       throw new BadRequestException(
         'Cette demande est transmise par la DGRHAS au service destinataire : il n’y a pas d’acte à imprimer. Suivez ici le retour du service.',
       );
-    return this.contenuActe(d);
+    if (d.decision !== 'ACCORDEE' || d.retiree)
+      throw new BadRequestException('L’acte n’est remis qu’une fois la demande accordée.');
+    const p = await this.acteSigneDe(d.id);
+    if (!p)
+      throw new BadRequestException(
+        'Votre demande est accordée. L’acte est à la signature : il sera ici dès que la DGRHAS aura déposé l’acte signé.',
+      );
+    return p;
   }
 }

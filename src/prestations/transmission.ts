@@ -14,6 +14,7 @@ import type { DemandePrestation } from '../entities';
 import type {
   ColonneTransmission,
   DefinitionPrestation,
+  TransmissionModele,
 } from './definitions';
 import { type ContexteActe, rendre } from './moteur';
 
@@ -86,10 +87,6 @@ const dateFr = (d: unknown) =>
       : '';
 const texte = (v: unknown) =>
   v === null || v === undefined ? '' : String(v).trim();
-/** « 3e échelon », « 1er échelon ». */
-const echelon = (e: string | null | undefined) =>
-  e ? `${e}${e === '1' ? 'er' : 'e'} échelon` : null;
-
 /** Valeur d'une colonne pour une demande (la demande passe avant la fiche : elle est plus précise). */
 export function cellule(
   col: ColonneTransmission,
@@ -119,35 +116,39 @@ export function cellule(
   }
 }
 
+/** Le modèle de la demande, avec sa variante selon un renseignement (rectificatif de nom…). */
+export function modeleDe(
+  def: DefinitionPrestation,
+  details: Record<string, unknown>,
+): TransmissionModele {
+  const t = def.acteModele.transmission!;
+  const v = t.selon ? t.selon.valeurs[String(details[t.selon.champ] ?? '')] : null;
+  return { ...t, ...(v ?? {}) };
+}
+
+/** « de paiement|de l’indemnité de fin de carrière » → les deux lignes et le texte suivi. */
+const coupure = (objet: string) => {
+  const [avant, apres] = objet.includes('|') ? objet.split('|') : ['', objet];
+  return { avant: avant.trim(), apres: apres.trim(), suivi: `${avant.trim()} ${apres.trim()}`.trim() };
+};
+
 /**
- * La phrase d'une demande seule : « une (01) demande de …, formulée par monsieur X, grade de
- * 3e échelon, indice …, matricule de solde n° …, en service à …, département scolaire de …[suite]. »
+ * La phrase d'une demande seule, comme le modèle : « la demande de domiciliation de salaire,
+ * formulée par madame X, institutrice de 1er échelon, indice 488, matricule de solde n° …, en
+ * service à …, département scolaire de …. »
  */
 export function phraseIndividuelle(
   def: DefinitionPrestation,
   ctx: ContexteActe,
 ): string {
-  const t = def.acteModele.transmission!;
-  if (t.corps) return rendre(t.corps, ctx);
-  const a = ctx.agent;
-  const civilite = a.genre === 'F' ? 'madame' : 'monsieur';
-  const identite = [
-    [a.grade, echelon(a.echelon)].filter(Boolean).join(' de '),
-    a.indice && `indice ${a.indice}`,
-    a.matricule && `matricule de solde n° ${a.matricule}`,
-  ]
-    .filter(Boolean)
-    .join(', ');
-  const morceaux = [
-    `${nombreDemandes(1)} ${rendre(t.demande, ctx)}`,
-    `, formulée par ${civilite} ${a.nomComplet}`,
-    identite ? `, ${identite}` : '',
-    t.apresIdentite ? rendre(t.apresIdentite, ctx) : '',
-    a.lieuService ? `, en service à ${a.lieuService}` : '',
-    a.departement ? `, département scolaire de ${a.departement}` : '',
-    t.suite ? rendre(t.suite, ctx) : '',
-  ];
-  return `${morceaux.join('').replace(/\s+([,.])/g, '$1').trim()}.`;
+  const t = modeleDe(def, ctx.details);
+  const objet = rendre(t.corpsObjet ?? coupure(t.objet).suivi, ctx);
+  const debut = t.article === 'la' ? 'la demande' : `${nombreDemandes(1)}`;
+  // Le moteur retire l'espace de tête : « … santé formulée par » (primes, sans virgule)
+  const espace = /^\s/.test(t.phrase) ? ' ' : '';
+  return `${debut} ${objet}${espace}${rendre(t.phrase, ctx)}`
+    .replace(/\s+([,.])/g, '$1')
+    .replace(/\.\.$/, '.');
 }
 
 /** La lettre, prête à imprimer : objet, appel, corps, tableau (collectif), formule de politesse. */
@@ -192,20 +193,22 @@ export function ecrireTransmission(
     reference: (n: number) => string;
   },
 ): LettreTransmission {
-  const t = def.acteModele.transmission!;
   const premier = contexte(demandes[0]);
-  const demande = rendre(t.demande, premier);
+  const t = modeleDe(def, premier.details);
+  const o = coupure(rendre(t.objet, premier));
+  const corpsObjet = t.corpsObjet ? rendre(t.corpsObjet, premier) : o.suivi;
   const collective = demandes.length > 1;
   const nombre = nombreDemandes(demandes.length);
   return {
     collective,
+    // « Objet : Transmission d’une (01) demande de paiement » / « de l’indemnité de fin de carrière. »
     objet: [
-      `Transmission ${collective ? 'de' : 'd’'}${collective ? ' ' : ''}${nombre}`,
-      `${demande}.`,
+      `Transmission ${collective ? 'de ' : 'd’'}${nombre}${o.avant ? ` ${o.avant}` : ''}`,
+      `${o.apres}.`,
     ],
     appel: p.appel,
     corps: collective
-      ? `J’ai l’honneur de vous faire parvenir, pour compétence, ${nombre} ${demande}, formulées par les agents dont les noms et prénoms suivent, conformément au tableau ci-après :`
+      ? `J’ai l’honneur de vous faire parvenir, pour compétence, ${nombre} ${corpsObjet}, formulées par les agents dont les noms et prénoms suivent, conformément au tableau ci-après :`
       : `J’ai l’honneur de vous faire parvenir, pour compétence, ${phraseIndividuelle(def, premier)}`,
     colonnes: collective
       ? t.colonnes.map((cle) => ({ cle, libelle: COLONNES[cle] }))

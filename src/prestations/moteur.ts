@@ -64,6 +64,36 @@ export function valeurRepere(repere: string, c: ContexteActe): string | null {
   }
   if (repere === 'enService')
     return c.agent.lieuService ? `, en service à ${c.agent.lieuService}` : '';
+  // Tournures des modèles Word de la DGRHAS (soit-transmis, autorisation de tutelle, 04/11/2026)
+  const a = c.agent;
+  const manque = (v: string | null | undefined) => (v ? String(v) : MANQUE);
+  if (repere === 'civilite') return femme ? 'madame' : 'monsieur';
+  if (repere === 'grade')
+    return a.grade ? a.grade.charAt(0).toLowerCase() + a.grade.slice(1) : null;
+  if (repere === 'echelon')
+    return a.echelon
+      ? `${a.echelon}${a.echelon === '1' ? 'er' : 'e'} échelon`
+      : null;
+  if (repere === 'identite') {
+    const grade = valeurRepere('grade', c);
+    const echelon = valeurRepere('echelon', c);
+    return `${femme ? 'madame' : 'monsieur'} ${a.nomComplet}, ${manque(grade)} de ${manque(echelon)}, indice ${manque(a.indice)}, matricule de solde n° ${manque(a.matricule)}`;
+  }
+  if (repere === 'enServiceA') return `en service à ${manque(a.lieuService)}`;
+  if (repere === 'departementScolaire')
+    return `département scolaire de ${manque(a.departement)}`;
+  if (repere === 'integreEngage')
+    return a.statut === 'CONTRACTUEL'
+      ? femme
+        ? 'engagée'
+        : 'engagé'
+      : femme
+        ? 'intégrée'
+        : 'intégré';
+  if (repere === 'administrateurAyantDroit')
+    return ['MME', 'MLLE'].includes(String(c.details.civiliteAyantDroit ?? ''))
+      ? 'administratrice'
+      : 'administrateur';
   if (repere.startsWith('decideur.')) {
     const cle = repere.slice(9);
     if (!['sigle', 'nom', 'poste'].includes(cle))

@@ -191,6 +191,21 @@ export class PrestationsController {
     return this.service.acte(u, id);
   }
 
+  /** Le scan de l'acte signé (l'agent ne voit que lui sur le portail). */
+  @Post(':id/acte-signe')
+  @UseInterceptors(FICHIERS)
+  deposerActeSigne(
+    @Utilisateur() u: UtilisateurConnecte,
+    @Param('id') id: string,
+    @UploadedFiles() fichiers: Express.Multer.File[] = [],
+  ) {
+    return this.service.deposerActeSigne(
+      u,
+      id,
+      lire('{}', 'Acte signé', fichiers).fichiers,
+    );
+  }
+
   @Post(':id/pieces')
   @UseInterceptors(FICHIERS)
   ajouterPieces(
@@ -250,7 +265,10 @@ function limiter(req: Request, cle: string, limite: number) {
 @Public()
 @Controller('portail/prestations')
 export class PortailPrestationsController {
-  constructor(private readonly service: PrestationsService) {}
+  constructor(
+    private readonly service: PrestationsService,
+    private readonly stockage: StockageService,
+  ) {}
 
   @Get('catalogue')
   catalogue() {
@@ -298,8 +316,19 @@ export class PortailPrestationsController {
     return this.service.suivi(numero, code);
   }
 
+  /** Le scan de l'acte signé, à voir et imprimer (seulement une fois déposé par la DGRHAS). */
   @Get('acte')
-  acte(@Query('numero') numero: string, @Query('code') code: string) {
-    return this.service.actePublic(numero ?? '', code ?? '');
+  async acte(
+    @Req() req: Request,
+    @Query('numero') numero: string,
+    @Query('code') code: string,
+    @Res() res: Response,
+  ) {
+    limiter(req, 'acte', 60);
+    const p = await this.service.actePublic(numero ?? '', code ?? '');
+    await this.stockage.servir(res, 'justificatifs', p.fichier, {
+      mime: p.mime,
+      nomAffiche: p.nomOrigine,
+    });
   }
 }
