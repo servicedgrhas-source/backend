@@ -1050,10 +1050,14 @@ export class PrestationsService {
   }
 
   /**
-   * L'agent se fait reconnaître : son matricule (ou ses nom et prénoms) et sa date de naissance
-   * doivent désigner une seule fiche de la base du personnel. Rien n'est dit de plus.
+   * L'agent se fait reconnaître avec un seul champ : son matricule solde OU ses nom et prénoms
+   * (le système reconnaît lequel, sans le faire choisir : retour du 03/11/2026, un nom tapé dans la
+   * case du matricule n'était pas trouvé), et sa date de naissance. Le nom s'écrit dans n'importe
+   * quel ordre, avec ou sans accents ; tous ses mots doivent être dans le nom de la fiche. Il faut
+   * une seule fiche, avec cette date de naissance : rien n'est deviné, rien n'est dit de plus.
    */
   async identifier(dto: {
+    identifiant?: string;
     matricule?: string;
     nomComplet?: string;
     dateNaissance?: string;
@@ -1065,25 +1069,43 @@ export class PrestationsService {
         : null;
     if (!naissance)
       throw new BadRequestException('Écrivez votre date de naissance.');
-    const mat = cleCompacte(dto.matricule ?? '');
-    const nom = normaliser(dto.nomComplet ?? '');
-    if (mat.length < 3 && nom.length < 5)
+    const saisie =
+      [dto.identifiant, dto.matricule, dto.nomComplet]
+        .map((v) => (typeof v === 'string' ? v : ''))
+        .find((v) => v.trim()) ?? '';
+    const mat = cleCompacte(saisie);
+    const mots = (t: string | null) =>
+      normaliser(t ?? '')
+        .replace(/[^A-Z0-9]+/g, ' ')
+        .split(' ')
+        .filter(Boolean);
+    const motsSaisis = mots(saisie);
+    if (mat.length < 3)
       throw new BadRequestException(
-        'Écrivez votre matricule solde (ou, si vous n’en avez pas, vos nom et prénoms).',
+        'Écrivez votre matricule solde, ou vos nom et prénoms.',
       );
     const candidats = await this.agents.find({
       where: { dateNaissance: naissance },
     });
-    const trouves = candidats.filter((a) =>
-      mat.length >= 3
-        ? cleCompacte(a.matricule) === mat
-        : cleCompacte(a.nomComplet) === cleCompacte(nom),
+    // D'abord comme un matricule ; sinon comme des nom et prénoms (au moins deux mots)
+    const parMatricule = candidats.filter(
+      (a) => !!a.matricule && cleCompacte(a.matricule) === mat,
     );
+    const parNom =
+      motsSaisis.length >= 2
+        ? candidats.filter((a) => {
+            const m = mots(a.nomComplet);
+            return motsSaisis.every((x) => m.includes(x));
+          })
+        : [];
+    const trouves = parMatricule.length ? parMatricule : parNom;
     if (trouves.length !== 1)
       throw new NotFoundException(
         trouves.length
-          ? 'Plusieurs fiches correspondent : présentez-vous à votre établissement ou à la DGRHAS pour déposer la demande.'
-          : 'Aucune fiche de la base du personnel ne correspond. Vérifiez votre matricule et votre date de naissance ; sinon, demandez à votre établissement de vérifier votre fiche (recensement).',
+          ? 'Plusieurs fiches correspondent à ce nom et à cette date de naissance : écrivez plutôt votre matricule solde, ou tous vos noms et prénoms.'
+          : motsSaisis.length < 2 && !/\d/.test(saisie)
+            ? 'Aucune fiche trouvée. Écrivez votre matricule solde, ou au moins deux de vos noms et prénoms (ex. nom et prénom), avec votre date de naissance.'
+            : 'Aucune fiche de la base du personnel ne correspond à ce matricule (ou à ce nom) et à cette date de naissance. Vérifiez-les ; sinon, demandez à votre établissement de vérifier votre fiche (recensement).',
       );
     const a = trouves[0];
     this.verifierAgent(a);

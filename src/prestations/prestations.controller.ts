@@ -240,7 +240,12 @@ export class PortailPrestationsController {
   identifier(
     @Req() req: Request,
     @Body()
-    dto: { matricule?: string; nomComplet?: string; dateNaissance?: string },
+    dto: {
+      identifiant?: string;
+      matricule?: string;
+      nomComplet?: string;
+      dateNaissance?: string;
+    },
   ) {
     limiter(req, 'identifier', 20);
     return this.service.identifier(dto ?? {});

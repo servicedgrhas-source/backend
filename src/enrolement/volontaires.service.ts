@@ -794,7 +794,11 @@ export class VolontairesService implements OnModuleInit {
       montantsDifferents: [] as string[],
       montantFichier: 0,
       montantBareme: 0,
+      /** Sortants retrouvés en poste : leur fiche est sortie. */
       enPosteRetrouves: [] as string[],
+      /** Sortants qui ressemblent à une fiche en poste sans certitude : rien n'est fermé. */
+      aVerifier: [] as string[],
+      sortis: 0,
       autreNote: [] as string[],
       relies: [] as string[],
       agesHorsLimites: [] as string[],
@@ -803,6 +807,12 @@ export class VolontairesService implements OnModuleInit {
     const c = this.config.get();
     const aujourdhui = new Date().toISOString().slice(0, 10);
     const aRelier: { id: string; ici: string }[] = [];
+    const aSortir: {
+      id: string;
+      ici: string;
+      date: string | null;
+      observation: string | null;
+    }[] = [];
     const nouveaux: Partial<Volontaire>[] = [];
     for (const l of lignes) {
       const nom = nettoyer(
@@ -872,14 +882,34 @@ export class VolontairesService implements OnModuleInit {
         continue;
       }
       if (deja.length) {
-        if (o.type === 'SORTI' && deja.some((x) => x.statut === 'EN_POSTE'))
-          rapport.enPosteRetrouves.push(
-            `${ici} ↔ ${deja.find((x) => x.statut === 'EN_POSTE')!.nomComplet}`,
-          );
-        else {
-          rapport.dejaDansRegistre.push(ici);
-          continue;
-        }
+        const enPoste = deja.filter((x) => x.statut === 'EN_POSTE');
+        if (o.type === 'SORTI' && enPoste.length) {
+          // Sortant encore en poste : c'est sa fiche qui sort, sans nouvelle fiche. Une seule fiche
+          // possible, et le nom identique quand une date de naissance manque (bourse sans date) ;
+          // sinon, à vérifier à la main.
+          const cible = enPoste.length === 1 ? enPoste[0] : null;
+          const sure =
+            !!cible &&
+            ((!!naissance && !!cible.dateNaissance) ||
+              cible.nomNormalise === normaliser(nom));
+          if (cible && aSortir.some((x) => x.id === cible.id))
+            rapport.doublonsDansFichier.push(`${ici} ↔ ${cible.nomComplet}`);
+          else if (cible && sure) {
+            aSortir.push({
+              id: cible.id,
+              ici,
+              date: lireDate(
+                this.valeur(l, ['DATEPRISEENCHARGE', 'PRISEENCHARGE']),
+              ),
+              observation: nettoyer(this.valeur(l, ['OBS'])),
+            });
+            rapport.enPosteRetrouves.push(`${ici} ↔ ${cible.nomComplet}`);
+          } else
+            rapport.aVerifier.push(
+              `${ici} : ${enPoste.map((x) => x.nomComplet).join(', ')} — à sortir à la main depuis sa fiche`,
+            );
+        } else rapport.dejaDansRegistre.push(ici);
+        continue;
       }
       const memes = dansFichier.probables(nom, naissance);
       if (memes.length)
@@ -992,6 +1022,21 @@ export class VolontairesService implements OnModuleInit {
           );
     }
     rapport.ajoutes = nouveaux.length;
+    rapport.sortis = aSortir.length;
+    // Sans date dans la liste, la bourse s'arrête tout de suite (comme pour une fiche ajoutée sortie)
+    if (!o.essai)
+      for (const s of aSortir) {
+        await this.volontaires.update(s.id, {
+          statut: 'SORTI',
+          motifSortie: motif!.code,
+          dateSortie: s.date,
+        });
+        await this.mouvement(u, s.id, 'SORTIE', s.date, motif!.code, {
+          source: `${nomFichier} · ${f.nom}`,
+          ligne: s.ici,
+          observation: s.observation,
+        });
+      }
     if (!o.essai)
       for (const r of aRelier) {
         await this.volontaires.update(r.id, {
@@ -1035,6 +1080,7 @@ export class VolontairesService implements OnModuleInit {
       sansDepartement: court(rapport.sansDepartement),
       montantsDifferents: court(rapport.montantsDifferents),
       enPosteRetrouves: court(rapport.enPosteRetrouves),
+      aVerifier: court(rapport.aVerifier),
       autreNote: court(rapport.autreNote),
       relies: court(rapport.relies),
       agesHorsLimites: court(rapport.agesHorsLimites),
@@ -1050,9 +1096,10 @@ export class VolontairesService implements OnModuleInit {
         type: o.type,
         population,
         ajoutes: nouveaux.length,
+        sortis: aSortir.length,
         rapport: sortie,
       });
-      if (nouveaux.length) await this.lier();
+      if (nouveaux.length || aSortir.length) await this.lier();
     }
     return sortie;
   }
