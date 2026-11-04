@@ -181,6 +181,13 @@ describe('Droits par rubrique', () => {
       expect(v('/structures/modele')).toBe('refuse');
     });
 
+    it('lit ce dont la page de sa rubrique a besoin, sans ouvrir l’autre rubrique', () => {
+      const p = { '/personnel': 'LECTURE' as const };
+      expect(deciderVisiteur(p, '/recensement/tableau', 'GET').decision).toBe('permis');
+      expect(deciderVisiteur(p, '/recensement/modifications', 'GET').decision).toBe('refuse');
+      expect(deciderVisiteur({}, '/recensement/tableau', 'GET').decision).toBe('refuse');
+    });
+
     it('ne reçoit jamais plus que la lecture', () => {
       const r = droitsDe(
         { roles: { VISITEUR: { '/candidats': 'MODIFICATION' } }, utilisateurs: {} },

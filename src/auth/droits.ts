@@ -45,13 +45,23 @@ export const ROLES_LIBRES: Role[] = ['ADMIN', 'DG'];
 export const RUBRIQUES_API: Record<string, string[]> = {
   '/': ['tableau-de-bord'],
   '/candidats': ['candidats'],
-  '/transmission': ['transmissions'],
+  '/transmission': [
+    'transmissions',
+    'envois',
+    'recrutes/sans-lot',
+    'recrutes/oublies',
+  ],
   '/reception': ['reception'],
   '/recrutement': ['agents', 'import/base', 'recrutes/export'],
   '/commission': ['commission'],
   '/pilotage': ['pilotage'],
   '/lots': ['lots'],
-  '/affectations': ['affectations', 'deport'],
+  '/affectations': [
+    'affectations',
+    'deport',
+    'recrutes/sans-lot',
+    'recrutes/oublies',
+  ],
   '/doublons': ['doublons'],
   '/recommandations': ['recommandations'],
   '/statistiques': ['statistiques', 'agents/statistiques'],
@@ -74,15 +84,16 @@ export const RUBRIQUES_API: Record<string, string[]> = {
   '/enrolement/bourse': ['enrolement/bourse'],
   '/enrolement/mise-en-route': ['enrolement/mises-en-route'],
   '/enrolement/regularisations': ['enrolement/regularisations'],
-  '/enrolement/tableau': ['enrolement/tableau'],
+  '/enrolement/tableau': ['enrolement/tableau', 'enrolement/guide'],
   '/enrolement/configuration': ['enrolement/configuration'],
-  '/recensement': ['recensement/tableau'],
+  '/recensement': ['recensement/tableau', 'recensement/modifications'],
   '/personnel': [],
   '/personnel/agents': [
     'recensement/agents',
     'rattachement/fiches',
     'recensement/pieces',
     'recensement/export',
+    'recensement/bottin',
   ],
   '/personnel/presence': ['presence'],
   '/personnel/evaluations': ['evaluations'],
@@ -253,7 +264,32 @@ const LECTURES_VISITEUR = [
   'enrolement/referentiel',
   'enrolement/configuration',
   'recensement/configuration',
+  'recensement/structures',
 ];
+
+/**
+ * Lectures dont la page d'une rubrique a besoin, rangées dans une autre rubrique : un visiteur qui
+ * a la rubrique en lecture les obtient, sans que l'autre rubrique lui soit ouverte (relevé du
+ * 04/11/2026, chaque rubrique ouverte seule).
+ */
+const LECTURES_LIEES: Record<string, string[]> = {
+  '/affectations': ['lots'],
+  '/candidats': ['origines', 'commission/membres'],
+  '/commission': ['candidats/quota-beneficiaires'],
+  '/demandes/nouvelle': ['demandes-prestation/catalogue'],
+  '/enrolement/base': ['enrolement/campagnes'],
+  '/enrolement/saisie': [
+    'enrolement/campagnes',
+    'enrolement/membres',
+    'origines',
+  ],
+  '/enrolement/bourse': ['enrolement/volontaires'],
+  '/mutations/nouvelle': ['prestations'],
+  '/personnel': ['recensement/tableau'],
+  '/personnel/agents': ['recensement/tableau'],
+  '/recensement': ['recensement/agents'],
+  '/recrutement': ['agents/statistiques'],
+};
 
 /** Téléchargements (Excel, Word, PDF, scans, pièces, modèles) : jamais pour un visiteur. */
 const FICHIER =
@@ -290,7 +326,10 @@ export function deciderVisiteur(
         'Compte visiteur : la consultation est permise, pas l’impression ni le téléchargement.',
     };
   if (LECTURES_VISITEUR.some(sous)) return { decision: 'permis' };
-  return rubriquesDe(c).some((r) => droits[r] === 'LECTURE')
+  const liee = Object.entries(LECTURES_LIEES).some(
+    ([r, prefixes]) => droits[r] === 'LECTURE' && prefixes.some(sous),
+  );
+  return liee || rubriquesDe(c).some((r) => droits[r] === 'LECTURE')
     ? { decision: 'permis' }
     : {
         decision: 'refuse',
