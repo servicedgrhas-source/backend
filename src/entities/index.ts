@@ -418,6 +418,8 @@ export class Recommandation {
   } | null;
   /** Nouvelles valeurs proposées. */
   @Column({ type: 'varchar', nullable: true }) typeNote: string | null;
+  /** Enrôlement : spécialité à écrire avec le changement de note (06/11/2026). */
+  @Column({ type: 'varchar', nullable: true }) specialite: string | null;
   @Column({ type: 'int', nullable: true }) departementId: number | null;
   @Column({ type: 'varchar', nullable: true }) structure: string | null;
   @Column({ type: 'varchar', nullable: true }) etablissement: string | null;
@@ -475,6 +477,32 @@ export class NoteService {
   /** Lignes d'ampliation ajoutées à la main sur l'aperçu, avant les archives (DG, 01/11/2026). */
   @Column({ type: 'jsonb', default: () => "'[]'" })
   ampliationsAjoutees: { libelle: string; nombre: string }[];
+  /**
+   * Notes d'enrôlement : colonnes du tableau choisies pour cette note (naissance, lieu, promotion,
+   * specialite, diplome) ; null : celles du type de note (DG, 05/11/2026).
+   */
+  @Column({ type: 'jsonb', nullable: true }) colonnesNote: string[] | null;
+  /** ADDITIF : la note signée que celle-ci complète (des noms oubliés, même année). */
+  @Column({ type: 'uuid', nullable: true }) additifDe: string | null;
+  /** RECTIFICATIF : la note signée que celle-ci corrige (« au lieu de … lire … »). */
+  @Column({ type: 'uuid', nullable: true }) rectificatifDe: string | null;
+  /** Corrections du rectificatif, une par personne de la note corrigée. */
+  @Column({ type: 'jsonb', default: () => "'[]'" })
+  rectifications: Rectification[];
+  /** Enrôlement : lot de rangement de la note (null : la note principale du type). */
+  @Column({ type: 'int', nullable: true }) lotRangement: number | null;
+  /** Enrôlement : introduction et texte de conclusion réécrits pour cette note (null : ceux du modèle). */
+  @Column({ type: 'jsonb', nullable: true })
+  textesLibres: {
+    introduction?: string | null;
+    mentions?: string[] | null;
+  } | null;
+  /**
+   * En-tête réécrit pour cette note (06/11/2026) : lignes du ministère (« --- » : un trait) et
+   * référence du numéro. null : l'en-tête habituel et la référence des paramètres.
+   */
+  @Column({ type: 'jsonb', nullable: true })
+  enteteLibre: { lignes: string[]; reference?: string | null } | null;
   /** Note d'enrôlement : campagne d'où viennent les volontaires. */
   @Column({ type: 'int', nullable: true }) campagneId: number | null;
   @Column() anneeScolaire: string;
@@ -509,6 +537,29 @@ export class NoteService {
   @Column({ type: 'varchar', nullable: true }) scanPar: string | null;
   @CreateDateColumn() creeLe: Date;
   @UpdateDateColumn() modifieLe: Date;
+}
+
+/**
+ * Une correction d'un rectificatif d'enrôlement (DG, 05/11/2026) : la personne de la note corrigée
+ * (« au lieu de ») et ce qu'il faut lire à la place : la même personne corrigée (nom mal écrit,
+ * autre département…) ou une autre personne qui la remplace (elle ne veut pas partir…).
+ */
+export interface Rectification {
+  id: string;
+  type: 'CORRECTION' | 'REMPLACEMENT';
+  /** La personne de la note corrigée. */
+  enroleId: string;
+  /** Ce qu'il faut lire ; enroleId : le dossier qui remplace (REMPLACEMENT), s'il est dans la base. */
+  lire: {
+    enroleId: string | null;
+    nom: string;
+    naissance: string | null;
+    lieu: string | null;
+    promotion: string | null;
+    specialite: string | null;
+    diplome: string | null;
+    departementId: number | null;
+  };
 }
 
 /** Avis de conformité d'un niveau (chef de bureau, chef de service, directeur) sur une note validée. */
@@ -1019,6 +1070,18 @@ export class Enrole {
   @Index() @Column({ default: 'A_CONTROLER' }) etat: string;
   @Column({ type: 'text', nullable: true }) remarqueControle: string | null;
   @Column({ type: 'text', nullable: true }) motifDecision: string | null;
+  /**
+   * Ressemble à un recruté, un volontaire déjà payé ou un enrôlé d'avant, mais la DGRHAS a vérifié :
+   * ce n'est pas la même personne (06/11/2026). Il ne revient plus dans « déjà connus ».
+   */
+  @Column({ default: false }) dejaConnuVerifie: boolean;
+  /**
+   * Note choisie à la main (06/11/2026) : BET (préscolaire), CFEEN (primaire), LICENCE (collège),
+   * MASTER (lycée)… ; null : la règle automatique (licence de langue ou de philosophie au lycée…).
+   */
+  @Column({ type: 'varchar', nullable: true }) noteForcee: string | null;
+  /** Lot de rangement : la note d'enrôlement découpée en plusieurs notes (null : la note principale). */
+  @Column({ type: 'int', nullable: true }) lotRangement: number | null;
   @Column({ type: 'varchar', nullable: true }) saisiePar: string | null;
   @Column({ type: 'varchar', nullable: true }) controlePar: string | null;
   @Column({ type: 'varchar', nullable: true }) decidePar: string | null;
@@ -1714,11 +1777,15 @@ export class Nomination {
 export class DemandePrestation {
   @PrimaryGeneratedColumn('uuid') id: string;
   /** N° d'enregistrement (affiché « P-12 »), propre à ces demandes. */
-  @Index({ unique: true }) @Column({ type: 'int' }) numero: number;
+  @Index('IDX_demande_prestation_numero', { unique: true })
+  @Column({ type: 'int' })
+  numero: number;
   /** Code de la prestation (prestations/definitions.ts). */
-  @Index() @Column() type: string;
+  @Index('IDX_demande_prestation_type') @Column() type: string;
   /** Fiche de la base du personnel : obligatoire. */
-  @Index() @Column({ type: 'int' }) agentId: number;
+  @Index('IDX_demande_prestation_agent')
+  @Column({ type: 'int' })
+  agentId: number;
   /** Ce que disait la fiche au dépôt (le formulaire reste lisible si la fiche change). */
   @Column({ type: 'jsonb' }) agent: {
     nomComplet: string;
@@ -1756,7 +1823,9 @@ export class DemandePrestation {
   @Column({ type: 'int', nullable: true }) etapeCourante: number | null;
   @Column({ type: 'varchar', nullable: true }) decideur: string | null;
   /** ACCORDEE, REJETEE ou EN_INSTANCE. */
-  @Index() @Column({ type: 'varchar', nullable: true }) decision: string | null;
+  @Index('IDX_demande_prestation_decision')
+  @Column({ type: 'varchar', nullable: true })
+  decision: string | null;
   @Column({ type: 'text', nullable: true }) decisionMotivation: string | null;
   @Column({ type: 'varchar', nullable: true }) decisionPar: string | null;
   @Column({ type: 'timestamptz', nullable: true }) decisionLe: Date | null;
@@ -1782,7 +1851,9 @@ export class DemandePrestation {
 @Entity('piece_prestation')
 export class PiecePrestation {
   @PrimaryGeneratedColumn('uuid') id: string;
-  @Index() @Column({ type: 'uuid' }) demandeId: string;
+  @Index('IDX_piece_prestation_demande')
+  @Column({ type: 'uuid' })
+  demandeId: string;
   @Column() libelle: string;
   @Column() nomOrigine: string;
   @Column() fichier: string;

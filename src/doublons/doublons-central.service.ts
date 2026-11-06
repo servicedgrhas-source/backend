@@ -368,6 +368,8 @@ export class DoublonsCentralService {
   /** Toutes les paires probables d'une base, déclarées différentes exclues (ids). */
   private async toutesLesPaires(
     base: BaseDoublons,
+    /** Enrôlés : une seule campagne (saisie des enrôlements, 06/11/2026). */
+    campagneId?: number,
   ): Promise<[string, string][]> {
     const declarees = await this.declarees(base);
     const pasDeclaree = (a: string, b: string) =>
@@ -452,6 +454,7 @@ export class DoublonsCentralService {
     }
     const l = await this.enroles.find({
       select: ['id', 'nomComplet', 'dateNaissance', 'campagneId'],
+      ...(campagneId ? { where: { campagneId } } : {}),
     });
     return pairesProbables(
       l,
@@ -475,9 +478,9 @@ export class DoublonsCentralService {
   }
 
   /** Les paires d'une base, page par page (fiches complètes à comparer). */
-  async paires(b: string, page = 1, taille = 20) {
+  async paires(b: string, page = 1, taille = 20, campagneId?: number) {
     const base = this.base(b);
-    const toutes = await this.toutesLesPaires(base);
+    const toutes = await this.toutesLesPaires(base, campagneId);
     const ici = toutes.slice((page - 1) * taille, page * taille);
     const fiches = await this.fiches(base, [...new Set(ici.flat())]);
     return {

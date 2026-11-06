@@ -45,11 +45,21 @@ export class DashboardController {
            OR (EXISTS (SELECT 1 FROM agent a WHERE a."lotPublicationId" = l.id AND a."typeTexte" = 'DECRET') AND l."dateSignatureDecrets" IS NULL))::int AS "lotsSansDate",
         (SELECT count(*) FROM affectation WHERE statut = 'A_TRAITER')::int AS "pasAffectes",
         (SELECT count(*) FROM recommandation WHERE statut = 'EN_ATTENTE')::int AS "recommandations",
+        (SELECT count(*) FROM recommandation WHERE statut = 'EN_ATTENTE' AND operation = 'ENROLEMENT')::int AS "recommandationsEnr",
         (SELECT count(*) FROM demande_mutation WHERE NOT retiree AND "instructionMinistre" IS NULL)::int AS "mutationsEnCours",
         (SELECT count(*) FROM note_service WHERE module = 'AFFECTATION' AND statut = 'BROUILLON')::int AS "notesAffASoumettre",
         (SELECT count(*) FROM note_service WHERE module = 'AFFECTATION' AND statut = 'SOUMISE')::int AS "notesAffSoumises",
         (SELECT count(*) FROM note_service WHERE module = 'MUTATION' AND statut = 'BROUILLON')::int AS "notesMutASoumettre",
-        (SELECT count(*) FROM note_service WHERE module = 'MUTATION' AND statut = 'SOUMISE')::int AS "notesMutSoumises"`);
+        (SELECT count(*) FROM note_service WHERE module = 'MUTATION' AND statut = 'SOUMISE')::int AS "notesMutSoumises",
+        -- Enrôlement et nomination aussi, et partout les notes validées en attente de signature (06/11/2026)
+        (SELECT count(*) FROM note_service WHERE module = 'ENROLEMENT' AND statut = 'BROUILLON')::int AS "notesEnrASoumettre",
+        (SELECT count(*) FROM note_service WHERE module = 'ENROLEMENT' AND statut = 'SOUMISE')::int AS "notesEnrSoumises",
+        (SELECT count(*) FROM note_service WHERE module = 'NOMINATION' AND statut = 'BROUILLON')::int AS "notesNomASoumettre",
+        (SELECT count(*) FROM note_service WHERE module = 'NOMINATION' AND statut = 'SOUMISE')::int AS "notesNomSoumises",
+        (SELECT count(*) FROM note_service WHERE module = 'AFFECTATION' AND statut = 'VALIDEE')::int AS "notesAffASigner",
+        (SELECT count(*) FROM note_service WHERE module = 'MUTATION' AND statut = 'VALIDEE')::int AS "notesMutASigner",
+        (SELECT count(*) FROM note_service WHERE module = 'ENROLEMENT' AND statut = 'VALIDEE')::int AS "notesEnrASigner",
+        (SELECT count(*) FROM note_service WHERE module = 'NOMINATION' AND statut = 'VALIDEE')::int AS "notesNomASigner"`);
     return c;
   }
 

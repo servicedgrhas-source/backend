@@ -29,7 +29,12 @@ export interface ConfigDroits {
 }
 
 /** Rôles qui ne peuvent pas servir de départ à un rôle personnalisé. */
-export const BASES_INTERDITES: Role[] = ['ADMIN', 'DG', 'STRUCTURE', 'VISITEUR'];
+export const BASES_INTERDITES: Role[] = [
+  'ADMIN',
+  'DG',
+  'STRUCTURE',
+  'VISITEUR',
+];
 const CODE_PERSO = /^PERSO_[A-Z0-9_]{1,40}$/;
 
 /** Rôles que l'on ne règle pas : ils voient et font tout. */
@@ -64,16 +69,26 @@ export const RUBRIQUES_API: Record<string, string[]> = {
   ],
   '/doublons': ['doublons'],
   '/recommandations': ['recommandations'],
+  '/enrolement/recommandations': ['recommandations', 'enrolement/dossiers'],
   '/statistiques': ['statistiques', 'agents/statistiques'],
   '/enrolement/campagne': ['enrolement/campagnes', 'enrolement/membres'],
   '/enrolement/saisie': [
     'enrolement/dossiers',
+    'enrolement/specialites',
     'enrolement/import',
     'enrolement/controler',
     'enrolement/decider',
     'enrolement/doublons',
+    'enrolement/deja-connus',
+    'enrolement/enroles',
+    'doublons',
   ],
-  '/enrolement/base': ['enrolement/dossiers'],
+  '/enrolement/base': [
+    'enrolement/dossiers',
+    'enrolement/enroles',
+    'enrolement/specialites',
+  ],
+  '/enrolement/statistiques': ['enrolement/statistiques'],
   '/notes/enrolement': ['notes', 'notes/preparer/enrolement'],
   '/enrolement/volontaires': [
     'enrolement/volontaires',
@@ -239,7 +254,8 @@ export function droitsDe(
   };
   // Un visiteur ne reçoit jamais plus que la lecture
   if (u.role === 'VISITEUR')
-    for (const r of Object.keys(d)) if (d[r] === 'MODIFICATION') d[r] = 'LECTURE';
+    for (const r of Object.keys(d))
+      if (d[r] === 'MODIFICATION') d[r] = 'LECTURE';
   return d;
 }
 

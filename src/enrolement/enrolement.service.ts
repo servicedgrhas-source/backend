@@ -2,9 +2,10 @@ import {
   BadRequestException,
   Injectable,
   NotFoundException,
+  OnApplicationBootstrap,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { In, Not, Repository } from 'typeorm';
+import { In, IsNull, Not, Repository } from 'typeorm';
 import type { UtilisateurConnecte } from '../auth/auth';
 import { lireClasseur } from '../common/excel';
 import { codeDepartement } from '../common/referentiels';
@@ -14,11 +15,13 @@ import { ConfigEnrolementService } from './configuration';
 import { JournalService } from '../core/core.service';
 import {
   Agent,
+  AgentRecense,
   AncienRecrute,
   CampagneEnrolement,
   Departement,
   Enrole,
   MembreEnrolement,
+  Volontaire,
 } from '../entities';
 
 /** Diplômes des finalistes (écoles professionnelles) et leur cycle. */
@@ -30,10 +33,209 @@ export const DIPLOMES_ENROLEMENT: Record<
   CFEEN: { libelle: 'CFEEN', cycle: 'Primaire' },
   DEMA: { libelle: 'DEMA', cycle: 'Collège' },
   DCAF: { libelle: 'DCAF', cycle: 'Administration' },
-  LICENCE: { libelle: 'Licence d’enseignement', cycle: 'Collège' },
-  MASTER: { libelle: 'Master d’enseignement (ENS) / langue', cycle: 'Lycée' },
+  LICENCE: { libelle: 'Licence d’enseignement / CAP-CEG', cycle: 'Collège' },
+  MASTER: {
+    libelle: 'Master d’enseignement / CAPES / maîtrise',
+    cycle: 'Lycée',
+  },
   AUTRE: { libelle: 'Autre diplôme', cycle: '' },
 };
+
+/**
+ * Matières qui ne s'enseignent qu'au lycée : une licence en russe, chinois, arabe, espagnol ou
+ * allemand (DG, 05/11/2026), ou en philosophie (06/11/2026), va par défaut dans la note du lycée
+ * (on peut la remettre au collège).
+ */
+export const LANGUES_LYCEE = [
+  'RUSSE',
+  'CHINOIS',
+  'ARABE',
+  'ESPAGNOL',
+  'ALLEMAND',
+  'PHILO',
+];
+export const estLangueLycee = (specialite: unknown) => {
+  const s = normaliser(specialite);
+  return LANGUES_LYCEE.some((l) => s.includes(l));
+};
+
+/**
+ * Règle des diplômes de l'enrôlement (audio du 05/11/2026) : sont retenus le master et la licence
+ * d'enseignement, le DEMA, le DCAF, le CFEEN (primaire, préscolaire) et le BET préscolaire. Le Bac,
+ * le Bac pédagogique et les autres diplômes sont non conformes ; un BET qui n'est pas du préscolaire
+ * aussi. DCAF hors administration scolaire, licence ou master hors matière d'enseignement : à vérifier.
+ */
+export function regleDiplome(
+  code: string,
+  brut: string | null,
+  specialite: string | null,
+): { nonConforme?: string; aVerifier?: string } {
+  const sp = normaliser(specialite).replace(/[^A-Z]/g, '');
+  if (code === 'AUTRE')
+    return { nonConforme: brut?.trim() || 'diplôme absent' };
+  if (code === 'BET') {
+    if (/PRES?CO|PRECOLAIRE/.test(sp)) return {};
+    if (!sp || sp === 'PRIMAIRE')
+      return {
+        aVerifier: `BET ${sp ? 'primaire' : 'sans spécialité'} : seul le BET préscolaire est retenu`,
+      };
+    return {
+      nonConforme: `BET ${String(specialite).trim().toLowerCase()} (seul le BET préscolaire est retenu)`,
+    };
+  }
+  // DCAF : administration ou gestion scolaire (« Adm. scolaire », « Administration générale »…)
+  if (
+    code === 'DCAF' &&
+    sp &&
+    !/SCOLAIRE|GESTION/.test(sp) &&
+    !/^(ADM|ADMINI?S?T+RATION)(GENERALE)?$/.test(sp)
+  )
+    return {
+      aVerifier: `DCAF « ${String(specialite).trim()} », hors administration scolaire`,
+    };
+  if (
+    (code === 'LICENCE' || code === 'MASTER') &&
+    sp &&
+    /DROIT|ECONOMI|GESTION|LOGISTIQUE|TRANSPORT|COMPTAB|COMMERCE|FINANCE|JOURNAL/.test(
+      sp,
+    )
+  )
+    return {
+      aVerifier: `${code === 'LICENCE' ? 'Licence' : 'Master'} « ${String(specialite).trim()} » : est-ce un diplôme d'enseignement ?`,
+    };
+  return {};
+}
+
+/**
+ * Spécialité écrite de mille façons (« H.G », « HG », « Histoire-Géographie »…) ramenée à un seul
+ * libellé pour les statistiques.
+ */
+export function specialiteStat(brut: unknown): string {
+  const s = normaliser(brut).replace(/[^A-Z]/g, '');
+  if (!s) return 'Non précisée';
+  const regles: [RegExp, string][] = [
+    [/^ANGL/, 'Anglais'],
+    [/^FRAN/, 'Français'],
+    [/^(HG|HISTGEO|HISTOIRE|GEOGRAPHIE|HISTGEOG)/, 'Histoire-Géographie'],
+    [/^MATH/, 'Mathématiques'],
+    [/^(PC|SCIENCESPHYSIQUE|SCIENCEPHYSIQUE|PHYSIQUE)/, 'Physique-Chimie'],
+    [/^(SVT|SCIENCESDELAVIE|SCIENCESNATURELLES)/, 'SVT'],
+    [/^PHILO/, 'Philosophie'],
+    [/^(EPS|EDUCATIONPHYSIQUE)/, 'EPS'],
+    [/^ESPAGN/, 'Espagnol'],
+    [/^ALLEM/, 'Allemand'],
+    [/^RUSS/, 'Russe'],
+    [/^CHIN/, 'Chinois'],
+    [/^ARAB/, 'Arabe'],
+    [/^MUSIQ/, 'Musique'],
+    [/^ARTS?PLAST/, 'Arts plastiques'],
+    [/^INFORMAT/, 'Informatique'],
+    [/^ECONOM/, 'Économie'],
+  ];
+  const r = regles.find(([re]) => re.test(s));
+  if (r) return r[1];
+  const t = String(brut).trim();
+  return t.charAt(0).toUpperCase() + t.slice(1).toLowerCase();
+}
+
+/**
+ * Note de service où va un volontaire retenu (DG, 05/11/2026) : le CFEEN préscolaire avec le BET
+ * (une seule note du préscolaire) ; une licence placée au lycée avec les masters (note du lycée) ;
+ * sinon la note de son diplôme. Les codes de note restent ceux des diplômes (BET, MASTER…).
+ */
+export function noteEnrolementDe(e: {
+  diplome: string;
+  cycle?: string | null;
+  specialite?: string | null;
+  noteForcee?: string | null;
+}) {
+  // Choix fait à la main (un dossier ou plusieurs cochés) : il l'emporte sur la règle
+  if (e.noteForcee) return e.noteForcee;
+  const presco = /PRES?CO|PRECOLAIRE/.test(
+    normaliser(`${e.cycle ?? ''} ${e.specialite ?? ''}`).replace(/\s/g, ''),
+  );
+  if (e.diplome === 'CFEEN' && presco) return 'BET';
+  if (e.diplome === 'LICENCE' && normaliser(e.cycle).startsWith('LYC'))
+    return 'MASTER';
+  return e.diplome;
+}
+
+/**
+ * Notes où un dossier peut être envoyé à la main (06/11/2026) : n'importe laquelle, comme une
+ * recommandation (un instituteur peut aller dans la note du collège). Cycle de la bourse qui va
+ * avec, et spécialité par défaut quand la note n'en demande pas d'autre.
+ */
+export const NOTES_CIBLES: {
+  note: string;
+  libelle: string;
+  cycle: string;
+  /** Spécialité donnée d'office (préscolaire, primaire) ; null : à préciser (collège, lycée). */
+  specialite: string | null;
+}[] = [
+  {
+    note: 'BET',
+    libelle: 'Note du préscolaire',
+    cycle: 'Préscolaire',
+    specialite: 'Préscolaire',
+  },
+  {
+    note: 'CFEEN',
+    libelle: 'Note du primaire',
+    cycle: 'Primaire',
+    specialite: 'Primaire',
+  },
+  {
+    note: 'DEMA',
+    libelle: 'Note du collège (DEMA)',
+    cycle: 'Collège',
+    specialite: null,
+  },
+  {
+    note: 'LICENCE',
+    libelle: 'Note du collège (licence, CAP-CEG)',
+    cycle: 'Collège',
+    specialite: null,
+  },
+  {
+    note: 'MASTER',
+    libelle: 'Note du lycée',
+    cycle: 'Lycée',
+    specialite: null,
+  },
+  {
+    note: 'DCAF',
+    libelle: 'Note de l’administration (DCAF)',
+    cycle: 'Administration',
+    specialite: null,
+  },
+];
+export const NOTE_CIBLE = (note: string | null | undefined) =>
+  NOTES_CIBLES.find((c) => c.note === note) ?? null;
+
+/** Spécialité absente ou qui ne dit rien de la matière (« primaire » dans une note du collège). */
+const specialiteVide = (sp: unknown) => {
+  const t = normaliser(sp).replace(/[^A-Z]/g, '');
+  return !t || /^(PRES?CO|PRECOLAIRE|PRIMAIRE|NEANT|AUCUNE?|RAS|ND)/.test(t);
+};
+
+/**
+ * Spécialité d'un dossier au regard de sa note : « regle » (préscolaire ou primaire sans
+ * spécialité : la règle la donne), « aPreciser » (collège ou lycée sans matière), ou null.
+ */
+export function etatSpecialite(e: {
+  diplome: string;
+  cycle?: string | null;
+  specialite?: string | null;
+  noteForcee?: string | null;
+}): { etat: 'regle'; valeur: string } | { etat: 'aPreciser' } | null {
+  const c = NOTE_CIBLE(noteEnrolementDe(e));
+  if (!c) return null;
+  if (c.specialite)
+    return normaliser(e.specialite).replace(/[^A-Z]/g, '')
+      ? null
+      : { etat: 'regle', valeur: c.specialite };
+  return specialiteVide(e.specialite) ? { etat: 'aPreciser' } : null;
+}
 
 /** Cycles de l'enrôlement : le budget (places et bourse) se calcule cycle par cycle. */
 export const CYCLES_ENROLEMENT = [
@@ -87,6 +289,8 @@ export function codeDiplomeEnrolement(brut: unknown): string | null {
   if (k.startsWith('DEMA')) return 'DEMA';
   if (k.startsWith('DCAF')) return 'DCAF';
   if (k.startsWith('LICENCE') || k.startsWith('LIC')) return 'LICENCE';
+  // CAP-CEG : avec la licence (note du collège) ; CAPES et maîtrise : avec le master
+  if (k.startsWith('CAPCEG')) return 'LICENCE';
   if (
     k.startsWith('MASTER') ||
     k.startsWith('MAITRISE') ||
@@ -126,7 +330,7 @@ export interface EnroleDto {
 }
 
 @Injectable()
-export class EnrolementService {
+export class EnrolementService implements OnApplicationBootstrap {
   constructor(
     @InjectRepository(CampagneEnrolement)
     private readonly campagnes: Repository<CampagneEnrolement>,
@@ -134,13 +338,62 @@ export class EnrolementService {
     private readonly membres: Repository<MembreEnrolement>,
     @InjectRepository(Enrole) private readonly enroles: Repository<Enrole>,
     @InjectRepository(Agent) private readonly agents: Repository<Agent>,
+    @InjectRepository(AgentRecense)
+    private readonly personnel: Repository<AgentRecense>,
     @InjectRepository(AncienRecrute)
     private readonly anciens: Repository<AncienRecrute>,
+    @InjectRepository(Volontaire)
+    private readonly volontaires: Repository<Volontaire>,
     @InjectRepository(Departement)
     private readonly deps: Repository<Departement>,
     private readonly journal: JournalService,
     private readonly config: ConfigEnrolementService,
   ) {}
+
+  async onApplicationBootstrap() {
+    await this.licencesAuLycee(
+      'MIGRATION_LICENCES_LANGUES_20261105',
+      estLangueLycee,
+    ).catch(() => undefined);
+    // Puis la philosophie (06/11/2026), une seule fois aussi
+    await this.licencesAuLycee('MIGRATION_LICENCES_PHILO_20261106', (s) =>
+      normaliser(s).includes('PHILO'),
+    ).catch(() => undefined);
+  }
+
+  /**
+   * Une seule fois (DG, 05/11/2026) : les licences de langue (russe, chinois, arabe, espagnol,
+   * allemand) déjà enregistrées au collège passent au lycée, pas encore dans une note. Un choix fait
+   * ensuite à la main (remettre au collège) n'est plus touché.
+   */
+  private async licencesAuLycee(
+    MARQUE: string,
+    auLycee: (specialite: unknown) => boolean,
+  ) {
+    const [deja] = await this.enroles.query<{ n: number }[]>(
+      `SELECT count(*)::int AS n FROM parametre WHERE cle = $1`,
+      [MARQUE],
+    );
+    if (deja.n) return;
+    const liste = await this.enroles.find({
+      where: { diplome: 'LICENCE', noteId: IsNull() },
+    });
+    const ids = liste
+      .filter(
+        (e) => auLycee(e.specialite) && !normaliser(e.cycle).startsWith('LYC'),
+      )
+      .map((e) => e.id);
+    if (ids.length)
+      await this.enroles.update({ id: In(ids) }, { cycle: 'Lycée' });
+    await this.enroles.query(
+      `INSERT INTO parametre (cle, valeur, description) VALUES ($1, $2, $3) ON CONFLICT (cle) DO NOTHING`,
+      [
+        MARQUE,
+        new Date().toISOString(),
+        `Licences passées au lycée : ${ids.length}`,
+      ],
+    );
+  }
 
   /** Bourse mensuelle d'un cycle : celle de la campagne, sinon celle de la configuration de l'enrôlement. */
   private bourse(c: Partial<CampagneEnrolement> | null, cycle: string) {
@@ -435,6 +688,14 @@ export class EnrolementService {
     }
     const liste = await q.orderBy('e.nomNormalise', 'ASC').getMany();
     const deps = new Map((await this.deps.find()).map((d) => [d.id, d.nom]));
+    // Recommandation en attente (avis du directeur ou décision du DG), comme aux affectations
+    const enAttente = new Set(
+      (
+        await this.enroles.query<{ id: string }[]>(
+          `SELECT "enroleId" AS id FROM recommandation WHERE statut = 'EN_ATTENTE' AND "enroleId" IS NOT NULL`,
+        )
+      ).map((x) => x.id),
+    );
     const membres = new Map(
       (await this.membres.find({ where: { campagneId: f.campagneId } })).map(
         (m) => [m.id, m.nom],
@@ -443,6 +704,25 @@ export class EnrolementService {
     return liste.map((e) => ({
       ...e,
       diplomeLibelle: DIPLOMES_ENROLEMENT[e.diplome]?.libelle ?? e.diplome,
+      // Quand la note n'est pas celle du diplôme, on le dit (06/11/2026) : licence de langue ou de
+      // philosophie → note du lycée ; CFEEN préscolaire → note du préscolaire
+      noteAutre:
+        noteEnrolementDe(e) !== e.diplome
+          ? `${NOTE_CIBLE(noteEnrolementDe(e))?.libelle ?? noteEnrolementDe(e)} (${
+              e.noteForcee
+                ? 'choisie à la main'
+                : noteEnrolementDe(e) === 'MASTER'
+                  ? 'langue ou philosophie : enseignée au lycée'
+                  : 'avec les BET'
+            })`
+          : e.noteForcee
+            ? 'Note de son diplôme (choisie à la main)'
+            : null,
+      // La note où il ira, et l'état de sa spécialité (à préciser, ou donnée par la règle)
+      noteActuelle: noteEnrolementDe(e),
+      specialiteEtat: etatSpecialite(e),
+      // Notes où on peut l'envoyer à la main (licence : collège ou lycée ; CFEEN : primaire ou préscolaire)
+      notesPossibles: NOTES_CIBLES,
       departementRetenu: e.departementRetenuId
         ? (deps.get(e.departementRetenuId) ?? null)
         : null,
@@ -450,7 +730,121 @@ export class EnrolementService {
         (d) => deps.get(d) ?? '?',
       ),
       membre: e.membreId ? (membres.get(e.membreId) ?? null) : null,
+      recommandationEnAttente: enAttente.has(e.id),
     }));
+  }
+
+  /**
+   * Statistiques de l'enrôlement (cadrage du 05/11/2026) : par cycle et diplôme, l'effectif de la
+   * base générale (tous les dossiers de la campagne), les affectés (dans une note validée ou
+   * signée), les non retenus et le reste à affecter ; puis les spécialités du collège (DEMA,
+   * licence, cumul) et du lycée (master, licences de langues, cumul). `parmi` : compter les
+   * spécialités sur tous les dossiers ou sur le reste à affecter.
+   */
+  async statistiques(campagneId: number, parmi: 'tous' | 'reste' = 'tous') {
+    const c = await this.campagne(campagneId);
+    const liste = await this.enroles.find({ where: { campagneId } });
+    const affecte = (e: Enrole) => !!e.noteId;
+    const reste = (e: Enrole) => !e.noteId && e.etat !== 'NON_RETENU';
+    // Cycle et diplôme, dans l'ordre de la note où va la personne
+    const LIGNES: [string, string, (e: Enrole) => boolean][] = [
+      [
+        'Préscolaire',
+        'BET',
+        (e) =>
+          e.diplome === 'BET' &&
+          !/^CFEEN|^CEFEN/.test(normaliser(e.diplomePrecision)),
+      ],
+      [
+        'Préscolaire',
+        'CFEEN préscolaire',
+        (e) =>
+          noteEnrolementDe(e) === 'BET' &&
+          !(
+            e.diplome === 'BET' &&
+            !/^CFEEN|^CEFEN/.test(normaliser(e.diplomePrecision))
+          ),
+      ],
+      ['Primaire', 'CFEEN', (e) => noteEnrolementDe(e) === 'CFEEN'],
+      ['Collège', 'DEMA', (e) => e.diplome === 'DEMA'],
+      ['Collège', 'Licence', (e) => noteEnrolementDe(e) === 'LICENCE'],
+      ['Administration', 'DCAF', (e) => e.diplome === 'DCAF'],
+      ['Lycée', 'Master (CAPES, maîtrise)', (e) => e.diplome === 'MASTER'],
+      [
+        'Lycée',
+        'Licence (langues, philosophie)',
+        (e) => e.diplome === 'LICENCE' && noteEnrolementDe(e) === 'MASTER',
+      ],
+      [
+        'Autres',
+        'Autre diplôme',
+        (e) =>
+          !['BET', 'CFEEN', 'DEMA', 'DCAF', 'LICENCE', 'MASTER'].includes(
+            e.diplome,
+          ),
+      ],
+    ];
+    const compter = (l: Enrole[]) => ({
+      total: l.length,
+      affectes: l.filter(affecte).length,
+      nonRetenus: l.filter((e) => e.etat === 'NON_RETENU' && !e.noteId).length,
+      reste: l.filter(reste).length,
+    });
+    const parDiplome = LIGNES.map(([cycle, diplome, f]) => ({
+      cycle,
+      diplome,
+      ...compter(liste.filter(f)),
+    })).filter((x) => x.total || x.cycle !== 'Autres');
+    // Spécialités : collège (DEMA, licence) et lycée (master, licences de langues)
+    const base = parmi === 'reste' ? liste.filter(reste) : liste;
+    const tableau = (
+      colonnes: [string, (e: Enrole) => boolean][],
+    ): { specialite: string; valeurs: number[]; cumul: number }[] => {
+      const m = new Map<string, number[]>();
+      colonnes.forEach(([, f], i) => {
+        for (const e of base.filter(f)) {
+          const s = specialiteStat(e.specialite);
+          const v = m.get(s) ?? colonnes.map(() => 0);
+          v[i]++;
+          m.set(s, v);
+        }
+      });
+      return [...m.entries()]
+        .map(([specialite, valeurs]) => ({
+          specialite,
+          valeurs,
+          cumul: valeurs.reduce((a, b) => a + b, 0),
+        }))
+        .sort(
+          (a, b) =>
+            b.cumul - a.cumul || a.specialite.localeCompare(b.specialite, 'fr'),
+        );
+    };
+    const collegeCols: [string, (e: Enrole) => boolean][] = [
+      ['DEMA', (e) => e.diplome === 'DEMA'],
+      ['Licence', (e) => noteEnrolementDe(e) === 'LICENCE'],
+    ];
+    const lyceeCols: [string, (e: Enrole) => boolean][] = [
+      ['Master (CAPES, maîtrise)', (e) => e.diplome === 'MASTER'],
+      [
+        'Licence (langues, philosophie)',
+        (e) => e.diplome === 'LICENCE' && noteEnrolementDe(e) === 'MASTER',
+      ],
+    ];
+    return {
+      campagne: { id: c.id, annee: c.annee, anneeScolaire: c.anneeScolaire },
+      parmi,
+      parDiplome,
+      total: compter(liste),
+      college: {
+        colonnes: collegeCols.map(([l]) => l),
+        lignes: tableau(collegeCols),
+      },
+      lycee: {
+        colonnes: lyceeCols.map(([l]) => l),
+        lignes: tableau(lyceeCols),
+      },
+    };
   }
 
   async compteurs(campagneId: number) {
@@ -744,9 +1138,10 @@ export class EnrolementService {
     const liste = await this.enroles.find({
       where: { id: In(ids), etat: 'A_CONTROLER' },
     });
-    for (const e of liste)
+    // En une fois, par paquets (5 000 dossiers déclarés conformes d'un coup)
+    for (let i = 0; i < liste.length; i += 1000)
       await this.enroles.update(
-        e.id,
+        { id: In(liste.slice(i, i + 1000).map((e) => e.id)) },
         conforme
           ? { etat: 'CONTROLE', controlePar: u.nom, remarqueControle: null }
           : { remarqueControle: remarque!.trim() },
@@ -807,16 +1202,338 @@ export class EnrolementService {
           `Enveloppe de ${fcfa(b.enveloppe)} : ${fcfa(b.consomme)} sont déjà engagés, ces ${liste.length} volontaire(s) coûtent ${fcfa(cout)}. Il ne reste que ${fcfa(Math.max(0, b.enveloppe - b.consomme))} : on ne peut pas dépasser l’enveloppe.`,
         );
     }
-    for (const e of liste)
-      await this.enroles.update(e.id, {
-        etat: decision,
-        decidePar: u.nom,
-        decideLe: new Date(),
-        motifDecision: decision === 'NON_RETENU' ? motif?.trim() || null : null,
-      });
+    for (let i = 0; i < liste.length; i += 1000)
+      await this.enroles.update(
+        { id: In(liste.slice(i, i + 1000).map((e) => e.id)) },
+        {
+          etat: decision,
+          decidePar: u.nom,
+          decideLe: new Date(),
+          motifDecision:
+            decision === 'NON_RETENU' ? motif?.trim() || null : null,
+        },
+      );
     await this.journal.log(
       u,
       decision === 'RETENU' ? 'ENROLES_RETENUS' : 'ENROLES_NON_RETENUS',
+      'enrole',
+      null,
+      { dossiers: liste.length },
+    );
+    return { traites: liste.length };
+  }
+
+  /**
+   * Comparateur des « déjà connus » : recrutés de la Fonction publique, recrutés des années passées,
+   * registre des volontaires et communautaires, retenus des autres campagnes. Rend, pour un nom et
+   * une date, les fiches qui lui ressemblent fortement (règle commune des doublons).
+   */
+  private async comparateurConnus(campagneId: number) {
+    type Ref = {
+      source: string;
+      nom: string;
+      naissance: string | null;
+      detail: string;
+      mots: string[];
+    };
+    const refs: Ref[] = [];
+    const ajouter = (
+      source: string,
+      nom: string,
+      naissance: string | null,
+      detail: string,
+    ) => {
+      const mots = motsDuNom(nom);
+      if (mots.length >= 2) refs.push({ source, nom, naissance, detail, mots });
+    };
+    for (const a of await this.agents.find({
+      select: ['nomComplet', 'dateNaissance', 'quota', 'feuille'],
+    }))
+      ajouter(
+        'Recrutement (Fonction publique)',
+        a.nomComplet,
+        a.dateNaissance,
+        a.feuille === 'QUOTA_AUTRES'
+          ? 'quota « Autres »'
+          : `quota ${a.quota ?? '?'}`,
+      );
+    // La base du personnel (agents recensés) : un enrôlé y figure peut-être déjà (06/11/2026)
+    for (const a of await this.personnel.find({
+      select: ['nomComplet', 'dateNaissance', 'statut'],
+    }))
+      ajouter('Base du personnel', a.nomComplet, a.dateNaissance, a.statut);
+    for (const a of await this.anciens.find({
+      select: ['nomComplet', 'dateNaissance', 'annee', 'source'],
+    }))
+      ajouter(
+        'Recrutés des années passées',
+        a.nomComplet,
+        a.dateNaissance,
+        `${a.annee ?? 'année ?'}`,
+      );
+    for (const v of await this.volontaires.find({
+      select: ['nomComplet', 'dateNaissance', 'population', 'vague', 'statut'],
+    }))
+      ajouter(
+        v.population === 'COMMUNAUTAIRE'
+          ? 'Communautaires'
+          : 'Volontaires (bourse)',
+        v.nomComplet,
+        v.dateNaissance,
+        [v.vague, v.statut === 'SORTI' ? 'sorti' : 'en poste']
+          .filter(Boolean)
+          .join(' · '),
+      );
+    const annees = new Map(
+      (await this.campagnes.find()).map((c) => [c.id, c.annee]),
+    );
+    for (const e of await this.enroles.find({
+      where: { campagneId: Not(campagneId), etat: 'RETENU' },
+      select: ['nomComplet', 'dateNaissance', 'campagneId'],
+    }))
+      ajouter(
+        'Enrôlement d’une autre année',
+        e.nomComplet,
+        e.dateNaissance,
+        `campagne ${annees.get(e.campagneId) ?? '?'}`,
+      );
+    // Index par mot du nom : on ne compare qu'aux noms qui partagent un des deux mots les plus longs
+    const index = new Map<string, number[]>();
+    refs.forEach((r, i) => {
+      for (const m of new Set(r.mots))
+        index.set(m, [...(index.get(m) ?? []), i]);
+    });
+    return (nom: string, naissance: string | null) => {
+      const mots = motsDuNom(nom);
+      if (mots.length < 2) return [];
+      const cles = [...mots].sort((a, b) => b.length - a.length).slice(0, 2);
+      const vus = new Set<number>();
+      const trouves: {
+        source: string;
+        nom: string;
+        naissance: string | null;
+        detail: string;
+      }[] = [];
+      for (const k of cles)
+        for (const i of index.get(k) ?? []) {
+          if (vus.has(i)) continue;
+          vus.add(i);
+          const r = refs[i];
+          if (ressemblance(mots, naissance, r.mots, r.naissance) === 'PROBABLE')
+            trouves.push({
+              source: r.source,
+              nom: r.nom,
+              naissance: r.naissance,
+              detail: r.detail,
+            });
+        }
+      return trouves;
+    };
+  }
+
+  /**
+   * Déjà connus (06/11/2026) : dossiers de la campagne (pas encore non retenus ni dans une note) qui
+   * ressemblent fortement (même date et noms proches, ou mêmes mots sans date) à un recruté de la
+   * Fonction publique, à une personne des années passées, à un volontaire ou communautaire du
+   * registre, ou à un retenu d'une autre campagne. La DGRHAS tranche : écarter, ou autre personne.
+   */
+  async dejaConnus(campagneId: number) {
+    await this.campagne(campagneId);
+    const dossiers = await this.enroles.find({
+      where: {
+        campagneId,
+        etat: In(['A_CONTROLER', 'CONTROLE', 'RETENU']),
+        noteId: IsNull(),
+        dejaConnuVerifie: false,
+      },
+    });
+    const res: {
+      id: string;
+      nom: string;
+      naissance: string | null;
+      diplome: string;
+      etat: string;
+      trouves: {
+        source: string;
+        nom: string;
+        naissance: string | null;
+        detail: string;
+      }[];
+    }[] = [];
+    const connus = await this.comparateurConnus(campagneId);
+    for (const e of dossiers) {
+      const trouves = connus(e.nomComplet, e.dateNaissance);
+      if (trouves.length)
+        res.push({
+          id: e.id,
+          nom: e.nomComplet,
+          naissance: e.dateNaissance,
+          diplome: DIPLOMES_ENROLEMENT[e.diplome]?.libelle ?? e.diplome,
+          etat: e.etat,
+          trouves: trouves.slice(0, 5),
+        });
+    }
+    return res.sort((a, b) => a.nom.localeCompare(b.nom, 'fr'));
+  }
+
+  /** Cycle d'un dossier quand il suit la règle (licence de langue ou de philosophie : lycée). */
+  private cycleDeLaRegle(e: Enrole) {
+    if (e.diplome === 'LICENCE')
+      return estLangueLycee(e.specialite) ? 'Lycée' : 'Collège';
+    if (e.diplome === 'CFEEN')
+      return /PRES?CO|PRECOLAIRE/.test(
+        normaliser(e.specialite).replace(/\s/g, ''),
+      )
+        ? 'Préscolaire'
+        : 'Primaire';
+    return DIPLOMES_ENROLEMENT[e.diplome]?.cycle || e.cycle;
+  }
+
+  /**
+   * Changer la note d'un ou de plusieurs dossiers (06/11/2026) : n'importe quelle note (préscolaire,
+   * primaire, collège, lycée, administration). `cible` null : revenir à la règle automatique. La
+   * spécialité, si elle est donnée, est écrite pour tous ; sinon le préscolaire et le primaire
+   * reçoivent la leur, et ceux du collège ou du lycée sans matière sont signalés (sans bloquer).
+   * Un dossier déjà dans une note validée ne bouge pas.
+   */
+  async changerNote(
+    u: UtilisateurConnecte,
+    ids: string[],
+    cible: string | null,
+    specialite: string | null = null,
+  ) {
+    if (!ids.length) throw new BadRequestException('Aucun dossier choisi.');
+    const choix = cible ? NOTE_CIBLE(cible) : null;
+    if (cible && !choix)
+      throw new BadRequestException(`Note inconnue : ${cible}.`);
+    const liste = await this.enroles.find({ where: { id: In(ids) } });
+    let changes = 0;
+    let dansUneNote = 0;
+    let specialitesDonnees = 0;
+    let sansSpecialite = 0;
+    for (const e of liste) {
+      if (e.noteId) {
+        dansUneNote++;
+        continue;
+      }
+      const maj: Partial<Enrole> = {};
+      if (!choix) {
+        maj.noteForcee = null;
+        maj.cycle = this.cycleDeLaRegle(e);
+      } else {
+        // La note de la règle n'a pas besoin d'être « forcée »
+        const regle = noteEnrolementDe({
+          ...e,
+          noteForcee: null,
+          cycle: this.cycleDeLaRegle(e),
+        });
+        maj.noteForcee = regle === choix.note ? null : choix.note;
+        maj.cycle = regle === choix.note ? this.cycleDeLaRegle(e) : choix.cycle;
+      }
+      if (specialite?.trim()) maj.specialite = specialite.trim();
+      const apres = { ...e, ...maj };
+      const sp = etatSpecialite(apres);
+      if (sp?.etat === 'regle') {
+        maj.specialite = sp.valeur;
+        specialitesDonnees++;
+      } else if (sp?.etat === 'aPreciser') sansSpecialite++;
+      await this.enroles.update(e.id, maj);
+      changes++;
+    }
+    await this.journal.log(u, 'ENROLES_NOTE_CHANGEE', 'enrole', null, {
+      cible,
+      specialite,
+      changes,
+    });
+    return { changes, dansUneNote, specialitesDonnees, sansSpecialite };
+  }
+
+  /**
+   * Spécialité d'un ou de plusieurs dossiers (06/11/2026). `specialite` null : la règle
+   * (« Préscolaire », « Primaire ») pour ceux de ces notes qui n'en ont pas.
+   */
+  async ecrireSpecialite(
+    u: UtilisateurConnecte,
+    ids: string[],
+    specialite: string | null,
+  ) {
+    if (!ids.length) throw new BadRequestException('Aucun dossier choisi.');
+    const liste = await this.enroles.find({ where: { id: In(ids) } });
+    let changes = 0;
+    let ignores = 0;
+    for (const e of liste) {
+      const sp = etatSpecialite(e);
+      const valeur = specialite?.trim()
+        ? specialite.trim()
+        : sp?.etat === 'regle'
+          ? sp.valeur
+          : null;
+      if (!valeur || e.noteId) {
+        ignores++;
+        continue;
+      }
+      // Une licence de langue ou de philosophie part au lycée ; la règle suit la spécialité
+      const maj: Partial<Enrole> = { specialite: valeur };
+      if (!e.noteForcee)
+        maj.cycle = this.cycleDeLaRegle({ ...e, specialite: valeur } as Enrole);
+      await this.enroles.update(e.id, maj);
+      changes++;
+    }
+    await this.journal.log(u, 'ENROLES_SPECIALITE', 'enrole', null, {
+      specialite,
+      changes,
+    });
+    return { changes, ignores };
+  }
+
+  /** Spécialités déjà écrites dans la campagne (collège et lycée), les plus fréquentes d'abord. */
+  async specialitesConnues(campagneId: number) {
+    const lignes: { specialite: string; n: number }[] =
+      await this.enroles.query(
+        `SELECT specialite, count(*)::int n FROM enrole WHERE "campagneId" = $1 AND specialite IS NOT NULL AND trim(specialite) <> '' GROUP BY 1 ORDER BY 2 DESC LIMIT 300`,
+        [campagneId],
+      );
+    const vues = new Set<string>();
+    const res: string[] = [];
+    for (const x of [
+      ...SPECIALITES_ENROLEMENT,
+      ...lignes.map((l) => l.specialite),
+    ]) {
+      const cle = normaliser(x);
+      if (specialiteVide(x) || vues.has(cle)) continue;
+      vues.add(cle);
+      res.push(x.trim());
+    }
+    return res;
+  }
+
+  /** Déjà connu : l'écarter (non retenu) ou dire que c'est une autre personne. */
+  async trancherDejaConnu(
+    u: UtilisateurConnecte,
+    ids: string[],
+    decision: 'ECARTER' | 'DIFFERENT',
+    motif?: string,
+  ) {
+    if (!ids.length) throw new BadRequestException('Aucun dossier choisi.');
+    const liste = await this.enroles.find({
+      where: { id: In(ids), noteId: IsNull() },
+    });
+    for (let i = 0; i < liste.length; i += 1000) {
+      const paquet = { id: In(liste.slice(i, i + 1000).map((e) => e.id)) };
+      if (decision === 'ECARTER')
+        await this.enroles.update(paquet, {
+          etat: 'NON_RETENU',
+          decidePar: u.nom,
+          decideLe: new Date(),
+          motifDecision: `Déjà connu${motif?.trim() ? ` : ${motif.trim()}` : ' (recruté, volontaire ou enrôlé)'}`,
+        });
+      else await this.enroles.update(paquet, { dejaConnuVerifie: true });
+    }
+    await this.journal.log(
+      u,
+      decision === 'ECARTER'
+        ? 'ENROLES_DEJA_CONNUS_ECARTES'
+        : 'ENROLES_DEJA_CONNUS_DIFFERENTS',
       'enrole',
       null,
       { dossiers: liste.length },
@@ -848,47 +1565,127 @@ export class EnrolementService {
   /* -------------------------------- Import -------------------------------- */
 
   /**
-   * Liste Excel des dossiers déposés (compilation) : chaque ligne devient un dossier
-   * « à contrôler » de la campagne. `essai` : rapport sans rien enregistrer.
+   * Importer une liste Excel des dossiers déposés (refait le 06/11/2026), en trois temps :
+   * 1. le fichier est lu et ses feuilles proposées : l'utilisateur choisit la ou les feuilles ;
+   * 2. essai : chaque ligne est comparée à la campagne (même personne : mise à jour proposée ;
+   *    doublon probable), au fichier lui-même, et aux bases du système (recrutés de la Fonction
+   *    publique, base du personnel, volontaires et communautaires, enrôlés des autres années) ;
+   * 3. import, avec les décisions prises ligne par ligne ou par groupe (\`decisions\` : clé de la
+   *    ligne → MAJ, FUSION, AJOUTER ou IGNORER). Sans décision, le choix le plus prudent.
    */
   async importer(
     u: UtilisateurConnecte,
     campagneId: number,
     contenu: Buffer,
     essai: boolean,
+    feuillesChoisies: string[] | null = null,
+    decisions: Record<string, string> = {},
   ) {
     const c = await this.campagne(campagneId);
-    const feuilles = await lireClasseur(contenu, [
+    const toutes = await lireClasseur(contenu, [
       'NOMSETPRENOMS|NOMETPRENOMS|NOMSPRENOMS',
       'DIPLOME',
     ]);
-    if (!feuilles.length)
+    if (!toutes.length)
       throw new BadRequestException(
         'Aucune feuille avec les colonnes « Noms et prénoms » et « Diplôme ».',
+      );
+    const feuillesDispo = toutes.map((f) => ({
+      nom: f.nom,
+      lignes: f.lignes.length,
+    }));
+    // Plusieurs feuilles et aucune choisie : on demande laquelle envoyer
+    if (!feuillesChoisies?.length && toutes.length > 1)
+      return { choisirFeuille: true as const, feuillesDispo };
+    const feuilles = feuillesChoisies?.length
+      ? toutes.filter((f) => feuillesChoisies.includes(f.nom))
+      : toutes;
+    if (!feuilles.length)
+      throw new BadRequestException(
+        'La feuille choisie n’est pas dans ce fichier (ou n’a pas les colonnes attendues).',
       );
     const deps = await this.deps.find();
     const depDe = (brut: unknown) => {
       const code = codeDepartement((nettoyer(brut) ?? '').split(/[/(]/)[0]);
       return code ? (deps.find((d) => d.code === code)?.id ?? null) : null;
     };
-    const existants = new Set(
-      (
-        await this.enroles.find({
-          where: { campagneId },
-          select: ['nomNormalise', 'dateNaissance'],
-        })
-      ).map((e) => `${e.nomNormalise}|${e.dateNaissance ?? ''}`),
+    const nomDep = new Map(deps.map((d) => [d.id, d.nom] as const));
+    const campagneDossiers = await this.enroles.find({ where: { campagneId } });
+    const parCle = new Map<string, Enrole>(
+      campagneDossiers.map(
+        (e) => [`${e.nomNormalise}|${e.dateNaissance ?? ''}`, e] as const,
+      ),
     );
     const rapport = {
+      feuillesDispo,
       feuilles: feuilles.map((f) => f.nom),
       lues: 0,
       ajoutes: 0,
       dejaLa: 0,
       sansDiplome: 0,
+      nonConformes: 0,
+      aVerifier: 0,
+      doublonsProbables: 0,
+      dejaConnus: 0,
+      misAJour: 0,
+      fusionnes: 0,
+      ignores: 0,
     };
-    const nouveaux: Partial<Enrole>[] = [];
+    type Ligne = Partial<Enrole> & { cle: string };
+    type Ecart = {
+      champ: string;
+      libelle: string;
+      base: string;
+      fichier: string;
+    };
+    const details = {
+      aMettreAJour: [] as {
+        cle: string;
+        nom: string;
+        naissance: string | null;
+        existant: {
+          id: string;
+          nom: string;
+          etat: string;
+          dansUneNote: boolean;
+        };
+        ecarts: Ecart[];
+      }[],
+      doublonsFichier: [] as {
+        cle: string;
+        nom: string;
+        naissance: string | null;
+        avec: { cle: string; nom: string; naissance: string | null };
+        exact: boolean;
+      }[],
+      doublonsBase: [] as {
+        cle: string;
+        nom: string;
+        naissance: string | null;
+        existant: {
+          id: string;
+          nom: string;
+          naissance: string | null;
+          etat: string;
+        };
+      }[],
+      connus: [] as {
+        cle: string;
+        nom: string;
+        naissance: string | null;
+        sources: {
+          source: string;
+          nom: string;
+          naissance: string | null;
+          detail: string;
+        }[];
+      }[],
+    };
+
+    // 1. Lecture des lignes
+    const lignes: Ligne[] = [];
     for (const f of feuilles)
-      for (const l of f.lignes) {
+      f.lignes.forEach((l, i) => {
         const cle = (p: string) => Object.keys(l).find((k) => k.startsWith(p));
         const nom = nettoyer(
           l[
@@ -898,32 +1695,32 @@ export class EnrolementService {
               ''
           ],
         );
-        if (!nom || motsDuNom(nom).length < 2) continue;
+        if (!nom || motsDuNom(nom).length < 2) return;
         rapport.lues++;
-        const naissance = lireDate(l[cle('DATEDENAIS') ?? '']);
-        const k = `${normaliser(nom)}|${naissance ?? ''}`;
-        if (existants.has(k)) {
-          rapport.dejaLa++;
-          continue;
-        }
-        existants.add(k);
         const diplome = codeDiplomeEnrolement(l[cle('DIPLOME') ?? '']);
         if (!diplome) rapport.sansDiplome++;
         const departs = Object.keys(l).filter(
           (x) => /^DEPART/.test(x) && !x.startsWith('DEPARTEMENTRETENU'),
         );
-        nouveaux.push({
+        lignes.push({
+          // Feuille et ligne Excel (la ligne 1 est celle des titres)
+          cle: `${f.nom}#${i + 2}`,
           campagneId: c.id,
           nomComplet: nom,
           nomNormalise: normaliser(nom),
-          dateNaissance: naissance,
+          dateNaissance: lireDate(l[cle('DATEDENAIS') ?? '']),
           lieuNaissance: nettoyer(l[cle('LIEUDENAIS') ?? '']),
           diplome: diplome ?? 'AUTRE',
           diplomePrecision: nettoyer(l[cle('DIPLOME') ?? '']),
           promotion: nettoyer(l[cle('PROMO') ?? '']),
+          // Licence de langue enseignée au lycée seulement : au lycée par défaut (DG, 05/11/2026)
           cycle:
-            DIPLOMES_ENROLEMENT[diplome ?? 'AUTRE'].cycle ||
-            nettoyer(l[cle('CYCLE') ?? '']),
+            diplome === 'LICENCE' &&
+            (estLangueLycee(l[cle('SPECIALITE') ?? '']) ||
+              normaliser(l[cle('CYCLE') ?? '']).startsWith('LYC'))
+              ? 'Lycée'
+              : DIPLOMES_ENROLEMENT[diplome ?? 'AUTRE'].cycle ||
+                nettoyer(l[cle('CYCLE') ?? '']),
           specialite: nettoyer(l[cle('SPECIALITE') ?? '']),
           departementsSouhaites: departs
             .map((x) => depDe(l[x]))
@@ -937,7 +1734,229 @@ export class EnrolementService {
           etat: 'A_CONTROLER',
           saisiePar: u.nom,
         });
+      });
+
+    // Ce qui diffère entre le dossier de la base et la ligne du fichier (valeurs du fichier non vides)
+    const CHAMPS: [keyof Enrole, string][] = [
+      ['lieuNaissance', 'Lieu de naissance'],
+      ['diplomePrecision', 'Diplôme'],
+      ['promotion', 'Promotion'],
+      ['specialite', 'Spécialité'],
+      ['departementsSouhaites', 'Départements souhaités'],
+      ['departementRetenuId', 'Département retenu'],
+      ['etablissement', 'Établissement'],
+      ['telephone', 'Téléphone'],
+      ['origineBrute', 'Origine'],
+      ['observation', 'Observation'],
+    ];
+    const lisible = (champ: keyof Enrole, v: unknown) =>
+      champ === 'departementsSouhaites'
+        ? ((v as number[] | null) ?? [])
+            .map((d) => nomDep.get(d) ?? d)
+            .join(', ')
+        : champ === 'departementRetenuId'
+          ? v
+            ? String(nomDep.get(v as number) ?? v)
+            : ''
+          : String(v ?? '');
+    const ecarts = (e: Partial<Enrole>, x: Ligne): Ecart[] =>
+      CHAMPS.flatMap(([champ, libelle]) => {
+        const f = lisible(champ, x[champ]);
+        const b = lisible(champ, e[champ]);
+        return f.trim() && normaliser(f) !== normaliser(b)
+          ? [{ champ: String(champ), libelle, base: b, fichier: f }]
+          : [];
+      });
+    const valeursDuFichier = (x: Ligne) => {
+      const maj: Partial<Enrole> = {};
+      for (const [champ] of CHAMPS) {
+        const v = x[champ];
+        if (
+          Array.isArray(v)
+            ? v.length
+            : v !== null && v !== undefined && String(v).trim()
+        )
+          (maj as Record<string, unknown>)[champ] = v;
       }
+      if (maj.diplomePrecision) {
+        maj.diplome = x.diplome;
+        maj.cycle = x.cycle;
+      }
+      return maj;
+    };
+
+    // 2. Comparaisons : la campagne (même personne, puis doublon probable), le fichier, les bases
+    const connus = await this.comparateurConnus(campagneId);
+    const parMot = new Map<
+      string,
+      {
+        mots: string[];
+        naissance: string | null;
+        base?: Enrole;
+        ligne?: Ligne;
+      }[]
+    >();
+    const indexer = (
+      nom: string,
+      naissance: string | null,
+      ref: { base?: Enrole; ligne?: Ligne },
+    ) => {
+      const mots = motsDuNom(nom);
+      for (const m of new Set(mots))
+        parMot.set(m, [...(parMot.get(m) ?? []), { mots, naissance, ...ref }]);
+    };
+    for (const e of campagneDossiers)
+      indexer(e.nomComplet, e.dateNaissance, { base: e });
+    const exactsFichier = new Map<string, Ligne>();
+    const garder: Ligne[] = [];
+    for (const x of lignes) {
+      const k = `${x.nomNormalise}|${x.dateNaissance ?? ''}`;
+      const ident = {
+        cle: x.cle,
+        nom: x.nomComplet!,
+        naissance: x.dateNaissance ?? null,
+      };
+      // a. Déjà dans la campagne (même nom, même date) : mise à jour proposée s'il y a du nouveau
+      const existant = parCle.get(k);
+      if (existant) {
+        const diff = ecarts(existant, x);
+        if (!diff.length) {
+          rapport.dejaLa++;
+          continue;
+        }
+        details.aMettreAJour.push({
+          ...ident,
+          existant: {
+            id: existant.id,
+            nom: existant.nomComplet,
+            etat: existant.etat,
+            dansUneNote: !!existant.noteId,
+          },
+          ecarts: diff,
+        });
+        const d = decisions[x.cle] ?? 'IGNORER';
+        if (d === 'MAJ' && !existant.noteId) {
+          if (!essai)
+            await this.enroles.update(existant.id, valeursDuFichier(x));
+          rapport.misAJour++;
+        } else {
+          rapport.dejaLa++;
+        }
+        continue;
+      }
+      // b. Deux fois dans le fichier (même nom, même date) : fusionnés par défaut
+      const jumeau = exactsFichier.get(k);
+      if (jumeau) {
+        details.doublonsFichier.push({
+          ...ident,
+          avec: {
+            cle: jumeau.cle,
+            nom: jumeau.nomComplet!,
+            naissance: jumeau.dateNaissance ?? null,
+          },
+          exact: true,
+        });
+        if ((decisions[x.cle] ?? 'FUSION') === 'FUSION') {
+          for (const [champ, v] of Object.entries(valeursDuFichier(x)))
+            if (
+              !(jumeau as Record<string, unknown>)[champ] ||
+              (Array.isArray((jumeau as Record<string, unknown>)[champ]) &&
+                !((jumeau as Record<string, unknown>)[champ] as unknown[])
+                  .length)
+            )
+              (jumeau as Record<string, unknown>)[champ] = v;
+          rapport.fusionnes++;
+          continue;
+        }
+      } else exactsFichier.set(k, x);
+      // c. Doublon probable (noms proches, même date) avec la campagne ou une autre ligne
+      const mots = motsDuNom(x.nomComplet!);
+      const motCle = [...mots].sort((a, b) => b.length - a.length)[0];
+      // Le plus proche d'abord : celui qui partage le plus de mots du nom
+      const communs = (y: { mots: string[] }) =>
+        y.mots.filter((m) => mots.includes(m)).length;
+      const proche = (parMot.get(motCle) ?? [])
+        .filter(
+          (y) =>
+            ressemblance(mots, x.dateNaissance ?? null, y.mots, y.naissance) ===
+              'PROBABLE' &&
+            (!jumeau || y.ligne !== jumeau),
+        )
+        .sort((a, b) => communs(b) - communs(a))[0];
+      let decision = decisions[x.cle] ?? 'AJOUTER';
+      if (proche) {
+        rapport.doublonsProbables++;
+        if (proche.base)
+          details.doublonsBase.push({
+            ...ident,
+            existant: {
+              id: proche.base.id,
+              nom: proche.base.nomComplet,
+              naissance: proche.base.dateNaissance,
+              etat: proche.base.etat,
+            },
+          });
+        else if (proche.ligne)
+          details.doublonsFichier.push({
+            ...ident,
+            avec: {
+              cle: proche.ligne.cle,
+              nom: proche.ligne.nomComplet!,
+              naissance: proche.ligne.dateNaissance ?? null,
+            },
+            exact: false,
+          });
+        if (decision === 'MAJ' && proche.base && !proche.base.noteId) {
+          if (!essai)
+            await this.enroles.update(proche.base.id, valeursDuFichier(x));
+          rapport.misAJour++;
+          continue;
+        }
+        if (decision === 'FUSION' && proche.ligne) {
+          for (const [champ, v] of Object.entries(valeursDuFichier(x)))
+            if (!(proche.ligne as Record<string, unknown>)[champ])
+              (proche.ligne as Record<string, unknown>)[champ] = v;
+          rapport.fusionnes++;
+          continue;
+        }
+      }
+      // d. Déjà connu ailleurs : recruté, personnel, volontaire, enrôlé d'une autre année
+      const sources = connus(x.nomComplet!, x.dateNaissance ?? null);
+      if (sources.length) {
+        rapport.dejaConnus++;
+        details.connus.push({ ...ident, sources: sources.slice(0, 5) });
+      }
+      if (decision === 'MAJ' || decision === 'FUSION') decision = 'AJOUTER';
+      if (decision === 'IGNORER') {
+        rapport.ignores++;
+        continue;
+      }
+      indexer(x.nomComplet!, x.dateNaissance ?? null, { ligne: x });
+      garder.push(x);
+    }
+
+    // 3. Règle des diplômes : un diplôme non conforme est mis de côté (non retenu, motif écrit,
+    // décision annulable) ; un cas douteux est signalé sur le dossier
+    const nouveaux: Partial<Enrole>[] = garder.map(({ cle: _cle, ...x }) => {
+      const regle = regleDiplome(
+        x.diplome!,
+        x.diplomePrecision ?? null,
+        x.specialite ?? null,
+      );
+      if (regle.nonConforme) {
+        rapport.nonConformes++;
+        Object.assign(x, {
+          etat: 'NON_RETENU',
+          motifDecision: `Diplôme non conforme : ${regle.nonConforme}`,
+          decidePar: `${u.nom} (import)`,
+          decideLe: new Date(),
+        });
+      } else if (regle.aVerifier) {
+        rapport.aVerifier++;
+        x.remarqueControle = `Diplôme à vérifier : ${regle.aVerifier}`;
+      }
+      return x;
+    });
     rapport.ajoutes = nouveaux.length;
     if (!essai) {
       for (let i = 0; i < nouveaux.length; i += 500)
@@ -950,6 +1969,18 @@ export class EnrolementService {
         rapport,
       );
     }
-    return rapport;
+    // Les listes sont longues : on en renvoie 2 000 de chaque au plus
+    const MAX = 2000;
+    const tronque = Object.values(details).some((l) => l.length > MAX);
+    return {
+      ...rapport,
+      details: {
+        aMettreAJour: details.aMettreAJour.slice(0, MAX),
+        doublonsFichier: details.doublonsFichier.slice(0, MAX),
+        doublonsBase: details.doublonsBase.slice(0, MAX),
+        connus: details.connus.slice(0, MAX),
+      },
+      tronque,
+    };
   }
 }

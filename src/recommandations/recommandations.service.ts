@@ -13,6 +13,12 @@ import {
 } from '../affectation/affectation.service';
 import { JournalService } from '../core/core.service';
 import {
+  DIPLOMES_ENROLEMENT,
+  estLangueLycee,
+  NOTE_CIBLE,
+  noteEnrolementDe,
+} from '../enrolement/enrolement.service';
+import {
   DemandeMutation,
   Departement,
   Enrole,
@@ -38,6 +44,9 @@ export interface PropositionDto {
   etablissement?: string | null;
   origine: string;
   motif?: string | null;
+  /** Enrôlement : autre note (préscolaire, primaire, collège, lycée…) et spécialité. */
+  typeNote?: string | null;
+  specialite?: string | null;
 }
 
 @Injectable()
@@ -61,7 +70,14 @@ export class RecommandationsService {
       throw new BadRequestException(
         'Dites qui recommande (l’intéressé, une autorité…).',
       );
-    if (!dto.departementId && !dto.etablissement?.trim())
+    if (dto.typeNote && !NOTE_CIBLE(dto.typeNote))
+      throw new BadRequestException(`Note inconnue : ${dto.typeNote}.`);
+    if (
+      !dto.departementId &&
+      !dto.etablissement?.trim() &&
+      !dto.typeNote &&
+      !dto.specialite?.trim()
+    )
       throw new BadRequestException(
         'La recommandation ne change rien : indiquez le département ou le lieu demandé.',
       );
@@ -122,13 +138,44 @@ export class RecommandationsService {
       personne: e.nomComplet,
       departementId: dto.departementId ?? null,
       etablissement: dto.etablissement?.trim() || null,
+      // Une autre note est aussi une recommandation (06/11/2026), avec la spécialité qui va avec
+      typeNote:
+        dto.typeNote && dto.typeNote !== noteEnrolementDe(e)
+          ? dto.typeNote
+          : null,
+      specialite: dto.specialite?.trim() || null,
       origine: dto.origine.trim(),
       motif: dto.motif?.trim() || null,
       avant: {
         departementId: e.departementRetenuId,
         etablissement: e.etablissement,
+        typeNote: noteEnrolementDe(e),
+        specialite: e.specialite,
       },
     });
+  }
+
+  /** Champs d'un dossier envoyé dans une autre note (même règle que « Changer de note »). */
+  private autreNote(e: Enrole, note: string): Partial<Enrole> {
+    const c = NOTE_CIBLE(note);
+    if (!c) return {};
+    const cycleRegle =
+      e.diplome === 'LICENCE'
+        ? estLangueLycee(e.specialite)
+          ? 'Lycée'
+          : 'Collège'
+        : DIPLOMES_ENROLEMENT[e.diplome]?.cycle || e.cycle;
+    const regle = noteEnrolementDe({
+      ...e,
+      noteForcee: null,
+      cycle: cycleRegle,
+    });
+    const vide = !String(e.specialite ?? '').trim();
+    return {
+      noteForcee: regle === note ? null : note,
+      cycle: regle === note ? cycleRegle : c.cycle,
+      ...(vide && c.specialite ? { specialite: c.specialite } : {}),
+    };
   }
 
   private async verifierNoteOuverte(e: Enrole) {
@@ -245,7 +292,20 @@ export class RecommandationsService {
             : r.departementId && r.departementId !== e.departementRetenuId
               ? { etablissement: null }
               : {}),
+          // Autre note : comme « Changer de note » (cycle de la bourse et spécialité qui vont avec)
+          ...(r.typeNote ? this.autreNote(e, r.typeNote) : {}),
+          ...(r.specialite ? { specialite: r.specialite } : {}),
           observation: [e.observation, ajout].filter(Boolean).join(' ; '),
+          // Recommandé avant la décision de la DGRHAS : la recommandation validée le fait retenir
+          // (06/11/2026, comme « une recommandation de Madame … » à la commission)
+          ...(e.etat !== 'RETENU'
+            ? {
+                etat: 'RETENU',
+                decidePar: u.nom,
+                decideLe: new Date(),
+                motifDecision: null,
+              }
+            : {}),
         });
       }
     }

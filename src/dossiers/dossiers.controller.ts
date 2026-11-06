@@ -120,13 +120,15 @@ export class DossiersController {
   )
   async rapprocher(
     @UploadedFiles() fichiers: Express.Multer.File[],
-    @Body() body: { avecBase?: string; masquees?: string },
+    @Body() body: { avecBase?: string; masquees?: string; feuilles?: string },
   ) {
     const r = await this.rapprochement.comparer(
       this.fichiersRapprochement(fichiers),
       {
         avecBase: body.avecBase === '1',
         masquees: body.masquees === '1',
+        // Seulement les feuilles cochées (05/11/2026 : elles étaient toutes lues)
+        feuilles: this.feuillesChoisies(body.feuilles),
       },
     );
     const { lignes: _lignes, ...reste } = r;
@@ -149,6 +151,8 @@ export class DossiersController {
       {
         avecBase: body.avecBase === '1',
         masquees: body.masquees === '1',
+        // Seulement les feuilles cochées (05/11/2026 : elles étaient toutes lues)
+        feuilles: this.feuillesChoisies(body.feuilles),
       },
     );
     res.setHeader(

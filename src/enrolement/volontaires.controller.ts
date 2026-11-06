@@ -16,6 +16,7 @@ import {
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import type { Response } from 'express';
+import { volontairesExcel, volontairesWord } from './export-volontaires';
 import {
   Roles,
   ROLES_TRAITEMENT,
@@ -116,6 +117,83 @@ export class VolontairesController {
       page: entierOuRien(page),
       taille: entierOuRien(taille),
     });
+  }
+
+  /** Toute la liste filtrée (impression en PDF), avec les libellés. */
+  @Roles(...ROLES_TRAITEMENT)
+  @Get('volontaires/complete')
+  listeComplete(
+    @Query('recherche') recherche?: string,
+    @Query('statut') statut?: string,
+    @Query('departement') departement?: string,
+    @Query('categorie') categorie?: string,
+    @Query('motif') motif?: string,
+    @Query('population') population?: string,
+    @Query('vague') vague?: string,
+  ) {
+    return this.volontaires.listeComplete(
+      filtresListe({
+        recherche,
+        statut,
+        departement,
+        categorie,
+        motif,
+        population,
+        vague,
+      }),
+    );
+  }
+
+  /** La même liste en Excel ou en Word (paysage, mention du système au pied de chaque page). */
+  @Roles(...ROLES_TRAITEMENT)
+  @Get('volontaires/export')
+  async exporterListe(
+    @Res() res: Response,
+    @Query('format') format: string,
+    @Query('titre') titre?: string,
+    @Query('recherche') recherche?: string,
+    @Query('statut') statut?: string,
+    @Query('departement') departement?: string,
+    @Query('categorie') categorie?: string,
+    @Query('motif') motif?: string,
+    @Query('population') population?: string,
+    @Query('vague') vague?: string,
+  ) {
+    if (format !== 'xlsx' && format !== 'docx')
+      throw new BadRequestException('Format : xlsx ou docx');
+    const pop = population === 'COMMUNAUTAIRE' ? 'COMMUNAUTAIRE' : 'VOLONTAIRE';
+    const lignes = await this.volontaires.listeComplete(
+      filtresListe({
+        recherche,
+        statut,
+        departement,
+        categorie,
+        motif,
+        population,
+        vague,
+      }),
+    );
+    const t =
+      (titre ?? '').replace(/\s+/g, ' ').trim().slice(0, 200) ||
+      (pop === 'COMMUNAUTAIRE'
+        ? 'Liste des communautaires'
+        : 'Liste des volontaires');
+    const contenu =
+      format === 'xlsx'
+        ? await volontairesExcel(lignes, t, pop)
+        : await volontairesWord(lignes, t, pop);
+    const nom = `${t.replace(/[\\/:*?"<>|]/g, '-').slice(0, 120)}.${format}`;
+    res.setHeader(
+      'Content-Type',
+      format === 'xlsx'
+        ? 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+        : 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    );
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename*=UTF-8''${encodeURIComponent(nom)}`,
+    );
+    res.send(contenu);
   }
 
   /** Enrôlés des notes signées qui ne sont pas encore dans le registre. */
@@ -455,4 +533,23 @@ export class VolontairesController {
     );
     res.send(contenu);
   }
+}
+
+/** Filtres de la liste lus dans l'adresse (comme l'écran, sans page). */
+function filtresListe(q: Record<string, string | undefined>) {
+  const n = (v?: string) => (v && /^\d+$/.test(v) ? Number(v) : undefined);
+  return {
+    population: q.population,
+    vague:
+      q.vague === undefined || q.vague === ''
+        ? undefined
+        : q.vague === 'aucune'
+          ? null
+          : Number(q.vague),
+    recherche: q.recherche,
+    statut: q.statut || undefined,
+    departementId: n(q.departement),
+    categorie: q.categorie || undefined,
+    motif: q.motif || undefined,
+  };
 }

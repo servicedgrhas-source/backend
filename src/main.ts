@@ -24,6 +24,9 @@ async function bootstrap() {
   // Réponses compressées (gzip) : le JSON pèse environ dix fois moins sur le réseau. Seuls les
   // types qui s'y prêtent le sont (pas les PDF ni les images), et pas les très petites réponses.
   app.use(compression({ threshold: 1024 }));
+  // Envois groupés (5 000 dossiers déclarés conformes d'un coup : 200 Ko d'identifiants) : la
+  // limite par défaut de 100 Ko renvoyait « requête trop grande » (05/11/2026)
+  app.useBodyParser('json', { limit: '10mb' });
   // X-Jeton : nouveau jeton après changement de son propre code ou mot de passe
   app.enableCors({ origin: originesAutorisees(), exposedHeaders: ['X-Jeton'] });
   app.useGlobalPipes(new ValidationPipe({ whitelist: true, transform: true }));

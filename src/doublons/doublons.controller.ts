@@ -30,8 +30,17 @@ export class DoublonsController {
   }
 
   @Get(':base')
-  paires(@Param('base') base: string, @Query('page') page?: string) {
-    return this.service.paires(base, Math.max(1, Number(page) || 1));
+  paires(
+    @Param('base') base: string,
+    @Query('page') page?: string,
+    @Query('campagne') campagne?: string,
+  ) {
+    return this.service.paires(
+      base,
+      Math.max(1, Number(page) || 1),
+      20,
+      Number(campagne) || undefined,
+    );
   }
 
   @Get(':base/:id')

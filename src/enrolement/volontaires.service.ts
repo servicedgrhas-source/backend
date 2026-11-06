@@ -7,6 +7,7 @@ import {
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { IsNull, Not, Repository } from 'typeorm';
+import type { LigneVolontaire } from './export-volontaires';
 import type { UtilisateurConnecte } from '../auth/auth';
 import { lireClasseur, lireFeuilleBrute, type Ligne } from '../common/excel';
 import { IndexNoms } from '../common/index-noms';
@@ -153,9 +154,8 @@ export class VolontairesService implements OnModuleInit {
 
   /* ------------------------------- Lecture ------------------------------- */
 
-  async liste(f: FiltresVolontaires) {
-    const taille = Math.min(Math.max(f.taille ?? 50, 1), 200);
-    const page = Math.max(f.page ?? 1, 1);
+  /** La requête filtrée de la liste (écran, impression, export). */
+  private requete(f: FiltresVolontaires) {
     const q = this.volontaires.createQueryBuilder('v');
     for (const [i, mot] of (f.recherche ?? '')
       .trim()
@@ -166,9 +166,9 @@ export class VolontairesService implements OnModuleInit {
       q.andWhere(
         `(v.nomNormalise LIKE :m${i} OR coalesce(v.telephone, '') LIKE :t${i} OR coalesce(v.etablissement, '') ILIKE :e${i})`,
         {
-          [`m${i}`]: `%${normaliser(mot).replace(/[\\%_]/g, '\\$&')}%`,
-          [`t${i}`]: `%${mot.replace(/[\\%_]/g, '\\$&')}%`,
-          [`e${i}`]: `%${mot.replace(/[\\%_]/g, '\\$&')}%`,
+          [`m${i}`]: `%${normaliser(mot).replace(/[\\%_]/g, '\\  async liste(f: FiltresVolontaires) {')}%`,
+          [`t${i}`]: `%${mot.replace(/[\\%_]/g, '\\  async liste(f: FiltresVolontaires) {')}%`,
+          [`e${i}`]: `%${mot.replace(/[\\%_]/g, '\\  async liste(f: FiltresVolontaires) {')}%`,
         },
       );
     q.andWhere('v.population = :p', { p: populationDe(f.population) });
@@ -181,6 +181,63 @@ export class VolontairesService implements OnModuleInit {
     if (f.categorie === '-') q.andWhere('v.categorie IS NULL');
     else if (f.categorie) q.andWhere('v.categorie = :c', { c: f.categorie });
     if (f.motif) q.andWhere('v.motifSortie = :mo', { mo: f.motif });
+    return q;
+  }
+
+  /**
+   * Toute la liste filtrée, avec les libellés (catégorie, département, motif de sortie…), pour
+   * l'imprimer ou l'exporter (06/11/2026). 20 000 personnes au plus.
+   */
+  async listeComplete(f: FiltresVolontaires): Promise<LigneVolontaire[]> {
+    const lignes = await this.requete(f)
+      .orderBy('v.nomNormalise', 'ASC')
+      .take(20000)
+      .getMany();
+    const deps = new Map(
+      (await this.deps.find()).map((d) => [d.id, d.nom] as const),
+    );
+    const date = (d: string | null) =>
+      d ? d.split('-').reverse().join('/') : '';
+    const mois = (m: string | null) =>
+      m ? `${m.slice(5, 7)}/${m.slice(0, 4)}` : '';
+    return lignes.map((v) => ({
+      nomComplet: v.nomComplet,
+      naissance: [date(v.dateNaissance), v.lieuNaissance]
+        .filter(Boolean)
+        .join(' à '),
+      telephone: v.telephone ?? '',
+      diplome: v.diplome ?? '',
+      specialite: v.specialite ?? '',
+      categorie:
+        this.config.categorie(v.categorie, v.population)?.libelle ??
+        v.cycleBrut ??
+        '',
+      departement:
+        (v.departementId ? deps.get(v.departementId) : null) ??
+        v.departementBrut ??
+        '',
+      etablissement: v.etablissement ?? '',
+      vague:
+        v.vagueNumero != null
+          ? `${v.vagueNumero}${v.vagueNumero === 1 ? 're' : 'e'} vague`
+          : (v.vague ?? ''),
+      note: [v.noteReference, v.dateNote ? `du ${date(v.dateNote)}` : '']
+        .filter(Boolean)
+        .join(' '),
+      priseService: date(v.datePriseService),
+      payeDepuis: mois(v.premierMois),
+      statut:
+        v.statut === 'SORTI'
+          ? `Sorti : ${this.config.motif(v.motifSortie)?.libelle ?? v.motifSortie ?? ''}${v.dateSortie ? ` (${date(v.dateSortie)})` : ''}`
+          : 'En poste',
+      observation: v.observation ?? '',
+    }));
+  }
+
+  async liste(f: FiltresVolontaires) {
+    const taille = Math.min(Math.max(f.taille ?? 50, 1), 200);
+    const page = Math.max(f.page ?? 1, 1);
+    const q = this.requete(f);
     const [lignes, total] = await q
       .orderBy('v.nomNormalise', 'ASC')
       .skip((page - 1) * taille)

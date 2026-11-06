@@ -13,6 +13,8 @@ class PropositionDto {
   @IsOptional() @IsString() @MaxLength(200) etablissement?: string | null;
   @IsString() @MaxLength(300) origine: string;
   @IsOptional() @IsString() @MaxLength(1000) motif?: string | null;
+  @IsOptional() @IsString() @MaxLength(30) typeNote?: string | null;
+  @IsOptional() @IsString() @MaxLength(120) specialite?: string | null;
 }
 
 class AvisDto {

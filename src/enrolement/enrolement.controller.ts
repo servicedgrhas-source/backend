@@ -236,6 +236,67 @@ export class EnrolementController {
     );
   }
 
+  /** Dossiers qui ressemblent à un recruté, un volontaire ou un enrôlé d'avant (06/11/2026). */
+  @Roles(...ROLES_TRAITEMENT)
+  @Get('deja-connus')
+  dejaConnus(@Query('campagne', ParseIntPipe) campagne: number) {
+    return this.service.dejaConnus(campagne);
+  }
+
+  /** Envoyer des dossiers dans une autre note (lycée, collège, primaire, préscolaire) ou à la règle. */
+  @Roles(...ROLES_TRAITEMENT)
+  @Post('dossiers/note')
+  changerNote(
+    @Utilisateur() u: UtilisateurConnecte,
+    @Body()
+    body: { ids: string[]; cible: string | null; specialite?: string | null },
+  ) {
+    return this.service.changerNote(
+      u,
+      Array.isArray(body?.ids) ? body.ids.map(String) : [],
+      body?.cible ? String(body.cible) : null,
+      body?.specialite ? String(body.specialite).slice(0, 120) : null,
+    );
+  }
+
+  /** Spécialité de dossiers choisis ; vide : la règle (préscolaire, primaire). */
+  @Roles(...ROLES_TRAITEMENT)
+  @Post('dossiers/specialite')
+  ecrireSpecialite(
+    @Utilisateur() u: UtilisateurConnecte,
+    @Body() body: { ids: string[]; specialite?: string | null },
+  ) {
+    return this.service.ecrireSpecialite(
+      u,
+      Array.isArray(body?.ids) ? body.ids.map(String) : [],
+      body?.specialite ? String(body.specialite).slice(0, 120) : null,
+    );
+  }
+
+  /** Spécialités proposées (liste de référence et celles déjà écrites dans la campagne). */
+  @Roles(...ROLES_TRAITEMENT)
+  @Get('specialites')
+  specialitesConnues(@Query('campagne', ParseIntPipe) campagne: number) {
+    return this.service.specialitesConnues(campagne);
+  }
+
+  @Roles(...ROLES_CONTROLE)
+  @Post('deja-connus')
+  trancherDejaConnu(
+    @Utilisateur() u: UtilisateurConnecte,
+    @Body()
+    body: { ids: string[]; decision: 'ECARTER' | 'DIFFERENT'; motif?: string },
+  ) {
+    if (!['ECARTER', 'DIFFERENT'].includes(body?.decision))
+      throw new BadRequestException('Décision inconnue.');
+    return this.service.trancherDejaConnu(
+      u,
+      Array.isArray(body?.ids) ? body.ids.map(String) : [],
+      body.decision,
+      body.motif,
+    );
+  }
+
   @Roles('DG')
   @Post('decider')
   decider(
@@ -269,12 +330,139 @@ export class EnrolementController {
     @Query('campagne', ParseIntPipe) campagne: number,
     @Query('essai') essai: string,
     @UploadedFile() fichier?: Express.Multer.File,
+    // Feuilles choisies et décisions prises sur l'essai (06/11/2026), en champs du formulaire
+    @Body() corps?: { feuilles?: string; decisions?: string },
   ) {
     if (!fichier || !/\.xlsx$/i.test(fichier.originalname))
       throw new BadRequestException(
         'Choisissez la liste Excel (.xlsx) des dossiers déposés.',
       );
-    return this.service.importer(u, campagne, fichier.buffer, essai === '1');
+    const lire = <T>(v: string | undefined, defaut: T): T => {
+      try {
+        return v ? (JSON.parse(v) as T) : defaut;
+      } catch {
+        throw new BadRequestException('Décisions de l’import illisibles.');
+      }
+    };
+    const feuilles = lire<string[] | null>(corps?.feuilles, null);
+    const decisions = lire<Record<string, string>>(corps?.decisions, {});
+    return this.service.importer(
+      u,
+      campagne,
+      fichier.buffer,
+      essai === '1',
+      Array.isArray(feuilles) ? feuilles.map(String) : null,
+      decisions && typeof decisions === 'object' ? decisions : {},
+    );
+  }
+
+  /** Statistiques de l'enrôlement : cycle et diplôme, spécialités du collège et du lycée. */
+  @Roles(...ROLES_TRAITEMENT)
+  @Get('statistiques')
+  statistiques(
+    @Query('campagne', ParseIntPipe) campagne: number,
+    @Query('parmi') parmi?: string,
+  ) {
+    return this.service.statistiques(
+      campagne,
+      parmi === 'reste' ? 'reste' : 'tous',
+    );
+  }
+
+  /** Les mêmes statistiques en Excel (une feuille). */
+  @Roles(...ROLES_TRAITEMENT)
+  @Get('statistiques/excel')
+  async statistiquesExcel(
+    @Query('campagne', ParseIntPipe) campagne: number,
+    @Query('parmi') parmi: string | undefined,
+    @Res() res: Response,
+  ) {
+    const s = await this.service.statistiques(
+      campagne,
+      parmi === 'reste' ? 'reste' : 'tous',
+    );
+    const wb = new ExcelJS.Workbook();
+    const ws = wb.addWorksheet('Statistiques');
+    const titre = (t: string) => {
+      ws.addRow([]);
+      ws.addRow([t]).font = { bold: true, size: 12 };
+    };
+    const entete = (cols: string[]) => {
+      const r = ws.addRow(cols);
+      r.font = { bold: true };
+      r.eachCell((c) => {
+        c.fill = {
+          type: 'pattern',
+          pattern: 'solid',
+          fgColor: { argb: 'FFE6F0EA' },
+        };
+        c.border = { bottom: { style: 'thin' } };
+      });
+    };
+    ws.addRow([
+      `ENRÔLEMENT ${s.campagne.annee} (${s.campagne.anneeScolaire}) — STATISTIQUES`,
+    ]).font = { bold: true, size: 13 };
+    titre('1. Par cycle et diplôme');
+    entete([
+      'Cycle',
+      'Diplôme',
+      'Base générale',
+      'Affectés',
+      'Non retenus',
+      'Reste à affecter',
+    ]);
+    for (const l of s.parDiplome)
+      ws.addRow([
+        l.cycle,
+        l.diplome,
+        l.total,
+        l.affectes,
+        l.nonRetenus,
+        l.reste,
+      ]);
+    ws.addRow([
+      'Total',
+      '',
+      s.total.total,
+      s.total.affectes,
+      s.total.nonRetenus,
+      s.total.reste,
+    ]).font = { bold: true };
+    const parmiTexte =
+      s.parmi === 'reste' ? 'reste à affecter' : 'tous les dossiers';
+    for (const [t, b] of [
+      [`2. Spécialités du collège (${parmiTexte})`, s.college],
+      [`3. Spécialités du lycée (${parmiTexte})`, s.lycee],
+    ] as const) {
+      titre(t);
+      entete(['Spécialité', ...b.colonnes, 'Cumul']);
+      for (const l of b.lignes)
+        ws.addRow([l.specialite, ...l.valeurs, l.cumul]);
+      ws.addRow([
+        'Total',
+        ...b.colonnes.map((_, i) =>
+          b.lignes.reduce((a, l) => a + l.valeurs[i], 0),
+        ),
+        b.lignes.reduce((a, l) => a + l.cumul, 0),
+      ]).font = { bold: true };
+    }
+    ws.columns = [
+      { width: 24 },
+      { width: 26 },
+      { width: 16 },
+      { width: 12 },
+      { width: 13 },
+      { width: 17 },
+    ];
+    res.setHeader(
+      'Content-Type',
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    );
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename*=UTF-8''${encodeURIComponent(`Statistiques enrôlement ${s.campagne.annee}.xlsx`)}`,
+    );
+    res.send(Buffer.from(await wb.xlsx.writeBuffer()));
   }
 
   /** Base des enrôlés (ou une étape) en Excel. */

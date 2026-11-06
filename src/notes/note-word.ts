@@ -17,6 +17,7 @@ import {
   VerticalMergeType,
   WidthType,
   type ParagraphChild,
+  LineRuleType,
 } from 'docx';
 import { dateEnLettres } from '../common/texte';
 import type { ContenuNote, Entete } from './notes.service';
@@ -91,8 +92,10 @@ const LARGEUR: Record<string, number> = {
   origine: 19,
   naissance: 20,
   lieu: 22,
-  promotion: 15,
+  promotion: 19,
   accueil: 19,
+  // Notes d'enrôlement : « BET-Préscolaire », « CFEEN-Préscolaire » (cadrage du 05/11/2026)
+  diplome: 26,
 };
 const MM = 56.7; // twips par millimètre
 const MARGE = 16; // mm, comme la version imprimée
@@ -101,6 +104,14 @@ const LARGEUR_UTILE = 210 - 2 * MARGE;
 let POLICE = 'Times New Roman';
 /** Sylfaen est jusqu'à 6 % plus large que Times New Roman : les largeurs estimées en tiennent compte. */
 let ELARGISSEMENT = 1;
+/**
+ * Police un peu réduite (comme à l'écran) pour qu'une note courte tienne sur une page, ou qu'une
+ * page ne reste pas presque vide (06/11/2026). Elle touche le corps de la note (introduction,
+ * tableaux, mentions, signature, ampliations), pas l'en-tête ni le pied de page.
+ */
+let ECHELLE = 1;
+let ECHELLE_ACTIVE = false;
+const k = () => (ECHELLE_ACTIVE ? ECHELLE : 1);
 /**
  * « Fait à », le titre et le nom du signataire poussés de deux tabulations vers la droite
  * (DG, 31/10/2026), moins si la plus longue des trois lignes ne tiendrait plus avant la marge.
@@ -200,7 +211,7 @@ const t = (
   new TextRun({
     text: texte,
     bold: o.gras,
-    size: Math.round((o.taille ?? 11) * 2),
+    size: Math.round((o.taille ?? 11) * 2 * k()),
     font: POLICE,
     underline: o.souligne ? {} : undefined,
   });
@@ -220,6 +231,8 @@ const p = (
     taquet?: number;
     /** Retrait à gauche (mm). */
     retrait?: number;
+    /** Le paragraphe ne se coupe pas d'une page à l'autre. */
+    insecable?: boolean;
   } = {},
 ) =>
   new Paragraph({
@@ -234,8 +247,12 @@ const p = (
         : o.justifie
           ? AlignmentType.JUSTIFIED
           : AlignmentType.LEFT,
-    spacing: { before: (o.avant ?? 0) * 20, after: (o.apres ?? 0) * 20 },
+    spacing: {
+      before: Math.round((o.avant ?? 0) * 20 * k()),
+      after: Math.round((o.apres ?? 0) * 20 * k()),
+    },
     keepNext: o.garderAvecSuivant,
+    keepLines: o.insecable,
     indent: o.retrait ? { left: Math.round(o.retrait * MM) } : undefined,
     tabStops: o.taquet
       ? [{ type: TabStopType.LEFT, position: Math.round(o.taquet * MM) }]
@@ -278,7 +295,13 @@ const cellule = (
       : { left: 60, right: 60, top: 20, bottom: 20 },
   });
 
-export async function noteWord(n: NoteWord, avecVisas = true): Promise<Buffer> {
+export async function noteWord(
+  n: NoteWord,
+  avecVisas = true,
+  echelle = 1,
+): Promise<Buffer> {
+  ECHELLE = Number.isFinite(echelle) ? Math.min(1, Math.max(0.8, echelle)) : 1;
+  ECHELLE_ACTIVE = false;
   // Tout le document est construit d'un seul tenant (sans attente) avec cette police
   POLICE = n.entete.police === 'Sylfaen' ? 'Sylfaen' : 'Times New Roman';
   ELARGISSEMENT = POLICE === 'Sylfaen' ? 1.06 : 1;
@@ -466,37 +489,19 @@ export async function noteWord(n: NoteWord, avecVisas = true): Promise<Buffer> {
           children: [
             new TableCell({
               children: [
-                p('MINISTERE DE L’ENSEIGNEMENT PRESCOLAIRE,', {
-                  centre: true,
-                  gras: true,
-                  taille: 10,
-                }),
-                p('PRIMAIRE, SECONDAIRE ET DE L’ALPHABETISATION', {
-                  centre: true,
-                  gras: true,
-                  taille: 10,
-                }),
-                sep(),
-                p('CABINET', { centre: true, gras: true, taille: 10 }),
-                sep(),
-                p('DIRECTION GENERALE DES RESSOURCES HUMAINES', {
-                  centre: true,
-                  gras: true,
-                  taille: 10,
-                }),
-                ligneVisa('ET DE L’ADMINISTRATION SCOLAIRE', 'DG'),
-                sep(),
-                p('DIRECTION DES RECRUTEMENTS', {
-                  centre: true,
-                  gras: true,
-                  taille: 10,
-                }),
-                ligneVisa('ET DU SUIVI DES CARRIERES', 'DIRECTION'),
-                sep(),
-                // Le service suit le numéro : « …-DRSC-SR » (une note signée avant garde son en-tête)
-                ...(/-SR[./ ]*$/.test(e.reference)
-                  ? [ligneVisa('SERVICE DES RECRUTEMENTS', 'SERVICE'), sep()]
-                  : []),
+                // Les lignes de l'en-tête (modifiables note par note, 06/11/2026) ; le visa va sur
+                // la dernière ligne de la direction générale, de la direction et du service
+                ...blocsEntete(
+                  e.lignes ?? enteteParDefaut(e.reference),
+                ).flatMap((b) =>
+                  b === null
+                    ? [sep()]
+                    : b.lignes.map((t, i) =>
+                        b.visa && i === b.lignes.length - 1
+                          ? ligneVisa(t, b.visa)
+                          : p(t, { centre: true, gras: true, taille: 10 }),
+                      ),
+                ),
                 p(
                   // Plus de place pour écrire le numéro (DG, 01/11/2026) ; la référence est un paramètre
                   `N°${n.numero ? ` ${n.numero}` : '______________________'}/${e.reference}`,
@@ -531,6 +536,8 @@ export async function noteWord(n: NoteWord, avecVisas = true): Promise<Buffer> {
     }),
     p(c.titre, { centre: true, gras: true, taille: 16, avant: 14, apres: 8 }),
   );
+  // Le corps de la note suit l'échelle (l'en-tête et le titre gardent leur taille)
+  ECHELLE_ACTIVE = true;
   // Introduction : l'année scolaire en gras, comme la version imprimée
   const morceaux = c.introduction.split(n.anneeScolaire);
   corps.push(
@@ -550,6 +557,15 @@ export async function noteWord(n: NoteWord, avecVisas = true): Promise<Buffer> {
           gras: true,
           avant: 10,
           apres: 2,
+          garderAvecSuivant: true,
+        }),
+      );
+    // « Effectif : Quatre-vingt-deux (82) » sous le département (notes d'enrôlement)
+    if (s.effectif)
+      corps.push(
+        p(`Effectif : ${s.effectif}`, {
+          taille: 11,
+          apres: 4,
           garderAvecSuivant: true,
         }),
       );
@@ -601,7 +617,14 @@ export async function noteWord(n: NoteWord, avecVisas = true): Promise<Buffer> {
   // Une ligne vide entre la fin du tableau et les mentions (DG, 31/10/2026)
   c.mentions.forEach((m, i) =>
     corps.push(
-      p(m, { justifie: true, avant: i ? 6 : 20, garderAvecSuivant: true }),
+      // Insécable : coupé en bas de page, il cassait le lien des deux dernières lignes du
+      // tableau avec la signature (vu dans Word, 06/11/2026)
+      p(m, {
+        justifie: true,
+        avant: i ? 6 : 20,
+        garderAvecSuivant: true,
+        insecable: true,
+      }),
     ),
   );
   const moitie = Math.round(LARGEUR_UTILE * 0.5 * MM);
@@ -629,7 +652,9 @@ export async function noteWord(n: NoteWord, avecVisas = true): Promise<Buffer> {
         new TableRow({
           cantSplit: true,
           children: [
-            new TableCell({ children: [p('')] }),
+            // « Garder avec le suivant » sur toute la ligne : Word ne sépare plus « Fait à… le Ministre »
+            // du nom du signataire et des ampliations (vu en ouvrant les notes dans Word, 06/11/2026)
+            new TableCell({ children: [p('', { garderAvecSuivant: true })] }),
             new TableCell({
               children: [
                 // Sans date : « le » seul, la date est écrite à la main (DG, 31/10/2026)
@@ -664,7 +689,7 @@ export async function noteWord(n: NoteWord, avecVisas = true): Promise<Buffer> {
                       t(a.libelle, { taille: 9 }),
                       new TextRun({
                         children: [new Tab(), a.nombre],
-                        size: 18,
+                        size: Math.round(18 * k()),
                         font: POLICE,
                       }),
                     ],
@@ -683,6 +708,8 @@ export async function noteWord(n: NoteWord, avecVisas = true): Promise<Buffer> {
     }),
   );
 
+  // Le pied de page garde sa taille
+  ECHELLE_ACTIVE = false;
   const doc = new Document({
     creator: 'DGRHAS',
     title: c.titre,
@@ -754,9 +781,74 @@ export async function noteWord(n: NoteWord, avecVisas = true): Promise<Buffer> {
             ],
           }),
         },
-        children: corps,
+        // Word veut un paragraphe après le dernier tableau : minuscule, il ne crée plus de page
+        // blanche quand la signature finit juste en bas de page
+        children: [
+          ...corps,
+          new Paragraph({
+            children: [new TextRun({ text: '', size: 2 })],
+            spacing: {
+              before: 0,
+              after: 0,
+              line: 20,
+              lineRule: LineRuleType.EXACT,
+            },
+          }),
+        ],
       },
     ],
   });
   return Packer.toBuffer(doc);
+}
+
+/** L'en-tête habituel ; le service ne vient que si la référence finit par « -SR ». */
+export function enteteParDefaut(reference: string) {
+  return [
+    'MINISTERE DE L’ENSEIGNEMENT PRESCOLAIRE,',
+    'PRIMAIRE, SECONDAIRE ET DE L’ALPHABETISATION',
+    '---',
+    'CABINET',
+    '---',
+    'DIRECTION GENERALE DES RESSOURCES HUMAINES',
+    'ET DE L’ADMINISTRATION SCOLAIRE',
+    '---',
+    'DIRECTION DES RECRUTEMENTS',
+    'ET DU SUIVI DES CARRIERES',
+    '---',
+    ...(/-SR[./ ]*$/.test(reference)
+      ? ['SERVICE DES RECRUTEMENTS', '---']
+      : []),
+  ];
+}
+
+/** Blocs de l'en-tête entre les traits, avec le visa qui va sur chacun (null : un trait). */
+export function blocsEntete(lignes: string[]) {
+  const res: ({
+    lignes: string[];
+    visa: 'DG' | 'DIRECTION' | 'SERVICE' | null;
+  } | null)[] = [];
+  let cour: string[] = [];
+  const fermer = () => {
+    if (!cour.length) return;
+    const t = cour.join(' ').toUpperCase();
+    res.push({
+      lignes: cour,
+      visa: /DIRECTION\s+GENERALE/.test(t)
+        ? 'DG'
+        : /^DIRECTION\b/.test(t)
+          ? 'DIRECTION'
+          : /^SERVICE\b/.test(t)
+            ? 'SERVICE'
+            : null,
+    });
+    cour = [];
+  };
+  for (const l of lignes) {
+    if (l === '---') {
+      fermer();
+      res.push(null);
+    } else cour.push(l);
+  }
+  fermer();
+  return res;
 }

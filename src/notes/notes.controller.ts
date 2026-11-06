@@ -15,6 +15,7 @@ import {
   UseInterceptors,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
+import type { Rectification } from '../entities';
 import type { Response } from 'express';
 import {
   ArrayNotEmpty,
@@ -33,7 +34,7 @@ import {
   type UtilisateurConnecte,
 } from '../auth/auth';
 import { StockageService } from '../common/stockage';
-import { NotesService } from './notes.service';
+import { type CritereLot, NotesService } from './notes.service';
 
 class ConformiteDto {
   @IsBoolean() conforme: boolean;
@@ -217,8 +218,14 @@ export class NotesController {
     @Res() res: Response,
     // « ?visas=0 » : sans les spécimens de visa de l'en-tête
     @Query('visas') visas?: string,
+    // « ?echelle=0.91 » : la police réduite choisie à l'écran (notes courtes), 06/11/2026
+    @Query('echelle') echelle?: string,
   ) {
-    const { nom, contenu } = await this.service.word(id, visas !== '0');
+    const { nom, contenu } = await this.service.word(
+      id,
+      visas !== '0',
+      echelle ? Number(echelle) : 1,
+    );
     res.setHeader(
       'Content-Type',
       'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
@@ -253,6 +260,154 @@ export class NotesController {
   }
 
   /** Ampliations décochées sur l'aperçu de la note : le nombre des archives suit. */
+  /* ---- Notes d'enrôlement (cadrage du 05/11/2026) : colonnes, additif, rectificatif ---- */
+
+  /** Introduction et conclusion d'une note d'enrôlement : réservées au DG, comme l'introduction. */
+  @Roles('DG')
+  @Put(':id/textes')
+  textes(
+    @Utilisateur() u: UtilisateurConnecte,
+    @Param('id') id: string,
+    @Body() body: { introduction?: string | null; mentions?: string[] | null },
+  ) {
+    return this.service.ecrireTextes(
+      u,
+      id,
+      typeof body?.introduction === 'string' ? body.introduction : null,
+      Array.isArray(body?.mentions) ? body.mentions.map(String) : null,
+    );
+  }
+
+  /** En-tête de la note (lignes, référence) ; null : l'en-tête habituel. */
+  @Roles(...ROLES_TRAITEMENT)
+  @Put(':id/entete')
+  ecrireEntete(
+    @Utilisateur() u: UtilisateurConnecte,
+    @Param('id') id: string,
+    @Body() body: { lignes?: string[] | null; reference?: string | null },
+  ) {
+    return this.service.ecrireEntete(
+      u,
+      id,
+      Array.isArray(body?.lignes) ? body.lignes.map(String) : null,
+      body?.reference ? String(body.reference).slice(0, 120) : null,
+    );
+  }
+
+  /** Valeurs de chaque critère de découpage (spécialité, diplôme, promotion, département). */
+  @Roles(...ROLES_TRAITEMENT)
+  @Get(':id/lots/criteres')
+  criteresDeLaNote(@Param('id') id: string) {
+    return this.service.criteresDeLaNote(id);
+  }
+
+  /** Une note pour les valeurs choisies d'un critère (une par valeur, ou une pour toutes). */
+  @Roles(...ROLES_TRAITEMENT)
+  @Post(':id/lots/critere')
+  decouperParCritere(
+    @Utilisateur() u: UtilisateurConnecte,
+    @Param('id') id: string,
+    @Body() body: { critere: string; valeurs: string[]; ensemble?: boolean },
+  ) {
+    return this.service.decouperParCritere(
+      u,
+      id,
+      String(body?.critere) as CritereLot,
+      Array.isArray(body?.valeurs) ? body.valeurs.map(String) : [],
+      !!body?.ensemble,
+    );
+  }
+
+  /** Découper une note d'enrôlement : des notes de N personnes au plus. */
+  @Roles(...ROLES_TRAITEMENT)
+  @Post(':id/lots/nombre')
+  decouperParNombre(
+    @Utilisateur() u: UtilisateurConnecte,
+    @Param('id') id: string,
+    @Body() body: { taille: number; garderDepartements?: boolean },
+  ) {
+    return this.service.decouperParNombre(
+      u,
+      id,
+      Number(body?.taille),
+      body?.garderDepartements !== false,
+    );
+  }
+
+  /** Mettre les personnes cochées dans une nouvelle note (lot). */
+  @Roles(...ROLES_TRAITEMENT)
+  @Post(':id/lots/main')
+  decouperALaMain(
+    @Utilisateur() u: UtilisateurConnecte,
+    @Param('id') id: string,
+    @Body() body: { ids: string[] },
+  ) {
+    return this.service.decouperALaMain(
+      u,
+      id,
+      Array.isArray(body?.ids) ? body.ids.map(String) : [],
+    );
+  }
+
+  /** Remettre les lots « à soumettre au DG » dans la note principale. */
+  @Roles(...ROLES_TRAITEMENT)
+  @Post(':id/lots/regrouper')
+  regrouperLots(
+    @Utilisateur() u: UtilisateurConnecte,
+    @Param('id') id: string,
+  ) {
+    return this.service.regrouperLots(u, id);
+  }
+
+  @Roles(...ROLES_TRAITEMENT)
+  @Put(':id/colonnes')
+  colonnes(
+    @Utilisateur() u: UtilisateurConnecte,
+    @Param('id') id: string,
+    @Body() body: { colonnes: string[] | null },
+  ) {
+    return this.service.choisirColonnes(
+      u,
+      id,
+      Array.isArray(body?.colonnes) ? body.colonnes.map(String) : null,
+    );
+  }
+
+  @Roles(...ROLES_TRAITEMENT)
+  @Put(':id/additif')
+  additif(
+    @Utilisateur() u: UtilisateurConnecte,
+    @Param('id') id: string,
+    @Body() body: { de: string | null },
+  ) {
+    return this.service.rendreAdditif(u, id, body?.de ? String(body.de) : null);
+  }
+
+  @Roles(...ROLES_TRAITEMENT)
+  @Post(':id/rectificatif')
+  rectificatif(@Utilisateur() u: UtilisateurConnecte, @Param('id') id: string) {
+    return this.service.creerRectificatif(u, id);
+  }
+
+  @Get(':id/rectificatif/choix')
+  choixRectificatif(@Param('id') id: string) {
+    return this.service.choixRectificatif(id);
+  }
+
+  @Roles(...ROLES_TRAITEMENT)
+  @Put(':id/rectifications')
+  rectifications(
+    @Utilisateur() u: UtilisateurConnecte,
+    @Param('id') id: string,
+    @Body() body: { rectifications: Rectification[] },
+  ) {
+    return this.service.enregistrerRectifications(
+      u,
+      id,
+      Array.isArray(body?.rectifications) ? body.rectifications : [],
+    );
+  }
+
   @Roles(...ROLES_TRAITEMENT)
   @Put(':id/ampliations')
   ampliations(
