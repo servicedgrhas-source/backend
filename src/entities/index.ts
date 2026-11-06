@@ -503,6 +503,16 @@ export class NoteService {
    */
   @Column({ type: 'jsonb', nullable: true })
   enteteLibre: { lignes: string[]; reference?: string | null } | null;
+  /**
+   * Note de mutation signée reportée dans la base du personnel (bouton « Importer dans la base du
+   * personnel », 06/11/2026) : seulement alors les fiches suivent.
+   */
+  @Column({ type: 'timestamptz', nullable: true })
+  reportePersonnelLe: Date | null;
+  @Column({ type: 'varchar', nullable: true }) reportePersonnelPar:
+    string | null;
+  /** Lot de rangement : ce qui le distingue (« Anglais », « Brazzaville »), 06/11/2026. */
+  @Column({ type: 'varchar', nullable: true }) libelleLot: string | null;
   /** Note d'enrôlement : campagne d'où viennent les volontaires. */
   @Column({ type: 'int', nullable: true }) campagneId: number | null;
   @Column() anneeScolaire: string;
@@ -559,6 +569,12 @@ export interface Rectification {
     specialite: string | null;
     diplome: string | null;
     departementId: number | null;
+    /** Mutation (06/11/2026) : matricule, grade/échelon, cycle, ancien poste, lieu sollicité. */
+    matricule?: string | null;
+    ge?: string | null;
+    cycle?: string | null;
+    ancienPoste?: string | null;
+    lieuSollicite?: string | null;
   };
 }
 
@@ -656,6 +672,8 @@ export class DemandeMutation {
   @Column({ type: 'boolean', default: false }) retiree: boolean;
   @Column({ type: 'text', nullable: true }) motifRetrait: string | null;
   @Column({ type: 'uuid', nullable: true }) noteId: string | null;
+  /** Lot de rangement de la note de mutation (06/11/2026) ; null : la note principale. */
+  @Column({ type: 'int', nullable: true }) lotRangement: number | null;
   /* ----- Circuit d'approbation ----- */
   /** Type de prestation (catalogue) : mutation pour raisons de santé, permutation… */
   @Column({ type: 'varchar', nullable: true }) typePrestation: string | null;

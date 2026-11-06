@@ -12,6 +12,8 @@ import {
   etapeInitiale,
 } from '../affectation/affectation.service';
 import { JournalService } from '../core/core.service';
+import { MOTIFS_MUTATION, type MotifMutation } from '../common/referentiels';
+import { normaliser } from '../common/texte';
 import {
   DIPLOMES_ENROLEMENT,
   estLangueLycee,
@@ -65,12 +67,21 @@ export class RecommandationsService {
     private readonly journal: JournalService,
   ) {}
 
-  private verifierProposition(dto: PropositionDto) {
+  private verifierProposition(
+    dto: PropositionDto,
+    operation: 'MUTATION' | 'ENROLEMENT' = 'ENROLEMENT',
+  ) {
     if (!dto.origine?.trim())
       throw new BadRequestException(
         'Dites qui recommande (l’intéressé, une autorité…).',
       );
-    if (dto.typeNote && !NOTE_CIBLE(dto.typeNote))
+    // Enrôlement : la note du préscolaire, du collège… ; mutation : le motif (une note par motif)
+    if (
+      dto.typeNote &&
+      (operation === 'MUTATION'
+        ? !MOTIFS_MUTATION.includes(dto.typeNote as MotifMutation)
+        : !NOTE_CIBLE(dto.typeNote))
+    )
       throw new BadRequestException(`Note inconnue : ${dto.typeNote}.`);
     if (
       !dto.departementId &&
@@ -104,7 +115,7 @@ export class RecommandationsService {
       throw new BadRequestException(
         'Cette mutation est déjà dans une note de service.',
       );
-    this.verifierProposition(dto);
+    this.verifierProposition(dto, 'MUTATION');
     await this.dejaEnAttente('demandeId', demandeId);
     return this.enregistrer(u, {
       operation: 'MUTATION',
@@ -112,11 +123,14 @@ export class RecommandationsService {
       personne: d.nomComplet,
       departementId: dto.departementId ?? null,
       etablissement: dto.etablissement?.trim() || null,
+      // Autre motif = autre note de mutation (06/11/2026)
+      typeNote: dto.typeNote && dto.typeNote !== d.motif ? dto.typeNote : null,
       origine: dto.origine.trim(),
       motif: dto.motif?.trim() || null,
       avant: {
         departementId: d.departementSolliciteId,
         etablissement: d.lieuSollicite,
+        typeNote: d.motif,
       },
     });
   }
@@ -273,11 +287,24 @@ export class RecommandationsService {
           throw new BadRequestException(
             'Cette mutation est déjà dans une note de service.',
           );
+        // Autre motif : la demande change de note ; sa clé (personne + motif) suit
+        let autreMotif: Partial<DemandeMutation> = {};
+        if (r.typeNote && r.typeNote !== d.motif) {
+          const cle = d.cle.startsWith('I|')
+            ? `I|${normaliser(d.nomComplet)}|${r.typeNote}`
+            : `${d.cle}|${r.typeNote}`;
+          if (await this.demandes.exist({ where: { cle } }))
+            throw new BadRequestException(
+              'Cette personne a déjà une demande pour ce motif : décidez plutôt sur celle-là.',
+            );
+          autreMotif = { motif: r.typeNote, cle };
+        }
         await this.demandes.update(d.id, {
           ...(r.departementId
             ? { departementSolliciteId: r.departementId }
             : {}),
           ...(r.etablissement ? { lieuSollicite: r.etablissement } : {}),
+          ...autreMotif,
           origine: [d.origine, ajout].filter(Boolean).join(' ; '),
         });
       } else {

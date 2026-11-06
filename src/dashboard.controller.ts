@@ -46,6 +46,7 @@ export class DashboardController {
         (SELECT count(*) FROM affectation WHERE statut = 'A_TRAITER')::int AS "pasAffectes",
         (SELECT count(*) FROM recommandation WHERE statut = 'EN_ATTENTE')::int AS "recommandations",
         (SELECT count(*) FROM recommandation WHERE statut = 'EN_ATTENTE' AND operation = 'ENROLEMENT')::int AS "recommandationsEnr",
+        (SELECT count(*) FROM recommandation WHERE statut = 'EN_ATTENTE' AND operation = 'MUTATION')::int AS "recommandationsMut",
         (SELECT count(*) FROM demande_mutation WHERE NOT retiree AND "instructionMinistre" IS NULL)::int AS "mutationsEnCours",
         (SELECT count(*) FROM note_service WHERE module = 'AFFECTATION' AND statut = 'BROUILLON')::int AS "notesAffASoumettre",
         (SELECT count(*) FROM note_service WHERE module = 'AFFECTATION' AND statut = 'SOUMISE')::int AS "notesAffSoumises",

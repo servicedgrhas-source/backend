@@ -250,11 +250,29 @@ export class MutationController {
   importer(
     @Utilisateur() u: UtilisateurConnecte,
     @UploadedFile() fichier?: Express.Multer.File,
+    // Essai, feuilles choisies et décisions (06/11/2026), comme l'import de l'enrôlement
+    @Query('essai') essai?: string,
+    @Body() corps?: { feuilles?: string; decisions?: string },
   ) {
     if (!fichier) throw new BadRequestException('Fichier Excel manquant');
     if (!/\.xlsx$/i.test(fichier.originalname))
       throw new BadRequestException('Seuls les fichiers .xlsx sont acceptés');
-    return this.service.importer(u, fichier.buffer);
+    const lire = <T>(v: string | undefined, defaut: T): T => {
+      try {
+        return v ? (JSON.parse(v) as T) : defaut;
+      } catch {
+        throw new BadRequestException('Décisions de l’import illisibles.');
+      }
+    };
+    const feuilles = lire<string[] | null>(corps?.feuilles, null);
+    const decisions = lire<Record<string, string>>(corps?.decisions, {});
+    return this.service.importer(
+      u,
+      fichier.buffer,
+      essai === '1',
+      Array.isArray(feuilles) ? feuilles.map(String) : null,
+      decisions && typeof decisions === 'object' ? decisions : {},
+    );
   }
 
   @Roles(...ROLES_TRAITEMENT, 'DDEPPSA')

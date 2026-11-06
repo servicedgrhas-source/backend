@@ -15,6 +15,7 @@ import {
   codeMotif,
   groupeDuCycle,
   lireGradeEchelon,
+  MOTIFS,
   MOTIFS_MUTATION,
   SEUIL_ANCIENNETE_ANS,
   SPECIALITES_STAT,
@@ -29,6 +30,7 @@ import {
   normaliser,
   sansPrefixeNumero,
 } from '../common/texte';
+import { IndexNoms } from '../common/index-noms';
 import { JournalService } from '../core/core.service';
 import { RattachementService } from '../rattachement/rattachement.service';
 import { CircuitService } from '../circuit/circuit.service';
@@ -445,7 +447,8 @@ export class MutationService {
     await this.circuit.alerterNouvelle(d);
     await this.lierPermutation(d);
     // Rattachée à sa fiche du personnel (sinon : à vérifier ou introuvable, jamais bloquant)
-    await this.rattachement.rattacher('MUTATION', [d.id]);
+    // Le rattachement à la base du personnel attend la note signée (« Importer dans la base du
+    // personnel », 06/11/2026) : le traitement des mutations reste isolé de cette base
     await this.journal.log(
       u,
       'DEMANDE_MUTATION_CREEE',
@@ -595,7 +598,8 @@ export class MutationService {
         pieces: fichiers.length,
       },
     );
-    await this.rattachement.rattacher('MUTATION', [d.id]);
+    // Le rattachement à la base du personnel attend la note signée (« Importer dans la base du
+    // personnel », 06/11/2026) : le traitement des mutations reste isolé de cette base
     return { id: d.id, numero, code, etape: c.circuit[0].sigle };
   }
 
@@ -924,119 +928,129 @@ export class MutationService {
 
   /* ------------------------------ Import ------------------------------ */
 
-  async importer(u: UtilisateurConnecte, contenu: Buffer) {
-    const feuilles = await lireClasseur(contenu, ['NOMSETPRENOMS', 'MOTIF']);
-    if (!feuilles.length)
+  /**
+   * Importer le registre Excel des demandes (refait le 06/11/2026), en trois temps, comme
+   * l'enrôlement : 1. l'utilisateur choisit la ou les feuilles (le fichier a souvent une feuille
+   * « DOUBLONS » ou des copies de la compilation) ; 2. essai : chaque ligne est comparée à la
+   * base des MUTATIONS seulement (même personne et même motif, demande proche déjà enregistrée)
+   * et au fichier lui-même ; 3. import, avec les décisions prises ligne par ligne ou par groupe
+   * (`decisions` : clé de la ligne → MAJ, FUSION, AJOUTER ou IGNORER). La base du personnel n'est
+   * pas touchée : le rattachement se fait après la note signée (« Importer dans la base du
+   * personnel »).
+   */
+  async importer(
+    u: UtilisateurConnecte,
+    contenu: Buffer,
+    essai = false,
+    feuillesChoisies: string[] | null = null,
+    decisions: Record<string, string> = {},
+  ) {
+    const toutes = await lireClasseur(contenu, ['NOMSETPRENOMS', 'MOTIF']);
+    if (!toutes.length)
       throw new BadRequestException(
         'Aucune feuille visible avec les colonnes « Noms et prénoms » et « Motif évoqué ».',
       );
-    // La compilation passe d'abord : elle fait foi. Les feuilles visibles par motif sont lues
-    // ensuite pour ne pas perdre les demandes que la compilation n'a pas reprises (fichier du
-    // 13/10/2025 : 60 demandes d'ancienneté absentes de COMPIL). Une demande déjà vue (même
-    // personne, même motif) n'est jamais lue deux fois ni écrasée.
+    const feuillesDispo = toutes.map((f) => ({
+      nom: f.nom,
+      lignes: f.lignes.length,
+    }));
+    if (!feuillesChoisies?.length && toutes.length > 1)
+      return { choisirFeuille: true as const, feuillesDispo };
+    const feuilles = feuillesChoisies?.length
+      ? toutes.filter((f) => feuillesChoisies.includes(f.nom))
+      : toutes;
+    if (!feuilles.length)
+      throw new BadRequestException(
+        'La feuille choisie n’est pas dans ce fichier (ou n’a pas les colonnes attendues).',
+      );
+    // La compilation passe d'abord : elle fait foi. Les feuilles par motif sont lues ensuite pour
+    // ne pas perdre les demandes que la compilation n'a pas reprises.
     const choisies = [...feuilles].sort(
       (a, b) =>
         Number(cleCompacte(b.nom).startsWith('COMPIL')) -
         Number(cleCompacte(a.nom).startsWith('COMPIL')),
     );
     const deps = new Map((await this.deps.find()).map((d) => [d.code, d.id]));
-    const existants = new Map((await this.repo.find()).map((d) => [d.cle, d]));
+    const nomsDeps = new Map(
+      (await this.deps.find()).map((d) => [d.id, d.nom] as const),
+    );
+    const base = await this.repo.find();
+    const existants = new Map(base.map((d) => [d.cle, d]));
 
-    // Lignes retenues : une par demande (personne + motif), dans l'ordre des feuilles
-    const retenues: {
+    type Retenue = {
       l: Ligne;
       feuille: string;
       nom: string;
       motif: MotifMutation;
       cle: string;
-    }[] = [];
+      ligne: string;
+    };
+    const retenues: Retenue[] = [];
     const parFeuille = new Map(
       choisies.map((f) => [f.nom, { nom: f.nom, lues: 0, retenues: 0 }]),
     );
-    const doublonsFichier: string[] = [];
     let ignorees = 0;
     let dejaVues = 0;
-    /** Feuille où chaque demande a été retenue. */
-    const feuilleDe = new Map<string, string>();
-    /**
-     * Personnes de la compilation, par département demandé : une feuille par motif peut
-     * garder sous « Ancienneté » une demande que la compilation a classée sous un autre
-     * motif (même personne, même destination) — ce n'est pas une nouvelle demande.
-     */
+    const premiere = new Map<string, Retenue>();
     const dansCompil = new Set<string>();
     const personne = (nom: string, l: Ligne) =>
       `${normaliser(nom)}|${codeDepartement(champ(l, 'DEPARTEMENTSOLLICITE')) ?? ''}`;
-    for (const f of choisies) {
-      const compte = parFeuille.get(f.nom)!;
-      const estCompil = cleCompacte(f.nom).startsWith('COMPIL');
-      for (const l of f.lignes) {
-        const nom = nettoyer(champ(l, 'NOMSETPRENOMS'));
-        const motif = codeMotif(champ(l, 'MOTIF'));
-        if (!nom || !motif) {
-          ignorees++;
-          continue;
-        }
-        compte.lues++;
-        const cle = `I|${normaliser(nom)}|${motif}`;
-        if (feuilleDe.has(cle)) {
-          // Même feuille : vraie ligne en double ; autre feuille : demande déjà reprise
-          if (feuilleDe.get(cle) === f.nom)
-            doublonsFichier.push(`${nom} (${f.nom}, ligne ${l._ligne})`);
-          else dejaVues++;
-          continue;
-        }
-        if (estCompil) dansCompil.add(personne(nom, l));
-        else if (dansCompil.has(personne(nom, l))) {
-          dejaVues++;
-          continue;
-        }
-        feuilleDe.set(cle, f.nom);
-        compte.retenues++;
-        retenues.push({ l, feuille: f.nom, nom, motif, cle });
-      }
-    }
-
-    // Numéros : celui du registre quand il est écrit ; sinon le suivant du plus grand
-    // numéro connu (base ou fichier), pour ne jamais reprendre un numéro existant.
-    const numerosFichier = retenues.map((r) =>
-      lireNumeroEnregistrement(champ(r.l, 'NDENREG')),
-    );
-    let numero =
-      Math.max(
-        (await this.prochainNumero()) - 1,
-        ...numerosFichier.map((n) => n ?? 0),
-      ) + 1;
-    /** Numéros écrits dans le registre (fichier) : un numéro donné par le système ne doit pas les reprendre. */
-    const numerosEcrits = new Set(
-      numerosFichier.filter((n): n is number => n !== null),
-    );
-    const utilises = new Map<number, number>();
-    for (const d of existants.values())
-      utilises.set(
-        d.numeroEnregistrement,
-        (utilises.get(d.numeroEnregistrement) ?? 0) + 1,
-      );
-
+    const details = {
+      aMettreAJour: [] as {
+        cle: string;
+        nom: string;
+        motif: string;
+        existant: { id: string; numero: number; bloquee: string | null };
+        ecarts: {
+          champ: string;
+          libelle: string;
+          base: string;
+          fichier: string;
+        }[];
+      }[],
+      doublonsFichier: [] as {
+        cle: string;
+        nom: string;
+        motif: string;
+        avec: { cle: string; nom: string; motif: string };
+        exact: boolean;
+      }[],
+      doublonsBase: [] as {
+        cle: string;
+        nom: string;
+        motif: string;
+        existant: {
+          id: string;
+          numero: number;
+          nom: string;
+          motif: string;
+          departement: string | null;
+          etat: string;
+        };
+        raison: string;
+      }[],
+    };
     const rapport = {
+      feuillesDispo,
       feuilles: choisies.map((f) => f.nom),
-      parFeuille: [...parFeuille.values()],
-      lues: retenues.length,
+      parFeuille: [] as { nom: string; lues: number; retenues: number }[],
+      lues: 0,
       creees: 0,
       misesAJour: 0,
+      identiques: 0,
+      fusionnees: 0,
+      ecartees: 0,
       ignorees,
-      /** Demandes des feuilles par motif déjà présentes dans la compilation. */
-      dejaDansCompilation: dejaVues,
-      /** Même personne et même motif deux fois dans une feuille : la première ligne est gardée. */
-      doublonsFichier,
+      dejaDansCompilation: 0,
       numerosAttribues: 0,
-      /** Demandes déjà en base dont le numéro a été remis d'accord avec le registre. */
       numerosCorriges: 0,
-      /** N° d'enregistrement écrits deux fois (registre papier) : à vérifier. */
       numerosEnDouble: [] as number[],
       anomalies: {} as Record<string, number>,
     };
+    const libMotif = (m: string) => MOTIFS[m as MotifMutation]?.libelle ?? m;
 
-    for (const [i, { l, nom, motif, cle }] of retenues.entries()) {
+    // 1. Lecture : une ligne par demande (personne + motif)
+    const champsDe = (l: Ligne, nom: string, motif: MotifMutation) => {
       const statutBrut = cleCompacte(sansPrefixeNumero(champ(l, 'STATUT')));
       const obs = nettoyer(champ(l, 'OBS'));
       const { grade, echelon } = lireGradeEchelon(
@@ -1065,12 +1079,12 @@ export class MutationService {
           statutBrut.startsWith('PERSONNEL') || statutBrut === 'PA'
             ? 'PERSONNEL_ADMINISTRATIF'
             : 'ENSEIGNANT',
-        departementOrigineId: codeO ? deps.get(codeO)! : null,
+        departementOrigineId: codeO ? (deps.get(codeO) ?? null) : null,
         lieuService: nettoyer(champ(l, 'LIEUDESERVICE')),
         cycle: codeCycle(champ(l, 'CYCLE')),
         specialite: nettoyer(champ(l, 'SPECIALITE')),
         dureeMois: lireDuree(champ(l, 'DUREE')),
-        departementSolliciteId: codeS ? deps.get(codeS)! : null,
+        departementSolliciteId: codeS ? (deps.get(codeS) ?? null) : null,
         lieuSollicite:
           cleCompacte(lieuSollicite) === 'PERMUTE' ? null : lieuSollicite,
         motif,
@@ -1079,65 +1093,305 @@ export class MutationService {
         observation: obs,
       };
       champs.anomalies = anomaliesMutation(champs);
-      for (const a of champs.anomalies)
+      return champs;
+    };
+    for (const f of choisies) {
+      const compte = parFeuille.get(f.nom)!;
+      const estCompil = cleCompacte(f.nom).startsWith('COMPIL');
+      for (const l of f.lignes) {
+        const nom = nettoyer(champ(l, 'NOMSETPRENOMS'));
+        const motif = codeMotif(champ(l, 'MOTIF'));
+        if (!nom || !motif) {
+          ignorees++;
+          continue;
+        }
+        compte.lues++;
+        const cle = `I|${normaliser(nom)}|${motif}`;
+        const ligne = `${f.nom}#${l._ligne}`;
+        const dejaLa = premiere.get(cle);
+        if (dejaLa) {
+          // Même feuille : vraie ligne en double (fusionnée par défaut) ; autre feuille : déjà reprise
+          if (dejaLa.feuille === f.nom) {
+            details.doublonsFichier.push({
+              cle: ligne,
+              nom,
+              motif: libMotif(motif),
+              avec: {
+                cle: dejaLa.ligne,
+                nom: dejaLa.nom,
+                motif: libMotif(dejaLa.motif),
+              },
+              exact: true,
+            });
+            const d = decisions[ligne] ?? 'FUSION';
+            if (d === 'AJOUTER') {
+              // Deux demandes distinctes : la seconde garde sa propre clé
+              retenues.push({
+                l,
+                feuille: f.nom,
+                nom,
+                motif,
+                cle: `${cle}|${ligne}`,
+                ligne,
+              });
+              compte.retenues++;
+            } else if (d === 'IGNORER') rapport.ecartees++;
+            else rapport.fusionnees++;
+          } else dejaVues++;
+          continue;
+        }
+        if (estCompil) dansCompil.add(personne(nom, l));
+        else if (dansCompil.has(personne(nom, l))) {
+          dejaVues++;
+          continue;
+        }
+        const r = { l, feuille: f.nom, nom, motif, cle, ligne };
+        premiere.set(cle, r);
+        compte.retenues++;
+        retenues.push(r);
+      }
+    }
+    rapport.parFeuille = [...parFeuille.values()];
+    rapport.dejaDansCompilation = dejaVues;
+    rapport.ignorees = ignorees;
+
+    // Numéros : celui du registre quand il est écrit ; sinon le suivant du plus grand connu
+    const numerosFichier = retenues.map((r) =>
+      lireNumeroEnregistrement(champ(r.l, 'NDENREG')),
+    );
+    let numero =
+      Math.max(
+        (await this.prochainNumero()) - 1,
+        ...numerosFichier.map((n) => n ?? 0),
+      ) + 1;
+    const numerosEcrits = new Set(
+      numerosFichier.filter((n): n is number => n !== null),
+    );
+    const utilises = new Map<number, number>();
+    /** Numéros écrits dans ce fichier ou donnés par cet import. */
+    const touches = new Set<number>();
+    for (const d of existants.values())
+      utilises.set(
+        d.numeroEnregistrement,
+        (utilises.get(d.numeroEnregistrement) ?? 0) + 1,
+      );
+
+    // Index des demandes de la base (noms, matricules) : les demandes proches
+    const index = new IndexNoms<DemandeMutation>();
+    for (const d of base) index.ajouter(d.nomComplet, null, d);
+    const parMatricule = new Map<string, DemandeMutation[]>();
+    for (const d of base) {
+      const m = cleCompacte(d.matricule);
+      if (m.length >= 4)
+        parMatricule.set(m, [...(parMatricule.get(m) ?? []), d]);
+    }
+    const etatDe = (d: DemandeMutation) =>
+      d.noteId
+        ? 'dans une note'
+        : d.retiree
+          ? 'retirée'
+          : d.instructionMinistre === 'ACCORDEE'
+            ? 'accordée'
+            : d.instructionMinistre
+              ? 'refusée'
+              : 'en instruction';
+    const CHAMPS: [keyof DemandeMutation, string][] = [
+      ['matricule', 'Matricule'],
+      ['gradeBrut', 'Grade/échelon'],
+      ['departementOrigineId', 'Département d’origine'],
+      ['lieuService', 'Lieu de service'],
+      ['cycle', 'Cycle'],
+      ['specialite', 'Spécialité'],
+      ['departementSolliciteId', 'Département sollicité'],
+      ['lieuSollicite', 'Lieu sollicité'],
+      ['justificatif', 'Justificatif'],
+      ['origine', 'Origine'],
+      ['observation', 'Observation'],
+    ];
+    const lisible = (champ: keyof DemandeMutation, v: unknown) =>
+      champ === 'departementOrigineId' || champ === 'departementSolliciteId'
+        ? v
+          ? String(nomsDeps.get(v as number) ?? v)
+          : ''
+        : String(v ?? '');
+    // Fichiers anciens : la date d'enregistrement n'est pas comparée
+
+    for (const [i, r] of retenues.entries()) {
+      const champs = champsDe(r.l, r.nom, r.motif);
+      for (const a of champs.anomalies ?? [])
         rapport.anomalies[a] = (rapport.anomalies[a] ?? 0) + 1;
-      const ex = existants.get(cle);
+      const ex = existants.get(r.cle);
+      // a. Même personne, même motif : déjà dans la base
       if (ex) {
-        if (ex.noteId || ex.instructionMinistre) continue;
-        // Demande importée avant cette version : son numéro peut venir de l'ancienne
-        // numérotation (1, 2, 3…), qui reprenait des numéros du registre. Le registre fait foi ;
-        // sinon, un numéro repris par erreur est remplacé par un numéro libre.
+        const ecarts = CHAMPS.flatMap(([c, libelle]) => {
+          const f = lisible(c, champs[c]);
+          const b = lisible(c, ex[c]);
+          return f.trim() && normaliser(f) !== normaliser(b)
+            ? [{ champ: String(c), libelle, base: b, fichier: f }]
+            : [];
+        });
+        const bloquee = ex.noteId
+          ? 'déjà dans une note'
+          : ex.instructionMinistre
+            ? 'déjà décidée par le Ministre'
+            : null;
+        // Numéro : le registre fait foi (ancienne numérotation corrigée)
         const ecrit = numerosFichier[i];
-        const ancien = ex.numeroEnregistrement;
         let nouveau: number | null = null;
-        if (ecrit !== null && ecrit !== ancien) nouveau = ecrit;
-        else if (
-          ecrit === null &&
-          ex.canal !== 'PORTAIL' &&
-          numerosEcrits.has(ancien)
-        )
-          nouveau = numero++;
+        if (!bloquee) {
+          if (ecrit !== null && ecrit !== ex.numeroEnregistrement)
+            nouveau = ecrit;
+          else if (
+            ecrit === null &&
+            ex.canal !== 'PORTAIL' &&
+            numerosEcrits.has(ex.numeroEnregistrement)
+          )
+            nouveau = numero++;
+        }
+        if (!ecarts.length && nouveau === null) {
+          rapport.identiques++;
+          continue;
+        }
+        if (ecarts.length)
+          details.aMettreAJour.push({
+            cle: r.ligne,
+            nom: r.nom,
+            motif: libMotif(r.motif),
+            existant: { id: ex.id, numero: ex.numeroEnregistrement, bloquee },
+            ecarts,
+          });
+        // Par défaut, le fichier (le registre tenu à jour) met la demande à jour
+        const d = decisions[r.ligne] ?? 'MAJ';
+        if (bloquee || d === 'IGNORER') {
+          rapport.identiques++;
+          continue;
+        }
         if (nouveau !== null) {
-          utilises.set(ancien, (utilises.get(ancien) ?? 1) - 1);
+          utilises.set(
+            ex.numeroEnregistrement,
+            (utilises.get(ex.numeroEnregistrement) ?? 1) - 1,
+          );
           utilises.set(nouveau, (utilises.get(nouveau) ?? 0) + 1);
+          touches.add(nouveau);
           champs.numeroEnregistrement = nouveau;
-          ex.numeroEnregistrement = nouveau;
           rapport.numerosCorriges++;
         }
-        await this.repo.update(ex.id, champs);
+        if (!essai) await this.repo.update(ex.id, champs);
         rapport.misesAJour++;
-      } else {
-        let n = numerosFichier[i];
-        if (n === null) {
-          n = numero++;
-          rapport.numerosAttribues++;
+        continue;
+      }
+      // b. Demande proche dans la base : même matricule, ou même nom écrit autrement
+      const m = cleCompacte(champs.matricule);
+      const parMat = m.length >= 4 ? (parMatricule.get(m) ?? []) : [];
+      const parNom = index.memesNoms(r.nom);
+      const proche = [...parMat, ...parNom].find((x) => x.cle !== r.cle);
+      if (proche) {
+        details.doublonsBase.push({
+          cle: r.ligne,
+          nom: r.nom,
+          motif: libMotif(r.motif),
+          existant: {
+            id: proche.id,
+            numero: proche.numeroEnregistrement,
+            nom: proche.nomComplet,
+            motif: libMotif(proche.motif),
+            departement: proche.departementSolliciteId
+              ? (nomsDeps.get(proche.departementSolliciteId) ?? null)
+              : null,
+            etat: etatDe(proche),
+          },
+          raison: parMat.includes(proche)
+            ? 'même matricule'
+            : proche.motif === r.motif
+              ? 'nom très proche, même motif'
+              : 'même personne, autre motif',
+        });
+        const d = decisions[r.ligne] ?? 'AJOUTER';
+        if (d === 'IGNORER') {
+          rapport.ecartees++;
+          continue;
         }
-        utilises.set(n, (utilises.get(n) ?? 0) + 1);
+        if (d === 'MAJ') {
+          if (proche.noteId || proche.instructionMinistre) {
+            rapport.ecartees++;
+            continue;
+          }
+          if (!essai)
+            await this.repo.update(proche.id, { ...champs, cle: r.cle });
+          rapport.misesAJour++;
+          continue;
+        }
+      }
+      // c. Nouvelle demande
+      let n = numerosFichier[i];
+      if (n === null) {
+        n = numero++;
+        rapport.numerosAttribues++;
+      }
+      utilises.set(n, (utilises.get(n) ?? 0) + 1);
+      touches.add(n);
+      if (!essai) {
         const nouvelle = await this.repo.save({
           ...champs,
-          cle,
+          cle: r.cle,
           numeroEnregistrement: n,
           saisiePar: u.nom,
         });
-        existants.set(cle, nouvelle);
-        rapport.creees++;
+        existants.set(r.cle, nouvelle);
       }
+      index.ajouter(r.nom, null, {
+        ...champs,
+        cle: r.cle,
+        id: '',
+        numeroEnregistrement: n,
+      } as DemandeMutation);
+      rapport.creees++;
     }
+    // Deux noms proches dans le fichier (mêmes mots, même matricule) : signalés, gardés tous les deux
+    const vus = new IndexNoms<Retenue>();
+    for (const r of retenues) {
+      const autre = vus
+        .memesNoms(r.nom)
+        .find(
+          (x) => x.cle !== r.cle && normaliser(x.nom) !== normaliser(r.nom),
+        );
+      if (autre)
+        details.doublonsFichier.push({
+          cle: r.ligne,
+          nom: r.nom,
+          motif: libMotif(r.motif),
+          avec: {
+            cle: autre.ligne,
+            nom: autre.nom,
+            motif: libMotif(autre.motif),
+          },
+          exact: false,
+        });
+      vus.ajouter(r.nom, null, r);
+    }
+    rapport.lues = retenues.length;
+    // Seulement les numéros de ce fichier (ceux déjà en double dans la base ne sont pas son affaire)
+    for (const n of numerosFichier) if (n !== null) touches.add(n);
     rapport.numerosEnDouble = [...utilises]
-      .filter(([, fois]) => fois > 1)
+      .filter(([n, fois]) => fois > 1 && touches.has(n))
       .map(([n]) => n)
       .sort((a, b) => a - b);
-    // Chaque demande rattachée à sa fiche du personnel (les doutes sont à trancher à l'écran)
-    const rattachement = await this.rattachement.rattacher('MUTATION');
-    Object.assign(rapport, { rattachement });
-    await this.journal.log(
-      u,
-      'IMPORT_MUTATIONS',
-      'demande_mutation',
-      null,
-      rapport,
-    );
-    await this.circuit.mettreEnCircuit();
-    return rapport;
+    if (!essai) {
+      await this.journal.log(u, 'IMPORT_MUTATIONS', 'demande_mutation', null, {
+        ...rapport,
+        feuillesDispo: undefined,
+      });
+      await this.circuit.mettreEnCircuit();
+    }
+    const MAX = 2000;
+    return {
+      ...rapport,
+      details: {
+        aMettreAJour: details.aMettreAJour.slice(0, MAX),
+        doublonsFichier: details.doublonsFichier.slice(0, MAX),
+        doublonsBase: details.doublonsBase.slice(0, MAX),
+      },
+      tronque: Object.values(details).some((l) => l.length > MAX),
+    };
   }
 }

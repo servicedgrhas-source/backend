@@ -236,11 +236,11 @@ export class RattachementService {
   }
 
   /** Demandes à trancher (à vérifier, introuvables), avec leurs fiches possibles. */
-  async aTrancher(m: string) {
+  async aTrancher(m: string, filtre?: string[]) {
     const module = this.module(m);
     const ix = await this.indexPersonnel();
     const deps = new Map((await this.deps.find()).map((d) => [d.id, d.nom]));
-    const liste = (await this.demandes(module)).filter(
+    const liste = (await this.demandes(module, filtre)).filter(
       (d) => !d.agentId && d.rattachement !== 'SANS_FICHE',
     );
     const ids = new Set<number>();
@@ -342,11 +342,11 @@ export class RattachementService {
   }
 
   /** Crée les fiches de toutes les demandes introuvables d'un module. */
-  async creerToutes(u: UtilisateurConnecte, m: string) {
+  async creerToutes(u: UtilisateurConnecte, m: string, ids?: string[]) {
     const module = this.module(m);
     const ix = await this.indexPersonnel();
     let n = 0;
-    for (const d of await this.demandes(module)) {
+    for (const d of await this.demandes(module, ids)) {
       if (d.agentId || d.rattachement === 'SANS_FICHE') continue;
       if (this.chercher(d, ix).etat !== 'INTROUVABLE') continue;
       await this.creerFiche(u, module, d.id);

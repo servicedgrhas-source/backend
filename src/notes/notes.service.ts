@@ -57,6 +57,7 @@ import {
 } from '../entities';
 import { MutationService } from '../mutation/mutation.service';
 import { AffectationsPersonnelService } from '../recensement/affectations-personnel.service';
+import { RattachementService } from '../rattachement/rattachement.service';
 import {
   DIPLOMES_ENROLEMENT,
   noteEnrolementDe,
@@ -159,7 +160,7 @@ export interface Entete {
   libre?: boolean;
 }
 
-/** Critères pour découper une note d'enrôlement en lots (06/11/2026). */
+/** Critères pour découper une note en lots (06/11/2026) : enrôlement et mutation. */
 export const CRITERES_LOT = {
   specialite: {
     libelle: 'Par spécialité',
@@ -176,12 +177,33 @@ export const CRITERES_LOT = {
     court: 'Promotions',
     vide: 'Promotion non précisée',
   },
+  cycle: { libelle: 'Par cycle', court: 'Cycles', vide: 'Cycle non précisé' },
+  origine: {
+    libelle: "Par département d'origine",
+    court: "Départements d'origine",
+    vide: 'Origine non précisée',
+  },
   departement: {
     libelle: 'Par département',
     court: 'Départements',
     vide: 'Sans département',
   },
 } as const;
+const CRITERES_ENROLEMENT = [
+  'specialite',
+  'diplome',
+  'promotion',
+  'departement',
+];
+const CRITERES_MUTATION = ['departement', 'cycle', 'specialite', 'origine'];
+/** Une personne d'une note à découper : son département dans la note et les valeurs des critères. */
+interface GensNote {
+  id: string;
+  nom: string;
+  cleTri: string;
+  departementId: number | null;
+  valeurs: Partial<Record<string, string>>;
+}
 export type CritereLot = keyof typeof CRITERES_LOT;
 
 /**
@@ -322,6 +344,7 @@ export class NotesService {
     private readonly structures: Repository<Structure>,
     private readonly personnel: AffectationsPersonnelService,
     private readonly nomSvc: NominationsService,
+    private readonly rattachementSvc: RattachementService,
   ) {}
 
   private annee(
@@ -369,12 +392,12 @@ export class NotesService {
     );
   }
 
-  private ampliations(dg: string, nbDeps: number, total: number) {
+  private ampliations(dg: string | string[], nbDeps: number, total: number) {
     const fixes: [string, number][] = [
       ['MEPPSA-CAB', 2],
       ['IGEPSA', 2],
       ['DGRHAS-DRSC', 2],
-      [dg, 2],
+      ...[dg].flat().map((x): [string, number] => [x, 2]),
       ['DGFP', 1],
       ['DGB-DGBCB-D/SOLDE', 3],
       ['DDEPPSA', nbDeps],
@@ -629,15 +652,28 @@ export class NotesService {
 
   /* ========================= Notes de mutation ========================= */
 
-  private async contenuMutation(
-    note: NoteService,
-  ): Promise<ContenuNote & { bloques: unknown[] }> {
-    const motif = note.motif as MotifMutation;
-    const groupe = note.typeNote as GroupeMutation;
-    const liste = await this.mutSvc.eligiblesPourNote(motif, groupe);
-    const deps = await this.deps.find({ order: { ordre: 'ASC' } });
+  /** Groupes d'une note de mutation : le sien et celui qu'on y a réuni (06/11/2026). */
+  private groupesMutation(n: NoteService) {
+    return [n.typeNote, ...(n.groupes ?? [])] as GroupeMutation[];
+  }
+
+  /** Demandes d'une note de mutation : accordées, de ses groupes, de son lot de rangement. */
+  private async demandesDeLaNoteMutation(n: NoteService) {
+    if (n.rectificatifDe) return [];
+    const listes = await Promise.all(
+      this.groupesMutation(n).map((g) =>
+        this.mutSvc.eligiblesPourNote(n.motif as MotifMutation, g),
+      ),
+    );
+    return listes
+      .flat()
+      .filter((d) => (d.lotRangement ?? null) === (n.lotRangement ?? null));
+  }
+
+  /** Colonnes d'une note de mutation (la permutation dit aussi le département d'accueil). */
+  private colonnesMutation(motif: MotifMutation): Colonne[] {
     const permutation = motif === 'PERMUTATION';
-    const colonnes: Colonne[] = [
+    return [
       { cle: 'nom', libelle: 'Noms et prénoms' },
       { cle: 'ge', libelle: 'G/E' },
       { cle: 'matricule', libelle: 'Matricule Solde' },
@@ -650,7 +686,11 @@ export class NotesService {
         : []),
       { cle: 'obs', libelle: 'Obs' },
     ];
-    const ligne = (d: DemandeMutation, n: number): LigneNote => ({
+  }
+
+  /** Ligne d'une demande dans la note (aussi les « au lieu de » d'un rectificatif). */
+  private ligneMutation(d: DemandeMutation, n: number): LigneNote {
+    return {
       id: d.id,
       n,
       nom: d.nomComplet,
@@ -679,7 +719,19 @@ export class NotesService {
             : d.genre === 'F'
               ? 'Ens. active'
               : 'Ens. actif',
-    });
+    };
+  }
+
+  private async contenuMutation(
+    note: NoteService,
+  ): Promise<ContenuNote & { bloques: unknown[] }> {
+    const motif = note.motif as MotifMutation;
+    const groupes = this.groupesMutation(note);
+    const liste = await this.demandesDeLaNoteMutation(note);
+    const deps = await this.deps.find({ order: { ordre: 'ASC' } });
+    const permutation = motif === 'PERMUTATION';
+    const colonnes = this.colonnesMutation(motif);
+    const ligne = (d: DemandeMutation, n: number) => this.ligneMutation(d, n);
     const tri = (a: DemandeMutation, b: DemandeMutation) =>
       a.nomComplet.localeCompare(b.nomComplet, 'fr');
     const sections: SectionNote[] = permutation
@@ -717,8 +769,9 @@ export class NotesService {
       sections,
       total: liste.length,
       departements: nbDeps,
+      // Deux groupes réunis : la DGEB et la DGES-DC reçoivent chacune la note
       ampliations: this.ampliations(
-        groupe === 'PRESCO_PRIMAIRE' ? 'DGEB' : 'DGES-DC',
+        groupes.map((g) => (g === 'PRESCO_PRIMAIRE' ? 'DGEB' : 'DGES-DC')),
         nbDeps,
         liste.length,
       ),
@@ -726,17 +779,24 @@ export class NotesService {
         'Les frais de voyage et de transport des bagages sont à la charge des intéressés.',
         'La présente note de service prend effet à compter de la date de signature.',
       ],
-      piedDePage: `${OBJET_MUTATION[motif]}/${GROUPE_COURT[groupe]}/${note.anneeScolaire}`,
+      piedDePage: `${OBJET_MUTATION[motif]}/${groupes.map((g) => GROUPE_COURT[g]).join('-')}/${note.anneeScolaire}`,
       repere: `Mut./${ABREGE_MOTIF[motif]}`,
       bloques: [],
     };
   }
 
-  introductionMutation(motif: MotifMutation, groupe: GroupeMutation) {
+  introductionMutation(
+    motif: MotifMutation,
+    groupe: GroupeMutation | GroupeMutation[],
+  ) {
+    const g = [groupe].flat();
+    // Deux groupes réunis dans une note : tous les agents (06/11/2026)
     const qui =
-      groupe === 'PRESCO_PRIMAIRE'
-        ? 'Les enseignants du préscolaire et du primaire'
-        : 'Les agents du collège, du lycée et de l’administration';
+      g.length > 1
+        ? 'Les agents du préscolaire, du primaire, du collège, du lycée et de l’administration'
+        : g[0] === 'PRESCO_PRIMAIRE'
+          ? 'Les enseignants du préscolaire et du primaire'
+          : 'Les agents du collège, du lycée et de l’administration';
     return `${qui} dont les noms et prénoms suivent, sont mutés ${MOTIFS[motif].formule}, au titre de l’année scolaire {annee}, conformément aux tableaux ci-après :`;
   }
 
@@ -744,16 +804,26 @@ export class NotesService {
     const creees: NoteService[] = [];
     for (const motif of MOTIFS_MUTATION)
       for (const groupe of GROUPES_MUTATION) {
-        const ouverte = await this.notes.findOne({
+        const ouvertes = await this.notes.find({
           where: {
             module: 'MUTATION',
             motif,
-            typeNote: groupe,
             statut: In(['BROUILLON', 'SOUMISE']),
+            rectificatifDe: IsNull(),
           },
         });
-        if (ouverte) continue;
-        const liste = await this.mutSvc.eligiblesPourNote(motif, groupe);
+        if (
+          ouvertes.some(
+            (o) =>
+              o.lotRangement == null &&
+              this.groupesMutation(o).includes(groupe),
+          )
+        )
+          continue;
+        // Les demandes rangées dans un lot ont déjà leur note
+        const liste = (
+          await this.mutSvc.eligiblesPourNote(motif, groupe)
+        ).filter((d) => d.lotRangement == null);
         if (!liste.length) continue;
         const rang =
           (await this.notes.count({
@@ -1111,6 +1181,14 @@ export class NotesService {
    */
   private async introductionLiee(n: NoteService, lieeId: string) {
     const o = await this.notes.findOne({ where: { id: lieeId } });
+    if (n.module === 'MUTATION') {
+      const ref =
+        (o?.contenu as { entete?: { reference?: string } } | null)?.entete
+          ?.reference ?? this.params.get('REFERENCE_NOTE');
+      const numero = o?.numero ? `n° ${o.numero}/${ref}` : `n° ____/${ref}`;
+      const du = dateEnLettres(o?.dateSignature)?.toLowerCase() ?? '__________';
+      return `À la note de service ${numero} du ${du}, relative à la mutation des agents ${MOTIFS[(o?.motif ?? n.motif) as MotifMutation]?.formule ?? ''}, au titre de l'année scolaire ${o?.anneeScolaire ?? n.anneeScolaire}.`;
+    }
     const def = NOTES_ENROLEMENT[n.typeNote] ?? NOTES_ENROLEMENT.AUTRE;
     const ref =
       (o?.contenu as { entete?: { reference?: string } } | null)?.entete
@@ -1155,6 +1233,22 @@ export class NotesService {
     const deps = new Map(
       (await this.deps.find()).map((d) => [d.id, d] as const),
     );
+    const mutation = n.module === 'MUTATION';
+    const demandes = mutation
+      ? new Map(
+          (
+            await this.demandes.find({
+              where: {
+                id: In(
+                  [
+                    ...new Set((n.rectifications ?? []).map((r) => r.enroleId)),
+                  ].concat(['00000000-0000-0000-0000-000000000000']),
+                ),
+              },
+            })
+          ).map((d) => [d.id, d] as const),
+        )
+      : new Map<string, DemandeMutation>();
     const enroles = new Map(
       (
         await this.enroles.find({
@@ -1183,7 +1277,9 @@ export class NotesService {
       parDep.set(p.titre, g);
       g.auLieuDe.push(p.ligne);
       // Autre département que celui de la note signée : on le dit au-dessus de la ligne à lire
-      const depAvant = enroles.get(r.enroleId)?.departementRetenuId ?? null;
+      const depAvant = mutation
+        ? (demandes.get(r.enroleId)?.departementSolliciteId ?? null)
+        : (enroles.get(r.enroleId)?.departementRetenuId ?? null);
       const dep =
         r.lire.departementId && r.lire.departementId !== depAvant
           ? deps.get(r.lire.departementId)
@@ -1193,19 +1289,34 @@ export class NotesService {
         : 'LIRE :';
       g.lire.set(libelle, [
         ...(g.lire.get(libelle) ?? []),
-        {
-          id: r.lire.enroleId ?? `libre-${r.id}`,
-          n: p.ligne.n,
-          nom: r.lire.nom,
-          naissance: r.lire.naissance
-            ? r.lire.naissance.split('-').reverse().join('/')
-            : '',
-          lieu: r.lire.lieu,
-          promotion: r.lire.promotion,
-          specialite: r.lire.specialite,
-          diplome: r.lire.diplome,
-          etablissement: null,
-        },
+        mutation
+          ? {
+              // La ligne de la note signée, avec ce qu'il faut lire
+              ...p.ligne,
+              id: r.lire.enroleId ?? `libre-${r.id}`,
+              nom: r.lire.nom,
+              matricule: r.lire.matricule ?? 'X',
+              ge: r.lire.ge ?? '',
+              cycle: r.lire.cycle ?? p.ligne.cycle,
+              specialite: r.lire.specialite,
+              ancienPoste: r.lire.ancienPoste ?? null,
+              accueil: r.lire.departementId
+                ? (deps.get(r.lire.departementId)?.nom ?? p.ligne.accueil)
+                : p.ligne.accueil,
+            }
+          : {
+              id: r.lire.enroleId ?? `libre-${r.id}`,
+              n: p.ligne.n,
+              nom: r.lire.nom,
+              naissance: r.lire.naissance
+                ? r.lire.naissance.split('-').reverse().join('/')
+                : '',
+              lieu: r.lire.lieu,
+              promotion: r.lire.promotion,
+              specialite: r.lire.specialite,
+              diplome: r.lire.diplome,
+              etablissement: null,
+            },
       ]);
     }
     const sections: SectionNote[] = [...parDep.entries()]
@@ -1225,6 +1336,30 @@ export class NotesService {
       ]);
     const total = (n.rectifications ?? []).length;
     const nbDeps = parDep.size;
+    if (mutation)
+      return {
+        titre: 'RECTIFICATIF',
+        introduction: '',
+        colonnes: this.colonnesMutation(n.motif as MotifMutation),
+        classification: false,
+        sections,
+        total,
+        departements: nbDeps,
+        ampliations: this.ampliations(
+          this.groupesMutation(n).map((g) =>
+            g === 'PRESCO_PRIMAIRE' ? 'DGEB' : 'DGES-DC',
+          ),
+          nbDeps,
+          total,
+        ),
+        mentions: [
+          'Le reste demeure sans changement.',
+          'La présente note de service prend effet à compter de la date de signature./-',
+        ],
+        piedDePage: '',
+        repere: '',
+        bloques: [],
+      };
     const fixes: [string, number][] = [
       ['MEPPSA-CAB', 2],
       ['IGEPSA', 2],
@@ -1336,8 +1471,102 @@ export class NotesService {
     return { ok: true, types: types.length };
   }
 
+  /**
+   * Réunir les deux notes d'un même motif (préscolaire-primaire et collège-lycée-administration) en
+   * une seule (06/11/2026). L'autre note est retirée ; ses demandes passent dans celle-ci.
+   */
+  private async reunirMutation(
+    u: UtilisateurConnecte,
+    n: NoteService,
+    liste: NoteService[],
+  ) {
+    for (const x of [n, ...liste]) {
+      if (x.module !== 'MUTATION' || x.motif !== n.motif)
+        throw new BadRequestException(
+          'On réunit des notes de mutation du même motif (une note par motif).',
+        );
+      if (x.statut !== 'BROUILLON')
+        throw new BadRequestException(
+          'Seules les notes « à soumettre au DG » se réunissent.',
+        );
+      if (x.additifDe || x.rectificatifDe || x.lotRangement != null)
+        throw new BadRequestException(
+          'Un additif, un rectificatif ou un lot ne se réunit pas avec une autre note.',
+        );
+    }
+    const groupes = [
+      ...new Set([n, ...liste].flatMap((x) => this.groupesMutation(x))),
+    ];
+    const motif = n.motif as MotifMutation;
+    // L'introduction suit, sauf si elle a été réécrite à la main
+    const intro =
+      n.introduction ===
+      this.introductionMutation(motif, this.groupesMutation(n))
+        ? this.introductionMutation(motif, groupes)
+        : n.introduction;
+    await this.notes.manager.transaction(async (m) => {
+      await m.update(NoteService, n.id, {
+        groupes: groupes.filter((g) => g !== n.typeNote),
+        introduction: intro,
+      });
+      await m.delete(NoteService, { id: In(liste.map((x) => x.id)) });
+    });
+    await this.journal.log(u, 'NOTES_REUNIES', 'note_service', n.id, {
+      groupes,
+      notesRetirees: liste.length,
+    });
+    return { ok: true, types: groupes.length };
+  }
+
+  /** Défaire la réunion d'une note de mutation : l'autre groupe retrouve sa note. */
+  private async separerMutation(u: UtilisateurConnecte, n: NoteService) {
+    if (n.lotRangement != null)
+      throw new BadRequestException(
+        'Un lot ne se sépare pas : remettez-le d’abord dans la note principale.',
+      );
+    const autres = (n.groupes ?? []) as GroupeMutation[];
+    if (!autres.length)
+      throw new BadRequestException('Cette note ne réunit qu’un seul groupe.');
+    const motif = n.motif as MotifMutation;
+    await this.notes.update(n.id, {
+      groupes: [],
+      introduction:
+        n.introduction ===
+        this.introductionMutation(motif, this.groupesMutation(n))
+          ? this.introductionMutation(motif, n.typeNote as GroupeMutation)
+          : n.introduction,
+    });
+    const recreees: NoteService[] = [];
+    for (const g of autres) {
+      const rang =
+        (await this.notes.count({
+          where: { module: 'MUTATION', motif, typeNote: g },
+        })) + 1;
+      recreees.push(
+        await this.notes.save({
+          module: 'MUTATION',
+          typeNote: g,
+          motif,
+          anneeScolaire: n.anneeScolaire,
+          rang,
+          introduction: this.introductionMutation(motif, g),
+          statut: 'BROUILLON',
+          creePar: u.nom,
+        }),
+      );
+    }
+    await this.journal.log(u, 'NOTES_SEPAREES', 'note_service', n.id, {
+      recreees: recreees.length,
+    });
+    return { ok: true, recreees: recreees.length };
+  }
+
   /** Défaire la réunion : la note garde son type ; chaque autre type retrouve sa note. */
   private async separerEnrolement(u: UtilisateurConnecte, n: NoteService) {
+    if (n.lotRangement != null)
+      throw new BadRequestException(
+        'Un lot ne se sépare pas : remettez-le d’abord dans la note principale.',
+      );
     const autres = n.groupes ?? [];
     if (!autres.length)
       throw new BadRequestException('Cette note ne réunit qu’un seul type.');
@@ -1431,8 +1660,10 @@ export class NotesService {
     mentions: string[] | null,
   ) {
     const n = await this.charger(id);
-    if (n.module !== 'ENROLEMENT')
-      throw new BadRequestException('Réservé aux notes d’enrôlement.');
+    if (n.module !== 'ENROLEMENT' && n.module !== 'MUTATION')
+      throw new BadRequestException(
+        'Réservé aux notes d’enrôlement et de mutation.',
+      );
     if (n.statut !== 'BROUILLON')
       throw new BadRequestException(
         'Seule une note « à soumettre au DG » se réécrit (le DG peut la rouvrir).',
@@ -1451,50 +1682,83 @@ export class NotesService {
     return { ok: true };
   }
 
-  /** Volontaires d'une note d'enrôlement dans l'ordre de la note : département, puis nom. */
-  private async personnesDansLOrdre(n: NoteService) {
+  /**
+   * Personnes d'une note d'enrôlement ou de mutation, dans l'ordre de la note (département, puis
+   * nom), avec ce qui sert à la découper : département de la note et valeurs des critères
+   * (06/11/2026 : les mutations se découpent comme l'enrôlement).
+   */
+  private async gensDeLaNote(n: NoteService): Promise<GensNote[]> {
+    const deps = await this.deps.find();
+    const ordre = new Map(deps.map((d) => [d.id, d.ordre ?? 0] as const));
+    const nomDep = new Map(deps.map((d) => [d.id, d.nom] as const));
+    const trier = (a: GensNote, b: GensNote) =>
+      (ordre.get(a.departementId ?? -1) ?? 0) -
+        (ordre.get(b.departementId ?? -1) ?? 0) ||
+      a.cleTri.localeCompare(b.cleTri);
+    if (n.module === 'MUTATION')
+      return (await this.demandesDeLaNoteMutation(n))
+        .map((d) => {
+          const c = codeCycle(d.cycle);
+          return {
+            id: d.id,
+            nom: d.nomComplet,
+            cleTri: normaliser(d.nomComplet),
+            departementId: d.departementSolliciteId,
+            valeurs: {
+              specialite: d.specialite ?? '',
+              cycle: c ? LIBELLE_CYCLE[c] : (d.cycle ?? ''),
+              origine: nomDep.get(d.departementOrigineId ?? -1) ?? '',
+              departement: nomDep.get(d.departementSolliciteId ?? -1) ?? '',
+            },
+          };
+        })
+        .sort(trier);
     const { prets } = await this.lignesEnrolement(n);
-    const ordre = new Map(
-      (await this.deps.find()).map((d) => [d.id, d.ordre ?? 0] as const),
-    );
-    return [...prets].sort(
-      (a, b) =>
-        (ordre.get(a.departementRetenuId!) ?? 0) -
-          (ordre.get(b.departementRetenuId!) ?? 0) ||
-        a.nomNormalise.localeCompare(b.nomNormalise),
-    );
+    return prets
+      .map((e) => ({
+        id: e.id,
+        nom: e.nomComplet,
+        cleTri: e.nomNormalise,
+        departementId: e.departementRetenuId,
+        valeurs: {
+          specialite: e.specialite ?? '',
+          diplome: diplomeSurLaNote(e),
+          promotion: e.promotion ?? '',
+          departement: nomDep.get(e.departementRetenuId ?? -1) ?? '',
+        },
+      }))
+      .sort(trier);
   }
 
-  /** Nouvelle note d'enrôlement pour un lot de rangement (mêmes réglages que la note découpée). */
-  /** Valeur d'un volontaire pour un critère de découpage (spécialité, diplôme…). */
-  private valeurCritere(
-    e: Enrole,
-    critere: CritereLot,
-    deps: Map<number, string>,
+  /** Met les personnes données dans un lot de rangement (null : la note principale). */
+  private async rangerDansLot(
+    n: NoteService,
+    ids: string[],
+    lot: number | null,
   ) {
-    const v =
-      critere === 'specialite'
-        ? e.specialite
-        : critere === 'diplome'
-          ? diplomeSurLaNote(e)
-          : critere === 'promotion'
-            ? e.promotion
-            : deps.get(e.departementRetenuId ?? -1);
-    return String(v ?? '').trim() || CRITERES_LOT[critere].vide;
+    if (!ids.length) return;
+    if (n.module === 'MUTATION')
+      await this.demandes.update({ id: In(ids) }, { lotRangement: lot });
+    else await this.enroles.update({ id: In(ids) }, { lotRangement: lot });
+  }
+
+  /** Les critères de découpage d'un module : l'enrôlement par diplôme, la mutation par cycle. */
+  private criteresDuModule(n: NoteService) {
+    return (
+      n.module === 'MUTATION' ? CRITERES_MUTATION : CRITERES_ENROLEMENT
+    ) as CritereLot[];
   }
 
   /** Les valeurs de chaque critère dans une note, avec leur nombre de personnes (fenêtre « Découper »). */
   async criteresDeLaNote(id: string) {
     const n = await this.charger(id);
     this.verifierDecoupable(n);
-    const gens = await this.personnesDansLOrdre(n);
-    const deps = new Map(
-      (await this.deps.find()).map((d) => [d.id, d.nom] as const),
-    );
-    return (Object.keys(CRITERES_LOT) as CritereLot[]).map((critere) => {
+    const gens = await this.gensDeLaNote(n);
+    return this.criteresDuModule(n).map((critere) => {
       const groupes = new Map<string, { valeur: string; n: number }>();
       for (const e of gens) {
-        const valeur = this.valeurCritere(e, critere, deps);
+        const valeur =
+          String(e.valeurs[critere] ?? '').trim() || CRITERES_LOT[critere].vide;
         const cle = normaliser(valeur);
         const g = groupes.get(cle) ?? { valeur, n: 0 };
         g.n++;
@@ -1512,7 +1776,7 @@ export class NotesService {
 
   /**
    * Une nouvelle note par valeur choisie (ou une seule pour toutes) : « une note pour l'anglais »,
-   * « une note par spécialité »… Les autres restent dans cette note (au moins une personne).
+   * « une note par département »… Les autres restent dans cette note (au moins une personne).
    */
   async decouperParCritere(
     u: UtilisateurConnecte,
@@ -1521,20 +1785,18 @@ export class NotesService {
     valeurs: string[],
     ensemble: boolean,
   ) {
-    if (!CRITERES_LOT[critere])
-      throw new BadRequestException('Critère inconnu.');
     const n = await this.charger(id);
     this.verifierDecoupable(n);
-    const gens = await this.personnesDansLOrdre(n);
-    const deps = new Map(
-      (await this.deps.find()).map((d) => [d.id, d.nom] as const),
-    );
+    if (!this.criteresDuModule(n).includes(critere))
+      throw new BadRequestException('Critère inconnu.');
+    const gens = await this.gensDeLaNote(n);
     const voulues = [...new Set(valeurs.map((v) => normaliser(v)))];
     if (!voulues.length)
       throw new BadRequestException('Choisissez au moins une valeur.');
-    const parts = new Map<string, { valeur: string; gens: Enrole[] }>();
+    const parts = new Map<string, { valeur: string; gens: GensNote[] }>();
     for (const e of gens) {
-      const valeur = this.valeurCritere(e, critere, deps);
+      const valeur =
+        String(e.valeurs[critere] ?? '').trim() || CRITERES_LOT[critere].vide;
       const cle = ensemble ? '*' : normaliser(valeur);
       if (!voulues.includes(normaliser(valeur))) continue;
       const p = parts.get(cle) ?? { valeur, gens: [] };
@@ -1552,16 +1814,16 @@ export class NotesService {
       );
     const creees: { id: string; libelle: string; total: number }[] = [];
     for (const p of parts.values()) {
-      const x = await this.noteDeLot(u, n);
-      const libelle = ensemble
-        ? voulues.length > 1
+      const libelle = (
+        ensemble && voulues.length > 1
           ? `${CRITERES_LOT[critere].court} choisies`
           : p.valeur
-        : p.valeur;
-      await this.notes.update(x.id, { motif: libelle.slice(0, 120) });
-      await this.enroles.update(
-        { id: In(p.gens.map((e) => e.id)) },
-        { lotRangement: x.lotRangement },
+      ).slice(0, 120);
+      const x = await this.noteDeLot(u, n, libelle);
+      await this.rangerDansLot(
+        n,
+        p.gens.map((e) => e.id),
+        x.lotRangement,
       );
       creees.push({ id: x.id, libelle, total: p.gens.length });
     }
@@ -1572,20 +1834,33 @@ export class NotesService {
     return { ok: true, notes: creees, reste: gens.length - deplaces };
   }
 
-  private async noteDeLot(u: UtilisateurConnecte, n: NoteService) {
-    const [{ max }] = await this.notes.query<{ max: number | null }[]>(
-      `SELECT max("lotRangement")::int AS max FROM note_service WHERE module = 'ENROLEMENT' AND "campagneId" = $1`,
-      [n.campagneId],
-    );
-    const [{ maxE }] = await this.enroles.query<{ maxE: number | null }[]>(
-      `SELECT max("lotRangement")::int AS "maxE" FROM enrole WHERE "campagneId" = $1`,
-      [n.campagneId],
-    );
-    // Les lots commencent à 2 : la note principale est le lot 1 (numéros uniques dans la campagne)
-    const lot = Math.max(1, max ?? 1, maxE ?? 1) + 1;
+  /** Nouvelle note pour un lot de rangement (mêmes réglages que la note découpée). */
+  private async noteDeLot(
+    u: UtilisateurConnecte,
+    n: NoteService,
+    libelleLot: string | null = null,
+  ) {
+    // Les lots commencent à 2 : la note principale est le lot 1 (numéros uniques dans la campagne
+    // d'enrôlement, ou parmi les notes de mutation du même motif)
+    const [{ max }] =
+      n.module === 'MUTATION'
+        ? await this.notes.query<{ max: number | null }[]>(
+            `SELECT greatest(
+               (SELECT max("lotRangement") FROM note_service WHERE module = 'MUTATION' AND motif = $1),
+               (SELECT max("lotRangement") FROM demande_mutation WHERE motif = $1))::int AS max`,
+            [n.motif],
+          )
+        : await this.notes.query<{ max: number | null }[]>(
+            `SELECT greatest(
+               (SELECT max("lotRangement") FROM note_service WHERE module = 'ENROLEMENT' AND "campagneId" = $1),
+               (SELECT max("lotRangement") FROM enrole WHERE "campagneId" = $1))::int AS max`,
+            [n.campagneId],
+          );
+    const lot = Math.max(1, max ?? 1) + 1;
     return this.notes.save({
-      module: 'ENROLEMENT',
+      module: n.module,
       typeNote: n.typeNote,
+      motif: n.module === 'MUTATION' ? n.motif : null,
       groupes: n.groupes ?? [],
       campagneId: n.campagneId,
       anneeScolaire: n.anneeScolaire,
@@ -1598,15 +1873,19 @@ export class NotesService {
       ampliationsExclues: n.ampliationsExclues,
       ampliationsAjoutees: n.ampliationsAjoutees,
       lotRangement: lot,
+      libelleLot,
       statut: 'BROUILLON',
       creePar: u.nom,
     });
   }
 
   private verifierDecoupable(n: NoteService) {
-    if (n.module !== 'ENROLEMENT' || n.rectificatifDe)
+    if (
+      (n.module !== 'ENROLEMENT' && n.module !== 'MUTATION') ||
+      n.rectificatifDe
+    )
       throw new BadRequestException(
-        'On découpe une note d’enrôlement (pas un rectificatif).',
+        'On découpe une note d’enrôlement ou de mutation (pas un rectificatif).',
       );
     if (n.statut !== 'BROUILLON')
       throw new BadRequestException(
@@ -1615,9 +1894,9 @@ export class NotesService {
   }
 
   /**
-   * Découper une note d'enrôlement trop chargée (06/11/2026) : des notes de `taille` personnes au
-   * plus. Les départements restent entiers tant qu'ils tiennent dans une note. La première part
-   * reste dans cette note, chaque autre devient une note « – lot 2 », « – lot 3 »…
+   * Découper une note trop chargée (06/11/2026) : des notes de `taille` personnes au plus. Les
+   * départements restent entiers tant qu'ils tiennent dans une note. La première part reste dans
+   * cette note, chaque autre devient une note « – lot 2 », « – lot 3 »…
    */
   async decouperParNombre(
     u: UtilisateurConnecte,
@@ -1631,19 +1910,19 @@ export class NotesService {
       throw new BadRequestException(
         'Nombre de personnes par note : au moins 1.',
       );
-    const gens = await this.personnesDansLOrdre(n);
+    const gens = await this.gensDeLaNote(n);
     if (gens.length <= taille)
       throw new BadRequestException(
         `La note compte ${gens.length} personne(s) : elle tient déjà dans une note de ${taille}.`,
       );
-    const parts: Enrole[][] = [[]];
-    const parDep = new Map<number, Enrole[]>();
+    const parts: GensNote[][] = [[]];
+    const parDep = new Map<number, GensNote[]>();
     for (const e of gens)
-      parDep.set(e.departementRetenuId!, [
-        ...(parDep.get(e.departementRetenuId!) ?? []),
+      parDep.set(e.departementId ?? -1, [
+        ...(parDep.get(e.departementId ?? -1) ?? []),
         e,
       ]);
-    const ajouter = (e: Enrole) => {
+    const ajouter = (e: GensNote) => {
       if (parts[parts.length - 1].length >= taille) parts.push([]);
       parts[parts.length - 1].push(e);
     };
@@ -1662,9 +1941,10 @@ export class NotesService {
     const creees: NoteService[] = [];
     for (const part of parts.slice(1).filter((p) => p.length)) {
       const x = await this.noteDeLot(u, n);
-      await this.enroles.update(
-        { id: In(part.map((e) => e.id)) },
-        { lotRangement: x.lotRangement },
+      await this.rangerDansLot(
+        n,
+        part.map((e) => e.id),
+        x.lotRangement,
       );
       creees.push(x);
     }
@@ -1679,13 +1959,11 @@ export class NotesService {
     };
   }
 
-  /** Mettre les personnes choisies d'une note d'enrôlement dans une nouvelle note (un lot). */
+  /** Mettre les personnes choisies d'une note dans une nouvelle note (un lot). */
   async decouperALaMain(u: UtilisateurConnecte, id: string, ids: string[]) {
     const n = await this.charger(id);
     this.verifierDecoupable(n);
-    const gens = new Set(
-      (await this.lignesEnrolement(n)).prets.map((e) => e.id),
-    );
+    const gens = new Set((await this.gensDeLaNote(n)).map((e) => e.id));
     const choisis = [...new Set(ids)].filter((x) => gens.has(x));
     if (!choisis.length)
       throw new BadRequestException(
@@ -1696,19 +1974,31 @@ export class NotesService {
         'Toute la note serait déplacée : laissez au moins une personne dans cette note.',
       );
     const x = await this.noteDeLot(u, n);
-    await this.enroles.update(
-      { id: In(choisis) },
-      { lotRangement: x.lotRangement },
-    );
+    await this.rangerDansLot(n, choisis, x.lotRangement);
     await this.journal.log(u, 'NOTE_DECOUPEE', 'note_service', id, {
       deplaces: choisis.length,
     });
     return { ok: true, id: x.id, deplaces: choisis.length };
   }
 
+  /** Notes de la même « famille » qu'une note : même campagne et type (enrôlement), même motif et groupe (mutation). */
+  private memeFamille(n: NoteService) {
+    return n.module === 'MUTATION'
+      ? {
+          module: 'MUTATION' as const,
+          motif: n.motif ?? '',
+          typeNote: n.typeNote,
+        }
+      : {
+          module: 'ENROLEMENT' as const,
+          campagneId: n.campagneId ?? -1,
+          typeNote: n.typeNote,
+        };
+  }
+
   /**
-   * Regrouper : les lots « à soumettre au DG » de ce type (même campagne) reviennent dans la note
-   * principale, et leurs notes sont retirées. Les lots déjà soumis ou validés ne bougent pas.
+   * Regrouper : les lots « à soumettre au DG » de ce type reviennent dans la note principale, et
+   * leurs notes sont retirées. Les lots déjà soumis ou validés ne bougent pas.
    */
   async regrouperLots(u: UtilisateurConnecte, id: string) {
     const n = await this.charger(id);
@@ -1719,9 +2009,7 @@ export class NotesService {
         : (
             await this.notes.find({
               where: {
-                module: 'ENROLEMENT',
-                campagneId: n.campagneId ?? -1,
-                typeNote: n.typeNote,
+                ...this.memeFamille(n),
                 lotRangement: IsNull(),
                 rectificatifDe: IsNull(),
                 statut: 'BROUILLON',
@@ -1730,14 +2018,12 @@ export class NotesService {
           )[0];
     if (!principale)
       throw new BadRequestException(
-        'La note principale de ce type n’est plus « à soumettre au DG » : supprimez plutôt ce lot (ses volontaires y reviennent à la prochaine préparation).',
+        'La note principale de ce type n’est plus « à soumettre au DG » : supprimez plutôt ce lot (ses personnes y reviennent à la prochaine préparation).',
       );
     const lots = (
       await this.notes.find({
         where: {
-          module: 'ENROLEMENT',
-          campagneId: n.campagneId ?? -1,
-          typeNote: n.typeNote,
+          ...this.memeFamille(n),
           statut: 'BROUILLON',
           rectificatifDe: IsNull(),
           lotRangement: Not(IsNull()),
@@ -1749,15 +2035,23 @@ export class NotesService {
         'Aucun lot « à soumettre au DG » à regrouper.',
       );
     await this.notes.manager.transaction(async (m) => {
-      await m.update(
-        Enrole,
-        {
-          campagneId: n.campagneId ?? -1,
-          lotRangement: In(lots.map((x) => x.lotRangement!)),
-          noteId: IsNull(),
-        },
-        { lotRangement: null },
-      );
+      const numeros = In(lots.map((x) => x.lotRangement!));
+      if (n.module === 'MUTATION')
+        await m.update(
+          DemandeMutation,
+          { motif: n.motif ?? '', lotRangement: numeros, noteId: IsNull() },
+          { lotRangement: null },
+        );
+      else
+        await m.update(
+          Enrole,
+          {
+            campagneId: n.campagneId ?? -1,
+            lotRangement: numeros,
+            noteId: IsNull(),
+          },
+          { lotRangement: null },
+        );
       await m.delete(NoteService, { id: In(lots.map((x) => x.id)) });
     });
     await this.journal.log(u, 'LOTS_REGROUPES', 'note_service', principale.id, {
@@ -1797,9 +2091,12 @@ export class NotesService {
    */
   async rendreAdditif(u: UtilisateurConnecte, id: string, de: string | null) {
     const n = await this.charger(id);
-    if (n.module !== 'ENROLEMENT' || n.rectificatifDe)
+    if (
+      (n.module !== 'ENROLEMENT' && n.module !== 'MUTATION') ||
+      n.rectificatifDe
+    )
       throw new BadRequestException(
-        'Seule une note d’enrôlement peut devenir un additif.',
+        'Seule une note d’enrôlement ou de mutation peut devenir un additif.',
       );
     if (n.statut !== 'BROUILLON')
       throw new BadRequestException(
@@ -1810,13 +2107,16 @@ export class NotesService {
       if (
         !o ||
         o.id === n.id ||
-        o.module !== 'ENROLEMENT' ||
-        o.campagneId !== n.campagneId ||
+        o.module !== n.module ||
+        (n.module === 'ENROLEMENT' && o.campagneId !== n.campagneId) ||
+        (n.module === 'MUTATION' && o.motif !== n.motif) ||
         o.statut !== 'SIGNEE' ||
         o.rectificatifDe
       )
         throw new BadRequestException(
-          'Choisissez une note d’enrôlement signée de la même campagne.',
+          n.module === 'MUTATION'
+            ? 'Choisissez une note de mutation signée du même motif.'
+            : 'Choisissez une note d’enrôlement signée de la même campagne.',
         );
     }
     await this.notes.update(id, { additifDe: de });
@@ -1829,9 +2129,13 @@ export class NotesService {
   /** Préparer un RECTIFICATIF d'une note d'enrôlement signée (une seule ouverte à la fois). */
   async creerRectificatif(u: UtilisateurConnecte, id: string) {
     const o = await this.charger(id);
-    if (o.module !== 'ENROLEMENT' || o.rectificatifDe || o.statut !== 'SIGNEE')
+    if (
+      (o.module !== 'ENROLEMENT' && o.module !== 'MUTATION') ||
+      o.rectificatifDe ||
+      o.statut !== 'SIGNEE'
+    )
       throw new BadRequestException(
-        'On rectifie une note d’enrôlement signée (numéro et date enregistrés).',
+        'On rectifie une note d’enrôlement ou de mutation signée (numéro et date enregistrés).',
       );
     const ouvert = await this.notes.findOne({
       where: {
@@ -1842,15 +2146,20 @@ export class NotesService {
     if (ouvert) return ouvert;
     const rang =
       (await this.notes.count({
-        where: {
-          module: 'ENROLEMENT',
-          campagneId: o.campagneId ?? undefined,
-          typeNote: o.typeNote,
-        },
+        where:
+          o.module === 'MUTATION'
+            ? { module: 'MUTATION', motif: o.motif ?? '', typeNote: o.typeNote }
+            : {
+                module: 'ENROLEMENT',
+                campagneId: o.campagneId ?? undefined,
+                typeNote: o.typeNote,
+              },
       })) + 1;
     const r = await this.notes.save({
-      module: 'ENROLEMENT',
+      module: o.module,
       typeNote: o.typeNote,
+      motif: o.module === 'MUTATION' ? o.motif : null,
+      groupes: o.module === 'MUTATION' ? (o.groupes ?? []) : [],
       campagneId: o.campagneId,
       anneeScolaire: o.anneeScolaire,
       rang,
@@ -1873,6 +2182,41 @@ export class NotesService {
     if (!n.rectificatifDe)
       throw new BadRequestException('Cette note n’est pas un rectificatif.');
     const { note, personnes } = await this.personnesDeLaNote(n.rectificatifDe);
+    if (n.module === 'MUTATION') {
+      const toutes = await this.demandes.find({
+        where: { motif: n.motif ?? '', retiree: false },
+      });
+      const parId = new Map(toutes.map((d) => [d.id, d] as const));
+      const vers = (d: DemandeMutation) => {
+        const l = this.ligneMutation(d, 0);
+        return {
+          id: d.id,
+          nom: d.nomComplet,
+          matricule: d.matricule,
+          ge: String(l.ge ?? ''),
+          cycle: String(l.cycle ?? ''),
+          specialite: d.specialite,
+          ancienPoste: d.lieuService,
+          lieuSollicite: d.lieuSollicite,
+          departementId: d.departementSolliciteId,
+        };
+      };
+      return {
+        note: { id: note.id, numero: note.numero, libelle: note.libelle },
+        personnes: [...personnes.entries()]
+          .filter(([pid]) => parId.has(pid))
+          .map(([pid, p]) => ({
+            ...vers(parId.get(pid)!),
+            n: p.ligne.n,
+            departement: p.titre,
+          })),
+        // Demandes qui peuvent remplacer : accordées, du même motif, pas encore dans une note
+        remplacants: toutes
+          .filter((d) => !d.noteId && d.instructionMinistre === 'ACCORDEE')
+          .sort((a, b) => a.nomComplet.localeCompare(b.nomComplet, 'fr'))
+          .map(vers),
+      };
+    }
     const enroles = await this.enroles.find({
       where: { campagneId: n.campagneId ?? -1 },
     });
@@ -1945,6 +2289,16 @@ export class NotesService {
           `« ${nom} » : date de naissance illisible.`,
         );
       const texte = (v: unknown) => String(v ?? '').trim() || null;
+      const mutation =
+        n.module === 'MUTATION'
+          ? {
+              matricule: texte(r.lire?.matricule),
+              ge: texte(r.lire?.ge),
+              cycle: texte(r.lire?.cycle),
+              ancienPoste: texte(r.lire?.ancienPoste),
+              lieuSollicite: texte(r.lire?.lieuSollicite),
+            }
+          : {};
       return {
         id: r.id && /^[\w-]{1,40}$/.test(r.id) ? r.id : randomUUID(),
         type: r.type,
@@ -1963,6 +2317,7 @@ export class NotesService {
           specialite: texte(r.lire?.specialite),
           diplome: texte(r.lire?.diplome),
           departementId: dep,
+          ...mutation,
         },
       };
     });
@@ -1978,6 +2333,42 @@ export class NotesService {
    * n'est plus retenue, celle qui la remplace prend son département).
    */
   private async appliquerRectificatif(u: UtilisateurConnecte, n: NoteService) {
+    if (n.module === 'MUTATION') {
+      for (const r of n.rectifications ?? []) {
+        if (r.type === 'CORRECTION')
+          await this.demandes.update(r.enroleId, {
+            nomComplet: r.lire.nom,
+            matricule:
+              r.lire.matricule && r.lire.matricule !== 'X'
+                ? r.lire.matricule
+                : null,
+            specialite: r.lire.specialite,
+            lieuService: r.lire.ancienPoste ?? undefined,
+            lieuSollicite: r.lire.lieuSollicite ?? undefined,
+            ...(r.lire.departementId
+              ? { departementSolliciteId: r.lire.departementId }
+              : {}),
+          });
+        else {
+          // Remplacée : la demande n'est plus mutée ; celle qui la remplace entre dans le rectificatif
+          await this.demandes.update(r.enroleId, {
+            retiree: true,
+            motifRetrait: `Remplacé(e) par le rectificatif n° ${n.numero ?? '?'}`,
+          });
+          if (r.lire.enroleId)
+            await this.demandes.update(r.lire.enroleId, {
+              noteId: n.id,
+              ...(r.lire.departementId
+                ? { departementSolliciteId: r.lire.departementId }
+                : {}),
+            });
+        }
+      }
+      await this.journal.log(u, 'RECTIFICATIF_APPLIQUE', 'note_service', n.id, {
+        rectifications: (n.rectifications ?? []).length,
+      });
+      return;
+    }
     for (const r of n.rectifications ?? []) {
       if (r.type === 'CORRECTION')
         await this.enroles.update(r.enroleId, {
@@ -2145,10 +2536,16 @@ export class NotesService {
     if (n.module === 'NOMINATION')
       return `Nomination – ${CATEGORIE_NOMINATION.get(n.typeNote)?.formule ?? n.typeNote} – ${n.anneeScolaire}${n.rang > 1 ? ` (suite ${n.rang - 1})` : ''}`;
     if (n.module === 'ENROLEMENT')
-      return `${n.additifDe ? 'Additif – ' : n.rectificatifDe ? 'Rectificatif – ' : ''}Enrôlement – ${[n.typeNote, ...(n.groupes ?? [])].map((t) => DIPLOMES_ENROLEMENT[t]?.libelle ?? t).join(' + ')} – ${n.anneeScolaire}${n.lotRangement != null ? ` – lot ${n.lotRangement}${n.motif ? ` (${n.motif})` : ''}` : ''}${n.rang > 1 && !n.additifDe && !n.rectificatifDe ? ` (suite ${n.rang - 1})` : ''}`;
+      return `${n.additifDe ? 'Additif – ' : n.rectificatifDe ? 'Rectificatif – ' : ''}Enrôlement – ${[n.typeNote, ...(n.groupes ?? [])].map((t) => DIPLOMES_ENROLEMENT[t]?.libelle ?? t).join(' + ')} – ${n.anneeScolaire}${n.lotRangement != null ? ` – lot ${n.lotRangement}${(n.libelleLot ?? n.motif) ? ` (${n.libelleLot ?? n.motif})` : ''}` : ''}${n.rang > 1 && !n.additifDe && !n.rectificatifDe ? ` (suite ${n.rang - 1})` : ''}`;
     if (n.module === 'AFFECTATION')
       return `Affectation – ${NOTES_AFFECTATION[n.typeNote as TypeNoteAffectation]?.libelle ?? n.typeNote} – ${lot ? libelleLots(enTete(lot, reunis)) : 'lot ?'}${n.rang > 1 ? ` (suite ${n.rang - 1})` : ''}`;
-    return `Mutation – ${MOTIFS[n.motif as MotifMutation]?.libelle} – ${LIBELLE_GROUPE[n.typeNote as GroupeMutation]}${n.rang > 1 ? ` (suite ${n.rang - 1})` : ''}`;
+    return `${n.additifDe ? 'Additif – ' : n.rectificatifDe ? 'Rectificatif – ' : ''}Mutation – ${MOTIFS[n.motif as MotifMutation]?.libelle} – ${this.groupesMutation(
+      n,
+    )
+      .map((g) => LIBELLE_GROUPE[g])
+      .join(
+        ' + ',
+      )}${n.lotRangement != null ? ` – lot ${n.lotRangement}${n.libelleLot ? ` (${n.libelleLot})` : ''}` : ''}${n.rang > 1 && !n.additifDe && !n.rectificatifDe ? ` (suite ${n.rang - 1})` : ''}`;
   }
 
   /**
@@ -2186,7 +2583,11 @@ export class NotesService {
         }[n.typeNote] ?? null
       );
     if (n.module === 'MUTATION')
-      return LIBELLE_GROUPE[n.typeNote as GroupeMutation] ?? null;
+      return (
+        this.groupesMutation(n)
+          .map((g) => LIBELLE_GROUPE[g])
+          .join(' + ') || null
+      );
     if (n.module === 'ENROLEMENT')
       return DIPLOMES_ENROLEMENT[n.typeNote]?.cycle || null;
     const c = CATEGORIE_NOMINATION.get(n.typeNote)?.cycle;
@@ -2276,12 +2677,9 @@ export class NotesService {
                     s + (pretesParNote.get(`${id}|${n.typeNote}`) ?? 0),
                   0,
                 )
-              : (
-                  await this.mutSvc.eligiblesPourNote(
-                    n.motif as MotifMutation,
-                    n.typeNote as GroupeMutation,
-                  )
-                ).length;
+              : n.rectificatifDe
+                ? (n.rectifications ?? []).length
+                : (await this.demandesDeLaNoteMutation(n)).length;
       res.push({
         ...n,
         contenu: undefined,
@@ -2317,11 +2715,14 @@ export class NotesService {
             : await this.contenuEnrolement(n)
           : n.module === 'NOMINATION'
             ? await this.contenuNomination(n)
-            : await this.contenuMutation(n));
+            : n.rectificatifDe
+              ? await this.contenuRectificatif(n)
+              : await this.contenuMutation(n));
     // Enrôlement (cadrage du 05/11/2026) : colonnes choisies pour la note ; ADDITIF et RECTIFICATIF
     // se rattachent à la note signée qu'ils complètent ou corrigent
-    if (n.module === 'ENROLEMENT') {
-      contenu.colonnes = this.colonnesEnrolement(n);
+    if (n.module === 'ENROLEMENT' || n.module === 'MUTATION') {
+      if (n.module === 'ENROLEMENT')
+        contenu.colonnes = this.colonnesEnrolement(n);
       const liee = n.additifDe ?? n.rectificatifDe;
       if (liee) {
         contenu.titre = n.additifDe ? 'ADDITIF' : 'RECTIFICATIF';
@@ -2547,6 +2948,7 @@ export class NotesService {
     if (liste.length !== autres.length)
       throw new NotFoundException('Une des notes est introuvable.');
     if (n.module === 'ENROLEMENT') return this.reunirEnrolement(u, n, liste);
+    if (n.module === 'MUTATION') return this.reunirMutation(u, n, liste);
     for (const x of [n, ...liste]) {
       if (x.module !== 'AFFECTATION')
         throw new BadRequestException(
@@ -2588,6 +2990,7 @@ export class NotesService {
         'Seule une note « à soumettre au DG » peut être séparée.',
       );
     if (n.module === 'ENROLEMENT') return this.separerEnrolement(u, n);
+    if (n.module === 'MUTATION') return this.separerMutation(u, n);
     if (!n.lotsFusionnes?.length)
       throw new BadRequestException('Cette note ne réunit qu’un seul lot.');
     const lots = (
@@ -2700,7 +3103,10 @@ export class NotesService {
       else
         await m.update(
           DemandeMutation,
-          { id: In(ids), noteId: IsNull() },
+          {
+            id: In(ids.filter((x) => /^[0-9a-f-]{36}$/i.test(x))),
+            noteId: IsNull(),
+          },
           { noteId: id },
         );
       await m.update(NoteService, id, {
@@ -2779,7 +3185,11 @@ export class NotesService {
       dateSignature,
     });
     // Rectificatif d'enrôlement signé (la première fois) : la base suit les corrections
-    if (n.module === 'ENROLEMENT' && n.rectificatifDe && n.statut === 'VALIDEE')
+    if (
+      (n.module === 'ENROLEMENT' || n.module === 'MUTATION') &&
+      n.rectificatifDe &&
+      n.statut === 'VALIDEE'
+    )
       await this.appliquerRectificatif(u, { ...n, numero: numero.trim() });
     // Note signée : elle entre dans la fiche du personnel de chaque personne (sans faire attendre)
     if (n.module === 'AFFECTATION')
@@ -3160,6 +3570,15 @@ export class NotesService {
         },
         { lotRangement: null },
       );
+    if (n.module === 'MUTATION' && n.lotRangement != null)
+      await this.demandes.update(
+        {
+          motif: n.motif ?? '',
+          lotRangement: n.lotRangement,
+          noteId: IsNull(),
+        },
+        { lotRangement: null },
+      );
     await this.notes.delete(id);
     await this.journal.log(u, 'NOTE_SUPPRIMEE', 'note_service', id);
     return { ok: true };
@@ -3334,6 +3753,174 @@ export class NotesService {
         .replace(/\s+/g, ' ')
         .trim()}.xlsx`,
       contenu: Buffer.from(await wb.xlsx.writeBuffer()),
+    };
+  }
+
+  /* ============ Note de mutation signée → base du personnel (06/11/2026) ============ */
+
+  /** Note de mutation signée (le report vers la base du personnel n'a de sens qu'alors). */
+  private async noteMutationSignee(id: string) {
+    const n = await this.charger(id);
+    if (n.module !== 'MUTATION')
+      throw new BadRequestException('Réservé aux notes de mutation.');
+    if (n.statut !== 'SIGNEE')
+      throw new BadRequestException(
+        'La note doit être signée (numéro et date enregistrés) avant d’aller dans la base du personnel.',
+      );
+    return n;
+  }
+
+  /** Demandes d'une note signée (le contenu figé fait foi). */
+  private async demandesSignees(n: NoteService) {
+    const ids = ((n.contenu as ContenuNote | null)?.sections ?? [])
+      .flatMap((s) => s.lignes.map((l) => l.id))
+      .filter((x) => /^[0-9a-f-]{36}$/i.test(x));
+    const viaNote = await this.demandes.find({ where: { noteId: n.id } });
+    return [...new Set([...ids, ...viaNote.map((d) => d.id)])];
+  }
+
+  /**
+   * « Importer dans la base du personnel » : où en est chaque personne de la note. Le système
+   * cherche d'abord sa fiche (matricule, nom et département) ; on tranche les doutes, on crée les
+   * fiches manquantes, puis on reporte la mutation sur les fiches.
+   */
+  async personnelDeLaNote(id: string) {
+    const n = await this.noteMutationSignee(id);
+    const ids = await this.demandesSignees(n);
+    // Chercher les fiches de ceux qui n'en ont pas encore (aucune fiche n'est modifiée ici)
+    await this.rattachementSvc.rattacher('MUTATION', ids);
+    const demandes = await this.demandes.find({
+      where: { id: In(ids.concat(['00000000-0000-0000-0000-000000000000'])) },
+    });
+    const doutes = new Map(
+      (await this.rattachementSvc.aTrancher('MUTATION', ids)).map(
+        (x) => [x.id, x] as const,
+      ),
+    );
+    const fiches = new Map(
+      (
+        await this.notes.query<
+          {
+            id: number;
+            numeroFiche: string | null;
+            nomComplet: string;
+            lieu: string | null;
+            aValider: boolean;
+          }[]
+        >(
+          `SELECT id, "numeroFiche", "nomComplet", donnees->>'LIEU_SERVICE' AS lieu, (liaison ? 'aValider') AS "aValider"
+             FROM agent_recense WHERE id = ANY($1)`,
+          [demandes.map((d) => d.agentId).filter((x): x is number => !!x)],
+        )
+      ).map((f) => [f.id, f] as const),
+    );
+    const deps = new Map(
+      (await this.deps.find()).map((d) => [d.id, d.nom] as const),
+    );
+    const personnes = demandes
+      .map((d) => {
+        const fiche = d.agentId ? (fiches.get(d.agentId) ?? null) : null;
+        const doute = doutes.get(d.id);
+        return {
+          id: d.id,
+          nom: d.nomComplet,
+          matricule: d.matricule,
+          origine: deps.get(d.departementOrigineId ?? -1) ?? null,
+          destination:
+            [deps.get(d.departementSolliciteId ?? -1), d.lieuSollicite]
+              .filter(Boolean)
+              .join(' · ') || null,
+          etat: fiche
+            ? fiche.aValider
+              ? 'CREEE'
+              : 'LIEE'
+            : d.rattachement === 'SANS_FICHE'
+              ? 'SANS_FICHE'
+              : (doute?.etat ?? 'INTROUVABLE'),
+          fiche: fiche
+            ? {
+                id: fiche.id,
+                numero: fiche.numeroFiche,
+                nom: fiche.nomComplet,
+                lieu: fiche.lieu,
+              }
+            : null,
+          candidats: doute?.candidats ?? [],
+        };
+      })
+      .sort((a, b) => a.nom.localeCompare(b.nom, 'fr'));
+    return {
+      note: { id: n.id, numero: n.numero, libelle: this.libelle(n) },
+      reporteLe: n.reportePersonnelLe,
+      reportePar: n.reportePersonnelPar,
+      personnes,
+    };
+  }
+
+  /** Décision sur une personne de la note : c'est cette fiche, créer sa fiche, ou laisser sans fiche. */
+  async decisionPersonnel(
+    u: UtilisateurConnecte,
+    id: string,
+    demandeId: string,
+    action: 'LIER' | 'CREER' | 'SANS_FICHE',
+    agentId?: number,
+  ) {
+    const n = await this.noteMutationSignee(id);
+    if (!(await this.demandesSignees(n)).includes(demandeId))
+      throw new BadRequestException('Cette personne n’est pas dans la note.');
+    return this.rattachementSvc.decider(
+      u,
+      'MUTATION',
+      demandeId,
+      action,
+      agentId,
+    );
+  }
+
+  /** Créer d'un coup les fiches des personnes introuvables de la note (signalées « à valider »). */
+  async creerFichesNote(u: UtilisateurConnecte, id: string) {
+    const n = await this.noteMutationSignee(id);
+    return this.rattachementSvc.creerToutes(
+      u,
+      'MUTATION',
+      await this.demandesSignees(n),
+    );
+  }
+
+  /**
+   * Reporter la note dans la base du personnel : chaque fiche rattachée prend le nouveau lieu de
+   * service, le nouveau département et une ligne dans ses affectations successives.
+   */
+  async reporterPersonnel(u: UtilisateurConnecte, id: string) {
+    const n = await this.noteMutationSignee(id);
+    const ids = await this.demandesSignees(n);
+    const demandes = await this.demandes.find({
+      where: { id: In(ids.concat(['00000000-0000-0000-0000-000000000000'])) },
+    });
+    const avecFiche = demandes.filter((d) => d.agentId && !d.retiree).length;
+    if (!avecFiche)
+      throw new BadRequestException(
+        'Aucune personne de la note n’est rattachée à une fiche : rattachez-les d’abord (ou créez leurs fiches).',
+      );
+    await this.notes.update(id, {
+      reportePersonnelLe: new Date(),
+      reportePersonnelPar: u.nom,
+    });
+    await this.personnel.synchroniser();
+    await this.journal.log(
+      u,
+      'MUTATIONS_REPORTEES_PERSONNEL',
+      'note_service',
+      id,
+      {
+        fiches: avecFiche,
+        sansFiche: demandes.length - avecFiche,
+      },
+    );
+    return {
+      ok: true,
+      fiches: avecFiche,
+      sansFiche: demandes.length - avecFiche,
     };
   }
 }

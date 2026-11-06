@@ -123,6 +123,7 @@ export const RUBRIQUES_API: Record<string, string[]> = {
   '/mutations/nouvelle': ['mutations'],
   '/mutations': ['mutations', 'rattachement/MUTATION'],
   '/mutations/statistiques': ['mutations/statistiques'],
+  '/mutations/recommandations': ['recommandations', 'mutations'],
   '/demandes/nouvelle': ['demandes', 'demandes-prestation/agents'],
   '/prestations': ['demandes-prestation'],
   '/structures': [],

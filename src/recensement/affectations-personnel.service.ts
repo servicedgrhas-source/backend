@@ -369,6 +369,8 @@ export class AffectationsPersonnelService implements OnApplicationBootstrap {
               dep.code AS "depCode", dep.nom AS "depNom"
          FROM demande_mutation d
          JOIN note_service n ON n.id = d."noteId" AND n.statut = 'SIGNEE' AND n.module = 'MUTATION'
+              -- Seulement les notes reportées à la main (« Importer dans la base du personnel », 06/11/2026)
+              AND n."reportePersonnelLe" IS NOT NULL
          LEFT JOIN departement dep ON dep.id = d."departementSolliciteId"
         WHERE d."agentId" IS NOT NULL AND NOT d.retiree
         ORDER BY n."dateSignature" NULLS LAST`,

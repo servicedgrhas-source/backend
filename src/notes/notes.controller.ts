@@ -301,6 +301,54 @@ export class NotesController {
     return this.service.criteresDeLaNote(id);
   }
 
+  /* ---- Note de mutation signée → base du personnel (06/11/2026) ---- */
+
+  /** Chaque personne de la note : sa fiche du personnel trouvée, à vérifier ou introuvable. */
+  @Roles(...ROLES_TRAITEMENT)
+  @Get(':id/personnel')
+  personnelDeLaNote(@Param('id') id: string) {
+    return this.service.personnelDeLaNote(id);
+  }
+
+  /** C'est cette fiche (LIER), créer sa fiche (CREER), ou laisser sans fiche (SANS_FICHE). */
+  @Roles(...ROLES_TRAITEMENT)
+  @Post(':id/personnel/decision')
+  decisionPersonnel(
+    @Utilisateur() u: UtilisateurConnecte,
+    @Param('id') id: string,
+    @Body() body: { demandeId: string; action: string; agentId?: number },
+  ) {
+    if (!['LIER', 'CREER', 'SANS_FICHE'].includes(body?.action))
+      throw new BadRequestException('Action inconnue.');
+    return this.service.decisionPersonnel(
+      u,
+      id,
+      String(body.demandeId),
+      body.action as 'LIER' | 'CREER' | 'SANS_FICHE',
+      body.agentId ? Number(body.agentId) : undefined,
+    );
+  }
+
+  /** Créer d'un coup les fiches des introuvables de la note (« à valider »). */
+  @Roles(...ROLES_TRAITEMENT)
+  @Post(':id/personnel/creer-toutes')
+  creerFichesNote(
+    @Utilisateur() u: UtilisateurConnecte,
+    @Param('id') id: string,
+  ) {
+    return this.service.creerFichesNote(u, id);
+  }
+
+  /** Reporter la note sur les fiches : nouveau lieu, nouveau département, affectations successives. */
+  @Roles(...ROLES_TRAITEMENT)
+  @Post(':id/personnel/reporter')
+  reporterPersonnel(
+    @Utilisateur() u: UtilisateurConnecte,
+    @Param('id') id: string,
+  ) {
+    return this.service.reporterPersonnel(u, id);
+  }
+
   /** Une note pour les valeurs choisies d'un critère (une par valeur, ou une pour toutes). */
   @Roles(...ROLES_TRAITEMENT)
   @Post(':id/lots/critere')
