@@ -118,6 +118,12 @@ const HORS_LISTE = [
 export const MOTIF_PRESTATION = 'PRESTATION';
 
 export function anomaliesMutation(d: Partial<DemandeMutation>): string[] {
+  // Les points déclarés vérifiés (sur le dossier papier) ne reviennent pas
+  const verifies = new Set(d.anomaliesVerifiees ?? []);
+  return calculerAnomalies(d).filter((x) => !verifies.has(x));
+}
+
+function calculerAnomalies(d: Partial<DemandeMutation>): string[] {
   const a: string[] = [];
   // Congé, attestation, prime… : pas de département demandé ni d'ancienneté à contrôler
   if (d.motif === MOTIF_PRESTATION) {
@@ -160,6 +166,31 @@ export function anomaliesMutation(d: Partial<DemandeMutation>): string[] {
   if (d.motif === 'PERMUTATION' && !d.permutationAvecId)
     a.push('Agent permutant non désigné');
   return a;
+}
+
+/** Ce qu'on compare de deux demandes qui se ressemblent (import). */
+export interface Apercu {
+  matricule: string | null;
+  grade: string | null;
+  cycle: string | null;
+  origine: string | null;
+  lieuService: string | null;
+  sollicite: string | null;
+  lieuSollicite: string | null;
+}
+
+/** Ce qu'on peut corriger d'une demande depuis la liste des points à vérifier. */
+export interface CorrectionAnomalies {
+  matricule?: string | null;
+  typeAgent?: string;
+  grade?: string | null;
+  cycle?: string | null;
+  departementOrigineId?: number | null;
+  departementSolliciteId?: number | null;
+  justificatif?: string | null;
+  dureeMois?: number | null;
+  permutationAvecId?: string | null;
+  verifiees?: string[];
 }
 
 export interface DemandeDto {
@@ -479,6 +510,79 @@ export class MutationService {
     if (d.noteId)
       throw new BadRequestException('Demande déjà dans une note validée');
     return d;
+  }
+
+  /**
+   * Corriger les points à vérifier d'une demande depuis la liste (06/11/2026) : seuls les champs
+   * donnés changent ; `verifiees` : points vus sur le dossier papier, qui ne reviennent plus.
+   * Renvoie la demande et ses points restants.
+   */
+  async corrigerAnomalies(
+    u: UtilisateurConnecte,
+    id: string,
+    c: CorrectionAnomalies,
+  ) {
+    const d = await this.modifiable(id);
+    const champs: Partial<DemandeMutation> = {};
+    const texte = (v: unknown) =>
+      typeof v === 'string' ? v.trim() || null : null;
+    if (c.matricule !== undefined) champs.matricule = texte(c.matricule);
+    if (c.typeAgent === 'FONCTIONNAIRE' || c.typeAgent === 'FINALISTE')
+      champs.typeAgent = c.typeAgent;
+    if (c.grade !== undefined) {
+      const { grade, echelon } = lireGradeEchelon(c.grade);
+      champs.grade = grade;
+      champs.echelon = echelon;
+      champs.gradeBrut = texte(c.grade);
+    }
+    if (c.cycle !== undefined) champs.cycle = codeCycle(c.cycle);
+    if (c.departementOrigineId !== undefined)
+      champs.departementOrigineId = c.departementOrigineId || null;
+    if (c.departementSolliciteId !== undefined)
+      champs.departementSolliciteId = c.departementSolliciteId || null;
+    if (c.justificatif !== undefined)
+      champs.justificatif = texte(c.justificatif);
+    if (c.dureeMois !== undefined)
+      champs.dureeMois =
+        c.dureeMois && c.dureeMois > 0 ? Math.round(c.dureeMois) : null;
+    if (c.permutationAvecId !== undefined) {
+      if (c.permutationAvecId) {
+        const autre = await this.repo.findOne({
+          where: { id: c.permutationAvecId },
+        });
+        if (!autre || autre.id === d.id || autre.motif !== 'PERMUTATION')
+          throw new BadRequestException(
+            'Choisissez une autre demande de permutation.',
+          );
+      }
+      champs.permutationAvecId = c.permutationAvecId || null;
+    }
+    if (Array.isArray(c.verifiees))
+      champs.anomaliesVerifiees = [
+        ...new Set([
+          ...(d.anomaliesVerifiees ?? []),
+          ...c.verifiees.map(String),
+        ]),
+      ];
+    if (!Object.keys(champs).length)
+      throw new BadRequestException(
+        'Remplissez au moins une correction, ou cochez un point comme vérifié.',
+      );
+    const apres = { ...d, ...champs };
+    champs.anomalies = anomaliesMutation(apres);
+    await this.repo.update(id, champs);
+    await this.lierPermutation(apres);
+    await this.journal.log(
+      u,
+      'MUTATION_POINTS_CORRIGES',
+      'demande_mutation',
+      id,
+      {
+        champs: Object.keys(champs).filter((k) => k !== 'anomalies'),
+        restent: champs.anomalies.length,
+      },
+    );
+    return { ok: true, anomalies: champs.anomalies };
   }
 
   /** Contrôle avant d'envoyer un fichier au stockage (rien n'est envoyé pour une demande figée). */
@@ -984,6 +1088,8 @@ export class MutationService {
       motif: MotifMutation;
       cle: string;
       ligne: string;
+      /** Lignes identiques fusionnées dans celle-ci : elles complètent les cases vides. */
+      complements?: Ligne[];
     };
     const retenues: Retenue[] = [];
     const parFeuille = new Map(
@@ -1012,8 +1118,10 @@ export class MutationService {
         cle: string;
         nom: string;
         motif: string;
-        avec: { cle: string; nom: string; motif: string };
+        valeurs: Apercu;
+        avec: { cle: string; nom: string; motif: string; valeurs: Apercu };
         exact: boolean;
+        raison: string;
       }[],
       doublonsBase: [] as {
         cle: string;
@@ -1026,7 +1134,9 @@ export class MutationService {
           motif: string;
           departement: string | null;
           etat: string;
+          valeurs: Apercu;
         };
+        valeurs: Apercu;
         raison: string;
       }[],
     };
@@ -1095,6 +1205,37 @@ export class MutationService {
       champs.anomalies = anomaliesMutation(champs);
       return champs;
     };
+    const apercu = (c: Partial<DemandeMutation>): Apercu => ({
+      matricule: c.matricule ?? null,
+      grade: c.gradeBrut ?? null,
+      cycle: c.cycle ?? null,
+      origine: c.departementOrigineId
+        ? (nomsDeps.get(c.departementOrigineId) ?? null)
+        : null,
+      lieuService: c.lieuService ?? null,
+      sollicite: c.departementSolliciteId
+        ? (nomsDeps.get(c.departementSolliciteId) ?? null)
+        : null,
+      lieuSollicite: c.lieuSollicite ?? null,
+    });
+    /** Cases vides de `cible` remplies avec `source` (fusion de deux lignes de la même personne). */
+    const completer = (
+      cible: Partial<DemandeMutation>,
+      source: Partial<DemandeMutation>,
+    ) => {
+      for (const [k, v] of Object.entries(source)) {
+        const actuel = (cible as Record<string, unknown>)[k];
+        if (
+          v !== null &&
+          v !== undefined &&
+          v !== '' &&
+          (actuel === null || actuel === undefined || actuel === '')
+        )
+          (cible as Record<string, unknown>)[k] = v;
+      }
+      cible.anomalies = anomaliesMutation(cible);
+      return cible;
+    };
     for (const f of choisies) {
       const compte = parFeuille.get(f.nom)!;
       const estCompil = cleCompacte(f.nom).startsWith('COMPIL');
@@ -1116,15 +1257,23 @@ export class MutationService {
               cle: ligne,
               nom,
               motif: libMotif(motif),
+              valeurs: apercu(champsDe(l, nom, motif)),
               avec: {
                 cle: dejaLa.ligne,
                 nom: dejaLa.nom,
                 motif: libMotif(dejaLa.motif),
+                valeurs: apercu(champsDe(dejaLa.l, dejaLa.nom, dejaLa.motif)),
               },
               exact: true,
+              raison: 'même nom, même motif',
             });
+            // FUSION : une seule demande, complétée ; REMPLACER : cette ligne-ci à la place de
+            // l'autre ; IGNORER : on garde l'autre ; AJOUTER : deux demandes
             const d = decisions[ligne] ?? 'FUSION';
-            if (d === 'AJOUTER') {
+            if (d === 'REMPLACER') {
+              dejaLa.l = l;
+              rapport.ecartees++;
+            } else if (d === 'AJOUTER') {
               // Deux demandes distinctes : la seconde garde sa propre clé
               retenues.push({
                 l,
@@ -1136,7 +1285,10 @@ export class MutationService {
               });
               compte.retenues++;
             } else if (d === 'IGNORER') rapport.ecartees++;
-            else rapport.fusionnees++;
+            else {
+              dejaLa.complements = [...(dejaLa.complements ?? []), l];
+              rapport.fusionnees++;
+            }
           } else dejaVues++;
           continue;
         }
@@ -1216,8 +1368,20 @@ export class MutationService {
         : String(v ?? '');
     // Fichiers anciens : la date d'enregistrement n'est pas comparée
 
+    // Lignes du fichier déjà retenues comme nouvelles demandes (noms proches dans le fichier)
+    const vusFichier = new IndexNoms<{
+      r: Retenue;
+      champs: Partial<DemandeMutation>;
+      id: string | null;
+    }>();
+    const parMatriculeFichier = new Map<
+      string,
+      { r: Retenue; champs: Partial<DemandeMutation>; id: string | null }
+    >();
     for (const [i, r] of retenues.entries()) {
       const champs = champsDe(r.l, r.nom, r.motif);
+      for (const c of r.complements ?? [])
+        completer(champs, champsDe(c, r.nom, r.motif));
       for (const a of champs.anomalies ?? [])
         rapport.anomalies[a] = (rapport.anomalies[a] ?? 0) + 1;
       const ex = existants.get(r.cle);
@@ -1299,7 +1463,9 @@ export class MutationService {
               ? (nomsDeps.get(proche.departementSolliciteId) ?? null)
               : null,
             etat: etatDe(proche),
+            valeurs: apercu(proche),
           },
+          valeurs: apercu(champs),
           raison: parMat.includes(proche)
             ? 'même matricule'
             : proche.motif === r.motif
@@ -1322,7 +1488,54 @@ export class MutationService {
           continue;
         }
       }
-      // c. Nouvelle demande
+      // c. Deux noms très proches (ou même matricule) dans le fichier : deux personnes par défaut
+      const mf = cleCompacte(champs.matricule);
+      const procheFichier =
+        (mf.length >= 4 ? parMatriculeFichier.get(mf) : undefined) ??
+        vusFichier
+          .memesNoms(r.nom)
+          .find((x) => normaliser(x.r.nom) !== normaliser(r.nom));
+      if (procheFichier && procheFichier.r.cle !== r.cle) {
+        details.doublonsFichier.push({
+          cle: r.ligne,
+          nom: r.nom,
+          motif: libMotif(r.motif),
+          valeurs: apercu(champs),
+          avec: {
+            cle: procheFichier.r.ligne,
+            nom: procheFichier.r.nom,
+            motif: libMotif(procheFichier.r.motif),
+            valeurs: apercu(procheFichier.champs),
+          },
+          exact: false,
+          raison:
+            mf.length >= 4 && cleCompacte(procheFichier.champs.matricule) === mf
+              ? 'même matricule'
+              : 'nom très proche',
+        });
+        const d = decisions[r.ligne] ?? 'AJOUTER';
+        if (d === 'IGNORER') {
+          rapport.ecartees++;
+          continue;
+        }
+        if (d === 'FUSION' || d === 'REMPLACER') {
+          // La demande déjà retenue garde sa clé ; elle est complétée, ou prend cette ligne-ci
+          const valeurs =
+            d === 'FUSION'
+              ? completer({ ...procheFichier.champs }, champs)
+              : { ...champs, nomComplet: champs.nomComplet };
+          if (!essai && procheFichier.id)
+            await this.repo.update(procheFichier.id, {
+              ...valeurs,
+              anomalies: anomaliesMutation(valeurs),
+            });
+          procheFichier.champs = valeurs;
+          if (d === 'FUSION') rapport.fusionnees++;
+          else rapport.ecartees++;
+          continue;
+        }
+      }
+      // d. Nouvelle demande
       let n = numerosFichier[i];
       if (n === null) {
         n = numero++;
@@ -1330,6 +1543,7 @@ export class MutationService {
       }
       utilises.set(n, (utilises.get(n) ?? 0) + 1);
       touches.add(n);
+      let id: string | null = null;
       if (!essai) {
         const nouvelle = await this.repo.save({
           ...champs,
@@ -1338,36 +1552,13 @@ export class MutationService {
           saisiePar: u.nom,
         });
         existants.set(r.cle, nouvelle);
+        id = nouvelle.id;
       }
-      index.ajouter(r.nom, null, {
-        ...champs,
-        cle: r.cle,
-        id: '',
-        numeroEnregistrement: n,
-      } as DemandeMutation);
+      const vu = { r, champs, id };
+      vusFichier.ajouter(r.nom, null, vu);
+      if (mf.length >= 4 && !parMatriculeFichier.has(mf))
+        parMatriculeFichier.set(mf, vu);
       rapport.creees++;
-    }
-    // Deux noms proches dans le fichier (mêmes mots, même matricule) : signalés, gardés tous les deux
-    const vus = new IndexNoms<Retenue>();
-    for (const r of retenues) {
-      const autre = vus
-        .memesNoms(r.nom)
-        .find(
-          (x) => x.cle !== r.cle && normaliser(x.nom) !== normaliser(r.nom),
-        );
-      if (autre)
-        details.doublonsFichier.push({
-          cle: r.ligne,
-          nom: r.nom,
-          motif: libMotif(r.motif),
-          avec: {
-            cle: autre.ligne,
-            nom: autre.nom,
-            motif: libMotif(autre.motif),
-          },
-          exact: false,
-        });
-      vus.ajouter(r.nom, null, r);
     }
     rapport.lues = retenues.length;
     // Seulement les numéros de ce fichier (ceux déjà en double dans la base ne sont pas son affaire)

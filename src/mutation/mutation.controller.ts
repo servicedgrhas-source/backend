@@ -4,6 +4,7 @@ import {
   Controller,
   Get,
   Param,
+  Patch,
   Post,
   Put,
   Query,
@@ -33,7 +34,7 @@ import {
 } from '../auth/auth';
 import { MOTIFS_MUTATION } from '../common/referentiels';
 import { StockageService } from '../common/stockage';
-import { MutationService } from './mutation.service';
+import { type CorrectionAnomalies, MutationService } from './mutation.service';
 
 const DATE = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -230,6 +231,17 @@ export class MutationController {
   @Post()
   creer(@Utilisateur() u: UtilisateurConnecte, @Body() dto: DemandeDto) {
     return this.service.creer(u, dto);
+  }
+
+  /** Corriger les points à vérifier d'une demande (depuis la liste), ou les déclarer vérifiés. */
+  @Roles(...ROLES_TRAITEMENT)
+  @Patch(':id/anomalies')
+  corrigerAnomalies(
+    @Utilisateur() u: UtilisateurConnecte,
+    @Param('id') id: string,
+    @Body() corps: CorrectionAnomalies,
+  ) {
+    return this.service.corrigerAnomalies(u, id, corps ?? {});
   }
 
   @Roles(...ROLES_TRAITEMENT)

@@ -713,6 +713,9 @@ export class DemandeMutation {
   @Column({ type: 'varchar', nullable: true }) envoyeSecretariatPar:
     string | null;
   @Column({ type: 'jsonb', default: () => "'[]'" }) anomalies: string[];
+  /** Points à vérifier déclarés vérifiés sur le dossier papier : ils ne reviennent plus (06/11/2026). */
+  @Column({ type: 'jsonb', default: () => "'[]'" })
+  anomaliesVerifiees: string[];
   @Column({ type: 'varchar', nullable: true }) saisiePar: string | null;
   @CreateDateColumn() creeLe: Date;
   @UpdateDateColumn() modifieLe: Date;
