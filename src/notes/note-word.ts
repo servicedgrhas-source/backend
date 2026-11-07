@@ -5,7 +5,6 @@ import {
   Footer,
   Packer,
   PageNumber,
-  PageOrientation,
   Paragraph,
   Table,
   TableCell,
@@ -22,6 +21,7 @@ import {
 } from 'docx';
 import { dateEnLettres } from '../common/texte';
 import type { ContenuNote, Entete } from './notes.service';
+import { ajusterColonnes } from './colonnes-note';
 
 /**
  * La note de service au format Word (réunion DG du 26/10/2026) : la même mise en page que la
@@ -102,24 +102,22 @@ const LARGEUR: Record<string, number> = {
   justification: 34,
   lieuSollicite: 26,
 };
+/** Colonnes jamais coupées sur deux lignes (comme à l'écran). */
+const SANS_COUPURE = new Set([
+  'n',
+  'grade',
+  'cat',
+  'ech',
+  'echl',
+  'ge',
+  'matricule',
+]);
 const MM = 56.7; // twips par millimètre
 const MARGE = 16; // mm, comme la version imprimée
-/** Largeur de la page (mm) : 210 en portrait, 297 quand le tableau ne tient pas (06/11/2026). */
-let LARGEUR_PAGE = 210;
-let LARGEUR_UTILE = LARGEUR_PAGE - 2 * MARGE;
+/** Largeur de la page (mm) : toujours A4 portrait (DG, 07/11/2026 : jamais en paysage). */
+const LARGEUR_PAGE = 210;
+const LARGEUR_UTILE = LARGEUR_PAGE - 2 * MARGE;
 
-/** Même calcul que l'écran (note-imprimable.tsx, enPaysage) : le nom garde au moins 30 mm (comme avant). */
-function enPaysage(c: {
-  classification?: boolean;
-  colonnes: { cle: string }[];
-}) {
-  if (c.classification) return false;
-  const fixes = [
-    'n',
-    ...c.colonnes.map((x) => x.cle).filter((k) => k !== 'nom'),
-  ].reduce((s, k) => s + (LARGEUR[k] ?? 20), 0);
-  return fixes + 30 > 210 - 2 * MARGE;
-}
 /** Police de la note en cours d'écriture (Times New Roman par défaut, ou Sylfaen : paramètre). */
 let POLICE = 'Times New Roman';
 /** Sylfaen est jusqu'à 6 % plus large que Times New Roman : les largeurs estimées en tiennent compte. */
@@ -320,16 +318,14 @@ export async function noteWord(
   avecVisas = true,
   echelle = 1,
 ): Promise<Buffer> {
-  ECHELLE = Number.isFinite(echelle) ? Math.min(1, Math.max(0.8, echelle)) : 1;
+  // Police choisie à l'écran (0,7 au plus petit) ; plafonnée plus bas par la largeur du tableau
+  ECHELLE = Number.isFinite(echelle) ? Math.min(1, Math.max(0.7, echelle)) : 1;
   ECHELLE_ACTIVE = false;
   // Tout le document est construit d'un seul tenant (sans attente) avec cette police
   POLICE = n.entete.police === 'Sylfaen' ? 'Sylfaen' : 'Times New Roman';
   ELARGISSEMENT = POLICE === 'Sylfaen' ? 1.06 : 1;
   const c = n.contenu;
   const e = n.entete;
-  const paysage = enPaysage(c);
-  LARGEUR_PAGE = paysage ? 297 : 210;
-  LARGEUR_UTILE = LARGEUR_PAGE - 2 * MARGE;
   // Visas de l'en-tête : service (chef de service, sinon de bureau), direction, direction générale
   const avis = (niv: string) =>
     (n.conformite ?? []).find((x) => x.niveau === niv && x.conforme)?.par ??
@@ -406,14 +402,36 @@ export async function noteWord(
               Math.max(LARGEUR.specialite, Math.ceil(motSpecialite + 3)),
             )
           : (LARGEUR[k] ?? 20);
-  const fixes = cles
-    .filter((k) => k !== 'nom')
-    .reduce((s, k) => s + largeur(k), 0);
-  const largeurs = cles.map((k) =>
-    Math.round(
-      (k === 'nom' ? Math.max(30, LARGEUR_UTILE - fixes) : largeur(k)) * MM,
-    ),
+  // Toujours en portrait (DG, 07/11/2026) : chaque colonne ne garde que la place qu'elle utilise,
+  // le texte passe à la ligne entre les mots, puis la police diminue (même calcul qu'à l'écran)
+  const libelleDe = (k: string) =>
+    k === 'n'
+      ? 'N°'
+      : k === 'nom'
+        ? 'Noms et prénoms'
+        : k === 'cat'
+          ? 'Cat'
+          : k === 'ech'
+            ? 'Ech'
+            : k === 'echl'
+              ? 'Echl'
+              : (c.colonnes.find((x) => x.cle === k)?.libelle ?? '');
+  const ajuste = ajusterColonnes(
+    cles.map((k) => ({
+      cle: k,
+      entete: libelleDe(k),
+      textes: c.sections.flatMap((s) =>
+        s.lignes.map((l) => String(l[k] ?? '')),
+      ),
+      habituelle: k === 'nom' ? undefined : largeur(k),
+      sansCoupure: SANS_COUPURE.has(k),
+    })),
+    (t, corps, gras) => largeurLigne(t, corps, gras),
+    10,
+    LARGEUR_UTILE,
   );
+  ECHELLE = Math.min(ECHELLE, ajuste.echelle);
+  const largeurs = cles.map((k) => Math.round(ajuste.largeurs[k] * MM));
 
   /**
    * En-tête du tableau, écrit une seule fois au début : quand le tableau continue sur la page
@@ -743,14 +761,8 @@ export async function noteWord(
       {
         properties: {
           page: {
-            size: paysage
-              ? {
-                  // docx inverse lui-même largeur et hauteur en paysage
-                  width: Math.round(210 * MM),
-                  height: Math.round(297 * MM),
-                  orientation: PageOrientation.LANDSCAPE,
-                }
-              : { width: Math.round(210 * MM), height: Math.round(297 * MM) },
+            // Toujours A4 portrait (DG, 07/11/2026)
+            size: { width: Math.round(210 * MM), height: Math.round(297 * MM) },
             margin: {
               top: Math.round(12 * MM),
               bottom: Math.round(20 * MM),
