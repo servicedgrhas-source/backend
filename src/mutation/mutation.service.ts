@@ -170,6 +170,37 @@ function calculerAnomalies(d: Partial<DemandeMutation>): string[] {
   return a;
 }
 
+/** Ce qu'on compare entre une demande et la fiche du personnel de l'agent (07/11/2026). */
+const CHAMPS_PERSONNEL: [keyof DemandeMutation, string][] = [
+  ['matricule', 'Matricule solde'],
+  ['gradeBrut', 'Grade et échelon'],
+  ['departementOrigineId', "Département d'origine"],
+  ['lieuService', 'Lieu de service'],
+  ['specialite', 'Spécialité'],
+  ['datePriseService', 'Date de prise de service'],
+];
+const videMut = (v: unknown) =>
+  v === null || v === undefined || String(v).trim() === '';
+/** Même valeur, écrite autrement : « IE 3 » = « Inst. 3 » ? non ; « 123456 A » = « 123456A » oui. */
+function pareilPersonnel(k: keyof DemandeMutation, a: unknown, b: unknown) {
+  if (k === 'matricule') return cleCompacte(a) === cleCompacte(b);
+  if (k === 'gradeBrut') {
+    const x = lireGradeEchelon(a);
+    const y = lireGradeEchelon(b);
+    return (
+      cleCompacte(x.grade) === cleCompacte(y.grade) &&
+      (x.echelon ?? null) === (y.echelon ?? null)
+    );
+  }
+  if (k === 'departementOrigineId') return Number(a) === Number(b);
+  if (k === 'datePriseService')
+    return String(a).slice(0, 10) === String(b).slice(0, 10);
+  return (
+    normaliser(String(a)).replace(/[^A-Z0-9]/g, '') ===
+    normaliser(String(b)).replace(/[^A-Z0-9]/g, '')
+  );
+}
+
 /** Ce qu'on compare de deux demandes qui se ressemblent (import). */
 export interface Apercu {
   matricule: string | null;
@@ -626,6 +657,132 @@ export class MutationService {
       sansFiche,
       exemples,
     };
+  }
+
+  /**
+   * Agents de la base du personnel qui répondent à une recherche (matricule, ou mots du nom dans
+   * n'importe quel ordre), avec ce qu'il faut pour remplir une demande de mutation. Lecture seule.
+   */
+  async rechercherAgents(q: string) {
+    const t = (q ?? '').trim();
+    if (t.length < 3) return [];
+    const mat = cleCompacte(t);
+    const mots = normaliser(t)
+      .split(/\s+/)
+      .filter((m) => m.length >= 2)
+      .slice(0, 5);
+    const params: unknown[] = [];
+    const conds: string[] = [];
+    if (/\d{3}/.test(t)) {
+      params.push(`%${mat}%`);
+      conds.push(
+        `regexp_replace(upper(coalesce(a.matricule, a.donnees->>'MATRICULE_SOLDE', '')), '[^A-Z0-9]', '', 'g') LIKE $${params.length}`,
+      );
+    } else {
+      if (!mots.length) return [];
+      for (const m of mots) {
+        params.push(`%${m}%`);
+        conds.push(`a."nomNormalise" LIKE $${params.length}`);
+      }
+    }
+    const lignes = await this.repo.query<
+      {
+        id: number;
+        numeroFiche: string | null;
+        nomComplet: string;
+        statut: string;
+        matricule: string | null;
+        departementId: number | null;
+        donnees: Record<string, unknown>;
+      }[]
+    >(
+      `SELECT a.id, a."numeroFiche", a."nomComplet", a.statut, a.matricule, a."departementId", a.donnees
+         FROM agent_recense a
+        WHERE ${conds.join(' AND ')} AND coalesce(a.contentieux->>'etat', 'CONFIRME') = 'CONFIRME'
+        ORDER BY a."nomComplet" LIMIT 12`,
+      params,
+    );
+    const nomsDeps = new Map(
+      (await this.deps.find()).map((d) => [d.id, d.nom] as const),
+    );
+    const ADMIN = /^(SA|SPA|ECON|COM|CHAUFFEUR|SECR|AGENT|PLANTON)/;
+    return lignes.map((a) => {
+      const v = this.valeursDuPersonnel(a);
+      const don = a.donnees ?? {};
+      const cycle = codeCycle(enTexte(don.CYCLE));
+      return {
+        id: a.id,
+        numeroFiche: a.numeroFiche,
+        nomComplet: a.nomComplet,
+        statut: a.statut,
+        genre: /^F/.test(normaliser(don.GENRE)) ? 'F' : 'M',
+        matricule: v.matricule ?? null,
+        grade: v.grade ?? null,
+        echelon: v.echelon ?? null,
+        gradeBrut: v.gradeBrut ?? null,
+        typeAgent: ['FONCTIONNAIRE', 'CONTRACTUEL'].includes(a.statut)
+          ? 'FONCTIONNAIRE'
+          : 'FINALISTE',
+        statutAgent: ADMIN.test(normaliser(v.gradeBrut ?? ''))
+          ? 'PERSONNEL_ADMINISTRATIF'
+          : 'ENSEIGNANT',
+        departementId: a.departementId,
+        departement: a.departementId
+          ? (nomsDeps.get(a.departementId) ?? null)
+          : null,
+        lieuService: v.lieuService ?? null,
+        specialite: v.specialite ?? null,
+        datePriseService: v.datePriseService ?? null,
+        cycle,
+        fonction: enTexte(don.FONCTION) || null,
+      };
+    });
+  }
+
+  /** Ce que la fiche du personnel dit d'un agent, au format d'une demande de mutation. */
+  private valeursDuPersonnel(f: {
+    matricule: string | null;
+    departementId: number | null;
+    donnees: Record<string, unknown>;
+  }): Partial<DemandeMutation> {
+    const don = f.donnees ?? {};
+    const texte = (v: unknown) => {
+      const t = enTexte(v).replace(/\s+/g, ' ').trim();
+      return t || null;
+    };
+    const matricule = texte(f.matricule) ?? texte(don.MATRICULE_SOLDE);
+    const abrege = gradeAbrege(texte(don.GRADE));
+    const echelon = /\d{1,2}/.exec(enTexte(don.ECHELON))?.[0];
+    const brut = abrege
+      ? echelon
+        ? `${abrege} ${Number(echelon)}`
+        : abrege
+      : null;
+    const ge = brut ? lireGradeEchelon(brut) : { grade: null, echelon: null };
+    const prise = enTexte(don.DATE_PRISE_SERVICE).slice(0, 10);
+    return {
+      matricule: matricule && cleCompacte(matricule) !== 'X' ? matricule : null,
+      gradeBrut: brut,
+      grade: ge.grade,
+      echelon: ge.echelon,
+      departementOrigineId: f.departementId,
+      lieuService: texte(don.LIEU_SERVICE),
+      specialite: texte(don.SPECIALITE),
+      datePriseService: /^\d{4}-\d{2}-\d{2}$/.test(prise) ? prise : null,
+    };
+  }
+
+  private lisiblePersonnel(
+    k: keyof DemandeMutation,
+    v: unknown,
+    nomsDeps: Map<number, string>,
+  ) {
+    if (videMut(v)) return '';
+    if (k === 'departementOrigineId')
+      return nomsDeps.get(Number(v)) ?? String(v);
+    if (k === 'datePriseService')
+      return String(v).slice(0, 10).split('-').reverse().join('/');
+    return enTexte(v);
   }
 
   private nomsDeps: Map<number, string> | null = null;
@@ -1173,6 +1330,12 @@ export class MutationService {
     essai = false,
     feuillesChoisies: string[] | null = null,
     decisions: Record<string, string> = {},
+    /**
+     * Base du personnel (07/11/2026) : `personnel` dit, par ligne, s'il faut garder la demande telle
+     * quelle (GARDER, par défaut) ou prendre les valeurs de la fiche du personnel quand elles
+     * diffèrent (PERSONNEL) ; `completer` remplit les cases vides de la demande depuis la fiche.
+     */
+    o: { personnel?: Record<string, string>; completer?: boolean } = {},
   ) {
     const toutes = await lireClasseur(contenu, ['NOMSETPRENOMS', 'MOTIF']);
     if (!toutes.length)
@@ -1247,6 +1410,22 @@ export class MutationService {
         avec: { cle: string; nom: string; motif: string; valeurs: Apercu };
         exact: boolean;
         raison: string;
+      }[],
+      personnel: [] as {
+        cle: string;
+        nom: string;
+        motif: string;
+        etat: 'TROUVE' | 'DOUTE' | 'INTROUVABLE';
+        fiche: { id: number; numero: string | null; nom: string } | null;
+        candidats: number;
+        ecarts: {
+          champ: string;
+          libelle: string;
+          demande: string;
+          personnel: string;
+        }[];
+        manquants: { champ: string; libelle: string; personnel: string }[];
+        choix: string;
       }[],
       doublonsBase: [] as {
         cle: string;
@@ -1503,10 +1682,116 @@ export class MutationService {
       string,
       { r: Retenue; champs: Partial<DemandeMutation>; id: string | null }
     >();
+    // Base du personnel (07/11/2026) : la fiche de chaque agent, LUE seulement
+    const champsListe = retenues.map((r) => {
+      const c = champsDe(r.l, r.nom, r.motif);
+      for (const x of r.complements ?? [])
+        completer(c, champsDe(x, r.nom, r.motif));
+      return c;
+    });
+    const situations = await this.rattachement.chercherPour(
+      retenues.map((r, i) => ({
+        id: r.ligne,
+        nom: r.nom,
+        matricule: champsListe[i].matricule ?? null,
+        departementId: champsListe[i].departementOrigineId ?? null,
+      })),
+    );
+    const bilanPersonnel = {
+      trouvees: 0,
+      doute: 0,
+      introuvables: 0,
+      avecEcarts: 0,
+      aCompleter: 0,
+    };
     for (const [i, r] of retenues.entries()) {
-      const champs = champsDe(r.l, r.nom, r.motif);
-      for (const c of r.complements ?? [])
-        completer(champs, champsDe(c, r.nom, r.motif));
+      const champs = champsListe[i];
+      {
+        const s = situations.get(r.ligne);
+        if (s?.fiche) {
+          bilanPersonnel.trouvees++;
+          const pv = this.valeursDuPersonnel(s.fiche);
+          const ecarts: {
+            champ: string;
+            libelle: string;
+            demande: string;
+            personnel: string;
+          }[] = [];
+          const manquants: {
+            champ: string;
+            libelle: string;
+            personnel: string;
+          }[] = [];
+          for (const [k, libelle] of CHAMPS_PERSONNEL) {
+            const p = pv[k];
+            if (videMut(p)) continue;
+            const dv = champs[k];
+            const vue = (x: unknown) => this.lisiblePersonnel(k, x, nomsDeps);
+            if (videMut(dv))
+              manquants.push({ champ: String(k), libelle, personnel: vue(p) });
+            else if (!pareilPersonnel(k, dv, p))
+              ecarts.push({
+                champ: String(k),
+                libelle,
+                demande: vue(dv),
+                personnel: vue(p),
+              });
+          }
+          const choix =
+            o.personnel?.[r.ligne] === 'PERSONNEL' ? 'PERSONNEL' : 'GARDER';
+          const prendre = (k: keyof DemandeMutation) => {
+            (champs as Record<string, unknown>)[k] = pv[k];
+            if (k === 'gradeBrut') {
+              champs.grade = pv.grade;
+              champs.echelon = pv.echelon;
+            }
+          };
+          if (o.completer !== false)
+            for (const m of manquants)
+              prendre(m.champ as keyof DemandeMutation);
+          if (choix === 'PERSONNEL')
+            for (const e of ecarts) prendre(e.champ as keyof DemandeMutation);
+          if (
+            (o.completer !== false && manquants.length) ||
+            (choix === 'PERSONNEL' && ecarts.length)
+          )
+            champs.anomalies = anomaliesMutation(champs);
+          if (ecarts.length) bilanPersonnel.avecEcarts++;
+          if (manquants.length) bilanPersonnel.aCompleter++;
+          if (ecarts.length || manquants.length)
+            details.personnel.push({
+              cle: r.ligne,
+              nom: r.nom,
+              motif: libMotif(r.motif),
+              etat: 'TROUVE',
+              fiche: {
+                id: s.fiche.id,
+                numero: s.fiche.numeroFiche,
+                nom: s.fiche.nomComplet,
+              },
+              candidats: s.candidats,
+              ecarts,
+              manquants,
+              choix,
+            });
+        } else {
+          // Pas trouvée (ou plusieurs fiches possibles) : signalé, jamais bloquant
+          const doute = s?.etat === 'A_VERIFIER';
+          if (doute) bilanPersonnel.doute++;
+          else bilanPersonnel.introuvables++;
+          details.personnel.push({
+            cle: r.ligne,
+            nom: r.nom,
+            motif: libMotif(r.motif),
+            etat: doute ? 'DOUTE' : 'INTROUVABLE',
+            fiche: null,
+            candidats: s?.candidats ?? 0,
+            ecarts: [],
+            manquants: [],
+            choix: 'GARDER',
+          });
+        }
+      }
       for (const a of champs.anomalies ?? [])
         rapport.anomalies[a] = (rapport.anomalies[a] ?? 0) + 1;
       const ex = existants.get(r.cle);
@@ -1702,7 +1987,9 @@ export class MutationService {
     const MAX = 2000;
     return {
       ...rapport,
+      personnel: bilanPersonnel,
       details: {
+        personnel: details.personnel.slice(0, MAX * 3),
         aMettreAJour: details.aMettreAJour.slice(0, MAX),
         doublonsFichier: details.doublonsFichier.slice(0, MAX),
         doublonsBase: details.doublonsBase.slice(0, MAX),

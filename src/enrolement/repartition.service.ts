@@ -98,7 +98,11 @@ export class RepartitionService {
     }
     const liste = await this.candidats(campagneId);
     const deps = await this.deps.find({ order: { ordre: 'ASC' } });
-    const valeurs = [...new Set(liste.map((e) => this.valeur(crit, e)))];
+    // Un seul passage sur les candidats : la valeur du critère de chacun est calculée une fois
+    // (la spécialité demande un travail sur le texte), puis les compteurs de chaque case
+    const valeurDe = new Map(
+      liste.map((e) => [e.id, this.valeur(crit, e)] as const),
+    );
     const ordre =
       crit === 'CYCLE'
         ? (v: string) => {
@@ -106,38 +110,54 @@ export class RepartitionService {
             return i < 0 ? 99 : i;
           }
         : () => 0;
-    const colonnes = valeurs.sort(
+    const colonnes = [...new Set(valeurDe.values())].sort(
       (a, b) => ordre(a) - ordre(b) || a.localeCompare(b, 'fr'),
     );
+    type Compte = { places: number; demandeurs: number; premierChoix: number };
+    const compte = new Map<string, Compte>();
+    const parValeur = new Map<string, { candidats: number; places: number }>();
+    const plus = (k: string) => {
+      let x = compte.get(k);
+      if (!x)
+        compte.set(k, (x = { places: 0, demandeurs: 0, premierChoix: 0 }));
+      return x;
+    };
+    for (const e of liste) {
+      const v = valeurDe.get(e.id)!;
+      const pv = parValeur.get(v) ?? { candidats: 0, places: 0 };
+      pv.candidats++;
+      const place = r.placements[e.id];
+      if (place) {
+        pv.places++;
+        plus(`${place}|${v}`).places++;
+      }
+      parValeur.set(v, pv);
+      for (const [i, d] of [
+        ...new Set(e.departementsSouhaites ?? []),
+      ].entries()) {
+        const x = plus(`${d}|${v}`);
+        x.demandeurs++;
+        if (i === 0 && e.departementsSouhaites?.[0] === d) x.premierChoix++;
+      }
+    }
     const grille = deps.map((d) => ({
       departementId: d.id,
       departement: d.nom,
       cases: colonnes.map((v) => {
-        const k = this.cle(crit, d.id, v);
-        const demandeurs = liste.filter(
-          (e) =>
-            this.valeur(crit, e) === v &&
-            (e.departementsSouhaites ?? []).includes(d.id),
-        );
+        const x = compte.get(`${d.id}|${v}`);
         return {
           valeur: v,
-          quota: r.quotas[k] ?? 0,
-          places: liste.filter(
-            (e) => this.valeur(crit, e) === v && r.placements[e.id] === d.id,
-          ).length,
-          demandeurs: demandeurs.length,
-          premierChoix: demandeurs.filter(
-            (e) => e.departementsSouhaites?.[0] === d.id,
-          ).length,
+          quota: r.quotas[this.cle(crit, d.id, v)] ?? 0,
+          places: x?.places ?? 0,
+          demandeurs: x?.demandeurs ?? 0,
+          premierChoix: x?.premierChoix ?? 0,
         };
       }),
     }));
     const parColonne = colonnes.map((v) => ({
       valeur: v,
-      candidats: liste.filter((e) => this.valeur(crit, e) === v).length,
-      places: liste.filter(
-        (e) => this.valeur(crit, e) === v && r.placements[e.id],
-      ).length,
+      candidats: parValeur.get(v)?.candidats ?? 0,
+      places: parValeur.get(v)?.places ?? 0,
       quota: deps.reduce(
         (t, d) => t + (r.quotas[this.cle(crit, d.id, v)] ?? 0),
         0,

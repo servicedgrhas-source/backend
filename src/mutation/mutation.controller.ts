@@ -121,6 +121,16 @@ export class MutationController {
     });
   }
 
+  /**
+   * Retrouver l'agent dans la base du personnel avant de taper sa demande (07/11/2026) : matricule
+   * ou nom (dans n'importe quel ordre). Ses informations remplissent le formulaire.
+   */
+  @Roles(...ROLES_TRAITEMENT, 'DDEPPSA', 'SECRETARIAT')
+  @Get('agents')
+  rechercherAgents(@Query('q') q?: string) {
+    return this.service.rechercherAgents(q ?? '');
+  }
+
   @Get('doublons')
   doublons(
     @Query('nom') nom?: string,
@@ -277,7 +287,13 @@ export class MutationController {
     @UploadedFile() fichier?: Express.Multer.File,
     // Essai, feuilles choisies et décisions (06/11/2026), comme l'import de l'enrôlement
     @Query('essai') essai?: string,
-    @Body() corps?: { feuilles?: string; decisions?: string },
+    @Body()
+    corps?: {
+      feuilles?: string;
+      decisions?: string;
+      personnel?: string;
+      completer?: string;
+    },
   ) {
     if (!fichier) throw new BadRequestException('Fichier Excel manquant');
     if (!/\.xlsx$/i.test(fichier.originalname))
@@ -297,6 +313,10 @@ export class MutationController {
       essai === '1',
       Array.isArray(feuilles) ? feuilles.map(String) : null,
       decisions && typeof decisions === 'object' ? decisions : {},
+      {
+        personnel: lire<Record<string, string>>(corps?.personnel, {}),
+        completer: corps?.completer !== '0',
+      },
     );
   }
 

@@ -899,6 +899,8 @@ export class VolontairesService implements OnModuleInit {
         }
       >,
       plusieursFiches: [] as string[],
+      /** Trouvés seulement sur l’autre liste (volontaires ↔ communautaires) : rien n’est changé. */
+      autreListe: [] as string[],
       introuvables: [] as string[],
     };
     /** Fiches à mettre à jour : id → champs (le dernier fichier lu l'emporte pour une même fiche). */
@@ -945,8 +947,24 @@ export class VolontairesService implements OnModuleInit {
 
       const deja = index.probables(nom, naissance);
       if (maj) {
-        const cible = this.ficheSure(deja, nom, naissance);
-        if (cible) {
+        // Seulement les fiches de la même liste : un volontaire de la bourse ne met jamais à jour une
+        // fiche de communautaire du même nom (07/11/2026). La liste de la ligne : sa colonne
+        // « Statut » quand le fichier mélange les deux (base biométrique), sinon la liste de l'écran.
+        const statutLigne = normaliser(enTexte(this.valeur(l, ['STATUT'])));
+        const listeLigne = statutLigne.startsWith('COMMUN')
+          ? 'COMMUNAUTAIRE'
+          : statutLigne.startsWith('VOLONT')
+            ? 'VOLONTAIRE'
+            : population;
+        const memeListe = deja.filter((x) => x.population === listeLigne);
+        const cible = this.ficheSure(memeListe, nom, naissance);
+        if (!memeListe.length && deja.length) {
+          // Sur l'autre liste seulement : rien n'est changé, c'est signalé (double inscription ?)
+          rapport.autreListe.push(
+            `${ici} : sur la liste des ${LISTES[deja[0].population] ?? deja[0].population} (${deja[0].nomComplet})`,
+          );
+          if (o.type === 'MISE_A_JOUR') continue;
+        } else if (cible) {
           rapport.fichesTrouvees++;
           this.preparerMiseAJour(
             cible,
@@ -962,9 +980,9 @@ export class VolontairesService implements OnModuleInit {
             rapport,
             aMettreAJour,
           );
-        } else if (deja.length > 1)
+        } else if (memeListe.length > 1)
           rapport.plusieursFiches.push(
-            `${ici} : ${deja.map((x) => x.nomComplet).join(', ')}`,
+            `${ici} : ${memeListe.map((x) => x.nomComplet).join(', ')}`,
           );
         else if (o.type === 'MISE_A_JOUR') rapport.introuvables.push(ici);
         if (o.type === 'MISE_A_JOUR') continue;
@@ -1222,6 +1240,7 @@ export class VolontairesService implements OnModuleInit {
       agesHorsLimites: court(rapport.agesHorsLimites),
       telephonesPartages: court(rapport.telephonesPartages),
       plusieursFiches: court(rapport.plusieursFiches),
+      autreListe: court(rapport.autreListe),
       introuvables: court(rapport.introuvables),
       essai: o.essai,
     };

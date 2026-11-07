@@ -186,6 +186,57 @@ export class RattachementService {
   }
 
   /**
+   * La fiche du personnel de personnes qui ne sont pas encore des demandes (lignes d'un fichier) :
+   * sûre (même matricule, ou même nom et une seule fiche possible), en doute, ou introuvable.
+   * Rien n'est écrit (07/11/2026).
+   */
+  async chercherPour(
+    liste: {
+      id: string;
+      nom: string;
+      matricule: string | null;
+      departementId: number | null;
+    }[],
+  ) {
+    const ix = await this.indexPersonnel();
+    const res = new Map<
+      string,
+      { etat: string; agentId: number | null; candidats: number }
+    >();
+    for (const d of liste) {
+      const r = this.chercher({ ...d, agentId: null, rattachement: null }, ix);
+      res.set(d.id, {
+        etat: r.etat,
+        agentId: r.agentId,
+        candidats: r.candidats.length,
+      });
+    }
+    const ids = [...new Set([...res.values()].map((x) => x.agentId))].filter(
+      (x): x is number => !!x,
+    );
+    const fiches = ids.length
+      ? await this.agents.find({
+          where: { id: In(ids) },
+          select: [
+            'id',
+            'numeroFiche',
+            'nomComplet',
+            'matricule',
+            'departementId',
+            'donnees',
+          ],
+        })
+      : [];
+    const parId = new Map(fiches.map((f) => [f.id, f] as const));
+    return new Map(
+      [...res].map(([k, v]) => [
+        k,
+        { ...v, fiche: v.agentId ? (parId.get(v.agentId) ?? null) : null },
+      ]),
+    );
+  }
+
+  /**
    * La fiche sûre de chaque mutation (même matricule, ou même nom et une seule fiche possible), avec
    * ses rubriques : pour compléter les cases vides des demandes (06/11/2026). Rien n'est écrit.
    * Renvoie aussi les demandes en doute (plusieurs fiches) et sans fiche.
