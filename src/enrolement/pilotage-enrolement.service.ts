@@ -229,32 +229,53 @@ export class PilotageEnrolementService {
     const c = this.config.get();
     const q = <T>(sql: string, p: unknown[] = []) =>
       this.besoins.query<T[]>(sql, p);
-    const [registre] = await q<{
-      enPoste: number;
-      sortis: number;
-      sansCategorie: number;
-      sansDepartement: number;
-    }>(
-      `SELECT count(*) FILTER (WHERE statut = 'EN_POSTE')::int AS "enPoste", count(*) FILTER (WHERE statut = 'SORTI')::int AS sortis,
-              count(*) FILTER (WHERE statut = 'EN_POSTE' AND categorie IS NULL)::int AS "sansCategorie",
-              count(*) FILTER (WHERE statut = 'EN_POSTE' AND "departementId" IS NULL)::int AS "sansDepartement" FROM volontaire WHERE population = 'VOLONTAIRE'`,
-    );
-    const parDepCat = await q<{
-      departementId: number | null;
-      categorie: string | null;
-      n: number;
-    }>(
-      `SELECT "departementId", categorie, count(*)::int AS n FROM volontaire WHERE population = 'VOLONTAIRE' AND statut = 'EN_POSTE' GROUP BY 1, 2`,
-    );
-    // Coût mensuel au barème actuel (sans rappels ni régularisations)
-    const coutMensuel = parDepCat.reduce(
-      (t, x) =>
-        t +
-        x.n *
-          (c.categories.find((k) => k.code === x.categorie && k.actif)
-            ?.bourse ?? 0),
-      0,
-    );
+    // Effectifs en poste par département et catégorie, pour chaque liste (volontaires, communautaires)
+    const effectifs = async (population: 'VOLONTAIRE' | 'COMMUNAUTAIRE') => {
+      const [registre] = await q<{
+        enPoste: number;
+        sortis: number;
+        sansCategorie: number;
+        sansDepartement: number;
+      }>(
+        `SELECT count(*) FILTER (WHERE statut = 'EN_POSTE')::int AS "enPoste", count(*) FILTER (WHERE statut = 'SORTI')::int AS sortis,
+                count(*) FILTER (WHERE statut = 'EN_POSTE' AND categorie IS NULL)::int AS "sansCategorie",
+                count(*) FILTER (WHERE statut = 'EN_POSTE' AND "departementId" IS NULL)::int AS "sansDepartement" FROM volontaire WHERE population = $1`,
+        [population],
+      );
+      const parDepCat = await q<{
+        departementId: number | null;
+        categorie: string | null;
+        n: number;
+      }>(
+        `SELECT "departementId", categorie, count(*)::int AS n FROM volontaire WHERE population = $1 AND statut = 'EN_POSTE' GROUP BY 1, 2`,
+        [population],
+      );
+      const bareme = this.config.categoriesDe(population);
+      // Coût mensuel au barème actuel (sans rappels ni régularisations)
+      const coutMensuel = parDepCat.reduce(
+        (t, x) =>
+          t +
+          x.n *
+            (bareme.find((k) => k.code === x.categorie && k.actif)?.bourse ??
+              0),
+        0,
+      );
+      return {
+        registre,
+        parDepCat,
+        coutMensuel,
+        categories: bareme.map((k) => ({
+          code: k.code,
+          libelle: k.libelle,
+          bourse: k.bourse,
+        })),
+        // Barème pas encore fixé par le DG (montants à 0) : le coût n'a pas de sens
+        baremeFixe: bareme.some((k) => k.actif && k.bourse > 0),
+      };
+    };
+    const volontaires = await effectifs('VOLONTAIRE');
+    const communautaires = await effectifs('COMMUNAUTAIRE');
+    const { registre, parDepCat, coutMensuel } = volontaires;
     const etats = await q<{
       id: number;
       mois: string;
@@ -305,11 +326,8 @@ export class PilotageEnrolementService {
       enrolesAIntegrer: enAttente.n,
       misesEnRoute: mer,
       besoins: besoins.besoin,
-      categories: c.categories.map((k) => ({
-        code: k.code,
-        libelle: k.libelle,
-        bourse: k.bourse,
-      })),
+      categories: volontaires.categories,
+      communautaires,
       motifs: c.motifsSortie.map((m) => ({ code: m.code, libelle: m.libelle })),
     };
   }
