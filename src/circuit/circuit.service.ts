@@ -1286,6 +1286,12 @@ export class CircuitService implements OnModuleInit {
     if (!o.ids?.length) throw new BadRequestException('Aucune demande cochée.');
     const favorable = o.sens === 'FAVORABLE';
     const bilan = { completees: 0, decidees: 0, laissees: [] as string[] };
+    const alertes: {
+      demandeId: string;
+      type: string;
+      texte: string;
+      structures: number[];
+    }[] = [];
     for (const d of await this.demandes.find({ where: { id: In(o.ids) } })) {
       if (d.retiree || d.noteId || !d.circuit || d.etapeCourante === null) {
         bilan.laissees.push(
@@ -1342,16 +1348,23 @@ export class CircuitService implements OnModuleInit {
       }
       maj.circuit = circuit;
       await this.demandes.update(d.id, maj);
-      await this.alerter(
-        d.id,
-        decide ? 'DECISION' : 'A_TRAITER',
-        decide
+      // Alertes gardées pour un seul enregistrement à la fin (base distante : moins d'allers-retours)
+      alertes.push({
+        demandeId: d.id,
+        type: decide ? 'DECISION' : 'A_TRAITER',
+        texte: decide
           ? `Demande n° ${d.numeroEnregistrement} (${d.nomComplet}) : circuit complété en série, ${favorable ? 'accordée' : 'rejetée'} (${u.nom}).`
           : `Demande n° ${d.numeroEnregistrement} (${d.nomComplet}) : circuit complété en série (avis ${favorable ? 'favorables' : 'défavorables'}). C’est à ${circuit[derniere].sigle} de décider.`,
-        circuit.map((x) => x.structureId).filter((x): x is number => !!x),
-      );
+        structures: [
+          ...new Set(
+            circuit.map((x) => x.structureId).filter((x): x is number => !!x),
+          ),
+        ],
+      });
       bilan.completees++;
     }
+    for (let k = 0; k < alertes.length; k += 500)
+      await this.alertes.save(alertes.slice(k, k + 500));
     await this.journal.log(
       u,
       'CIRCUIT_COMPLETE_EN_SERIE',
