@@ -16,6 +16,7 @@ import {
 import { FileInterceptor } from '@nestjs/platform-express';
 import ExcelJS from 'exceljs';
 import type { Response } from 'express';
+import { classeurEnroles, ETAPES_ENROLE } from './export-enroles';
 import {
   Roles,
   ROLES_CONTROLE,
@@ -486,10 +487,11 @@ export class EnrolementController {
     res.send(Buffer.from(await wb.xlsx.writeBuffer()));
   }
 
-  /** Base des enrôlés (ou une étape) en Excel. */
+  /** Base des enrôlés (ou une étape) en Excel, bien présentée (07/11/2026). */
   @Roles(...ROLES_TRAITEMENT)
   @Get('dossiers/excel')
   async excel(
+    @Utilisateur() u: UtilisateurConnecte,
     @Query('campagne', ParseIntPipe) campagne: number,
     @Query('etat') etat: string | undefined,
     @Res() res: Response,
@@ -499,49 +501,33 @@ export class EnrolementController {
       campagneId: campagne,
       etat: etat || undefined,
     });
-    const wb = new ExcelJS.Workbook();
-    const ws = wb.addWorksheet('Enrôlés');
-    ws.addRow([
-      `ENROLEMENT ${c.annee} (${c.anneeScolaire})${etat ? ` — ${etat}` : ''}`,
-    ]).font = { bold: true };
-    ws.addRow([
-      'N°',
-      'Noms et prénoms',
-      'Date de nais.',
-      'Lieu de nais.',
-      'Diplôme',
-      'Promotion',
-      'Cycle',
-      'Spécialité',
-      'Départements souhaités',
-      'Département retenu',
-      'Établissement',
-      'Téléphone',
-      'Origine',
-      'Membre de la commission',
-      'Étape',
-    ]).font = { bold: true };
-    liste.forEach((e, i) =>
-      ws.addRow([
-        i + 1,
-        e.nomComplet,
-        e.dateNaissance,
-        e.lieuNaissance,
-        e.diplomeLibelle,
-        e.promotion,
-        e.cycle,
-        e.specialite,
-        e.departementsSouhaitesNoms.join(', '),
-        e.departementRetenu,
-        e.etablissement,
-        e.telephone,
-        e.origineBrute,
-        e.membre,
-        e.etat,
-      ]),
+    const titre = `BASE DES ENRÔLÉS — ENRÔLEMENT ${c.annee} (${c.anneeScolaire})`;
+    const tampon = await classeurEnroles(
+      liste.map((e) => ({
+        nom: e.nomComplet,
+        dateNaissance: e.dateNaissance,
+        lieuNaissance: e.lieuNaissance,
+        diplome: e.diplomeLibelle,
+        promotion: e.promotion,
+        cycle: e.cycle,
+        specialite: e.specialite,
+        souhaites: e.departementsSouhaitesNoms.join(', '),
+        retenu: e.departementRetenu,
+        etablissement: e.etablissement,
+        telephone: e.telephone,
+        origine: e.origineBrute,
+        membre: e.membre,
+        etat: e.etat,
+        observation: e.observation,
+      })),
+      {
+        titre,
+        filtres: etat
+          ? `étape : ${ETAPES_ENROLE[etat] ?? etat}`
+          : 'toutes les étapes',
+        par: u.nom,
+      },
     );
-    ws.columns.forEach((col) => (col.width = 18));
-    ws.getColumn(2).width = 36;
     res.setHeader(
       'Content-Type',
       'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
@@ -550,6 +536,6 @@ export class EnrolementController {
       'Content-Disposition',
       `attachment; filename="Enrolement ${c.annee}.xlsx"`,
     );
-    res.send(Buffer.from(await wb.xlsx.writeBuffer()));
+    res.send(tampon);
   }
 }
