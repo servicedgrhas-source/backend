@@ -197,6 +197,12 @@ const CRITERES_ENROLEMENT = [
 ];
 const CRITERES_MUTATION = ['departement', 'cycle', 'specialite', 'origine'];
 /** Une personne d'une note à découper : son département dans la note et les valeurs des critères. */
+/** Demande accordée qui attend hors de la note de mutation, et pourquoi (07/11/2026). */
+interface TenueMutation {
+  d: DemandeMutation;
+  raisons: string[];
+}
+
 interface GensNote {
   id: string;
   nom: string;
@@ -710,15 +716,63 @@ export class NotesService {
 
   /** Demandes d'une note de mutation : accordées, de ses groupes, de son lot de rangement. */
   private async demandesDeLaNoteMutation(n: NoteService) {
-    if (n.rectificatifDe) return [];
+    return (await this.lignesMutationNote(n)).prets;
+  }
+
+  /**
+   * Les demandes accordées d'une note de mutation, en deux parts : celles qui entrent dans la
+   * note, et celles qui attendent hors de la note parce qu'elles ont encore des points à vérifier
+   * (DG, 07/11/2026 ; paramètre MUTATION_NOTE_SANS_POINTS). Corrigées, ou déclarées vérifiées sur
+   * le dossier papier, elles rejoignent la note d'elles-mêmes.
+   */
+  private async lignesMutationNote(n: NoteService) {
+    if (n.rectificatifDe)
+      return { prets: [] as DemandeMutation[], tenues: [] as TenueMutation[] };
     const listes = await Promise.all(
       this.groupesMutation(n).map((g) =>
         this.mutSvc.eligiblesPourNote(n.motif as MotifMutation, g),
       ),
     );
-    return listes
+    const toutes = listes
       .flat()
       .filter((d) => (d.lotRangement ?? null) === (n.lotRangement ?? null));
+    if (!this.mutationSansPoints())
+      return { prets: toutes, tenues: [] as TenueMutation[] };
+    // Une permutation va par paire : si l'un des deux a des points à vérifier, les deux attendent
+    // (sinon la note ne porterait qu'une moitié de l'échange)
+    const avec = toutes
+      .map((d) => d.permutationAvecId)
+      .filter((x): x is string => !!x);
+    const permutants = new Map(
+      (avec.length
+        ? await this.demandes.find({
+            where: { id: In(avec) },
+            select: { id: true, nomComplet: true, anomalies: true },
+          })
+        : []
+      ).map((x) => [x.id, x] as const),
+    );
+    const prets: DemandeMutation[] = [];
+    const tenues: TenueMutation[] = [];
+    for (const d of toutes) {
+      const p = d.permutationAvecId
+        ? permutants.get(d.permutationAvecId)
+        : null;
+      const raisons = [
+        ...(d.anomalies ?? []),
+        ...(p?.anomalies?.length
+          ? [`Son permutant (${p.nomComplet}) a des points à vérifier`]
+          : []),
+      ];
+      if (raisons.length) tenues.push({ d, raisons });
+      else prets.push(d);
+    }
+    return { prets, tenues };
+  }
+
+  /** Les demandes qui ont des points à vérifier attendent-elles hors des notes ? (oui par défaut) */
+  private mutationSansPoints() {
+    return this.params.get('MUTATION_NOTE_SANS_POINTS') !== 'NON';
   }
 
   /**
@@ -809,7 +863,7 @@ export class NotesService {
   ): Promise<ContenuNote & { bloques: unknown[] }> {
     const motif = note.motif as MotifMutation;
     const groupes = this.groupesMutation(note);
-    const liste = await this.demandesDeLaNoteMutation(note);
+    const { prets: liste, tenues } = await this.lignesMutationNote(note);
     const deps = await this.deps.find({ order: { ordre: 'ASC' } });
     const permutation = motif === 'PERMUTATION';
     const colonnes = this.colonnesMutation(motif, note.colonnesNote);
@@ -879,7 +933,11 @@ export class NotesService {
       ],
       piedDePage: `${OBJET_MUTATION[motif]}/${groupes.map((g) => GROUPE_COURT[g]).join('-')}/${note.anneeScolaire}`,
       repere: `Mut./${ABREGE_MOTIF[motif]}`,
-      bloques: [],
+      bloques: tenues.map((t) => ({
+        id: t.d.id,
+        nom: t.d.nomComplet,
+        raisons: t.raisons,
+      })),
     };
   }
 
@@ -2316,7 +2374,12 @@ export class NotesService {
           })),
         // Demandes qui peuvent remplacer : accordées, du même motif, pas encore dans une note
         remplacants: toutes
-          .filter((d) => !d.noteId && d.instructionMinistre === 'ACCORDEE')
+          .filter(
+            (d) =>
+              !d.noteId &&
+              d.instructionMinistre === 'ACCORDEE' &&
+              (!this.mutationSansPoints() || !d.anomalies?.length),
+          )
           .sort((a, b) => a.nomComplet.localeCompare(b.nomComplet, 'fr'))
           .map(vers),
       };
@@ -2762,10 +2825,13 @@ export class NotesService {
     for (const n of notes) {
       const lot = n.lotPublicationId ? lots.get(n.lotPublicationId) : null;
       // Enrôlement : retenus qui attendent leur département (ils n'entrent pas encore dans la note)
+      // Mutation : demandes accordées qui attendent hors de la note (points à vérifier)
       const enAttente =
         !n.contenu && n.module === 'ENROLEMENT'
           ? (await this.lignesEnrolement(n)).bloques.length
-          : 0;
+          : !n.contenu && n.module === 'MUTATION'
+            ? (await this.lignesMutationNote(n)).tenues.length
+            : 0;
       const lotNumero = lot?.numero ?? null;
       const total = n.contenu
         ? (n.contenu as ContenuNote).total

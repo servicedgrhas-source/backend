@@ -120,6 +120,11 @@ export const PARAMETRES_DEFAUT: Record<string, [string, string]> = {
   ],
   // « PROJET DE NOTE DE SERVICE » jusqu'à la validation du DG et aux trois avis de conformité
   // (DG, 01/11/2026) ; NON : toujours « NOTE DE SERVICE », comme avant
+  // Les demandes accordées qui ont encore des points à vérifier attendent hors des notes (DG, 07/11/2026)
+  MUTATION_NOTE_SANS_POINTS: [
+    'OUI',
+    'Notes de mutation : les demandes qui ont encore des points à vérifier attendent hors de la note',
+  ],
   PROJET_DE_NOTE: [
     'OUI',
     'Titre « PROJET DE NOTE DE SERVICE » tant que le DG et le circuit (bureau, service, direction) n’ont pas validé',
@@ -372,7 +377,10 @@ export class ParametresService {
   verifier(cle: string, valeur: string) {
     if (!PARAMETRES_DEFAUT[cle])
       throw new BadRequestException('Paramètre inconnu');
-    if (cle === 'PROJET_DE_NOTE' && !['OUI', 'NON'].includes(valeur))
+    if (
+      ['PROJET_DE_NOTE', 'MUTATION_NOTE_SANS_POINTS'].includes(cle) &&
+      !['OUI', 'NON'].includes(valeur)
+    )
       throw new BadRequestException('Choisissez Oui ou Non');
     if (
       cle === 'ANNEE_SCOLAIRE' ||
