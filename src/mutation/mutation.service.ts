@@ -1449,7 +1449,8 @@ export class MutationService {
       if (s) t[s.code].R++;
     }
     for (const t of table.values())
-      for (const v of Object.values(t)) v.E = v.M - v.R;
+      // Écart = reçus − mutés : + le département gagne des agents, − il en perd (DG, 07/11/2026)
+      for (const v of Object.values(t)) v.E = v.R - v.M;
     return {
       base,
       total: liste.length,

@@ -86,7 +86,7 @@ export async function classeurStatistiques(
   ws.getCell(2, 1).font = { size: 10, color: { argb: 'FF52525B' } };
   ws.mergeCells(3, 1, 3, nbCol);
   ws.getCell(3, 1).value =
-    'Légende : M = muté (départ) ; R = reçu (arrivée) ; E = écart (M − R)';
+    'Légende : M = muté (départ) ; R = reçu (arrivée) ; E = écart (R − M) : + le département gagne des agents, − il en perd';
   ws.getCell(3, 1).alignment = { horizontal: 'center' };
   ws.getCell(3, 1).font = { size: 10, italic: true };
 
@@ -139,10 +139,11 @@ export async function classeurStatistiques(
         cell.font = {
           size: 9,
           bold: gras || code === 'T',
+          // Écart positif (gain) en vert, négatif (perte) en rouge
           ...(k === 'E' && v > 0
-            ? { color: { argb: 'FFB91C1C' } }
+            ? { color: { argb: 'FF047857' } }
             : k === 'E' && v < 0
-              ? { color: { argb: 'FF047857' } }
+              ? { color: { argb: 'FFB91C1C' } }
               : {}),
         };
         const couleur =
