@@ -241,33 +241,61 @@ export class RattachementService {
    * ses rubriques : pour compléter les cases vides des demandes (06/11/2026). Rien n'est écrit.
    * Renvoie aussi les demandes en doute (plusieurs fiches) et sans fiche.
    */
-  async fichesSuresMutation(ids: string[]) {
+  async fichesSuresMutation(ids: string[], choix: Record<string, number> = {}) {
     const ix = await this.indexPersonnel();
     const sures = new Map<string, number>();
-    let doute = 0;
-    let sansFiche = 0;
+    // Plusieurs fiches possibles : les fiches candidates ; sans fiche : rien
+    const doutes = new Map<string, number[]>();
+    const sans: string[] = [];
     for (const d of await this.demandes('MUTATION', ids)) {
+      // La fiche choisie à la main l'emporte (doute tranché, ou fiche retrouvée par recherche)
+      if (choix[d.id]) {
+        sures.set(d.id, Number(choix[d.id]));
+        continue;
+      }
       const r = this.chercher(d, ix);
       if ((r.etat === 'MATRICULE' || r.etat === 'NOM') && r.agentId)
         sures.set(d.id, r.agentId);
-      else if (r.etat === 'A_VERIFIER') doute++;
-      else sansFiche++;
+      else if (r.etat === 'A_VERIFIER')
+        doutes.set(
+          d.id,
+          r.candidats.map((c) => c.id),
+        );
+      else sans.push(d.id);
     }
-    const fiches = sures.size
+    const aCharger = [
+      ...new Set([...sures.values(), ...[...doutes.values()].flat()]),
+    ];
+    const lues = aCharger.length
       ? await this.agents.find({
-          where: { id: In([...new Set(sures.values())]) },
-          select: ['id', 'nomComplet', 'matricule', 'departementId', 'donnees'],
+          where: { id: In(aCharger) },
+          select: [
+            'id',
+            'numeroFiche',
+            'nomComplet',
+            'matricule',
+            'departementId',
+            'donnees',
+          ],
         })
       : [];
-    const parId = new Map(fiches.map((f) => [f.id, f] as const));
+    const parId = new Map(lues.map((f) => [f.id, f] as const));
     return {
       fiches: new Map(
         [...sures].flatMap(([d, a]) =>
           parId.get(a) ? [[d, parId.get(a)!] as const] : [],
         ),
       ),
-      doute,
-      sansFiche,
+      choisies: new Set(Object.keys(choix).filter((k) => sures.has(k))),
+      doutes: new Map(
+        [...doutes].map(([d, l]) => [
+          d,
+          l.map((a) => parId.get(a)).filter((x) => !!x),
+        ]),
+      ),
+      sans,
+      doute: doutes.size,
+      sansFiche: sans.length,
     };
   }
 

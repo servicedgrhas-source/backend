@@ -375,6 +375,27 @@ export class CircuitController {
     return this.service.agir(u, id, dto);
   }
 
+  /** Compléter le circuit des demandes cochées dans la liste (favorable ou défavorable). */
+  @Roles('DG')
+  @Post('mutations/circuit/serie')
+  completerEnSerie(
+    @Utilisateur() u: UtilisateurConnecte,
+    @Body()
+    corps: {
+      ids: string[];
+      sens: 'FAVORABLE' | 'DEFAVORABLE';
+      motivation: string;
+      jusquaDecision?: boolean;
+    },
+  ) {
+    return this.service.completerEnSerie(u, {
+      ids: Array.isArray(corps?.ids) ? corps.ids.map(String) : [],
+      sens: corps?.sens,
+      motivation: corps?.motivation ?? '',
+      jusquaDecision: corps?.jusquaDecision !== false,
+    });
+  }
+
   @Roles('DG')
   @Post('mutations/:id/circuit/franchir')
   franchir(

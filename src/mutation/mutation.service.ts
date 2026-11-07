@@ -6,7 +6,8 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Brackets, IsNull, Repository } from 'typeorm';
+import { Brackets, In, IsNull, Repository } from 'typeorm';
+import { classeurMutations, type LigneExport } from './export-mutations';
 import type { UtilisateurConnecte } from '../auth/auth';
 import { champ, lireClasseur, type Ligne } from '../common/excel';
 import {
@@ -553,99 +554,217 @@ export class MutationService {
    * déjà dans une note ne bougent pas. La base du personnel n'est pas modifiée.
    * `essai` : on montre ce qui serait rempli, sans rien enregistrer.
    */
-  async completerDepuisPersonnel(u: UtilisateurConnecte, essai: boolean) {
+  /**
+   * La base des mutations en Excel (07/11/2026), avec les mêmes filtres que la liste à l'écran ; les
+   * demandes qui ont encore des points à vérifier sont en orange.
+   */
+  async exporterExcel(
+    f: Parameters<MutationService['liste']>[0],
+    u: UtilisateurConnecte,
+  ) {
+    const ids = (await this.liste({ ...f, u })).map((d) => d.id as string);
+    const toutes = ids.length
+      ? await this.repo.find({ where: { id: In(ids) } })
+      : [];
+    const parId = new Map(toutes.map((d) => [d.id, d] as const));
+    const noteIds = [
+      ...new Set(toutes.map((d) => d.noteId).filter((x): x is string => !!x)),
+    ];
+    const notes = new Map(
+      noteIds.length
+        ? (
+            await this.repo.query<
+              { id: string; numero: string | null; statut: string }[]
+            >(
+              `SELECT id, numero, statut FROM note_service WHERE id = ANY($1)`,
+              [noteIds],
+            )
+          ).map(
+            (n) =>
+              [n.id, n.numero ? `n° ${n.numero}` : 'en préparation'] as const,
+          )
+        : [],
+    );
+    const ETAPES: Record<string, string> = {
+      EN_CIRCUIT: 'En circuit d’approbation',
+      EN_INSTANCE: 'En instance',
+      EN_ATTENTE_DDEPPSA: 'Chez le DDEPPSA',
+      EN_ATTENTE_DGRHAS: 'Chez la DGRHAS',
+      EN_ATTENTE_MINISTRE: 'Chez le Ministre',
+      ACCORDEE: 'Accordée',
+      REFUSEE: 'Refusée',
+      RETIREE: 'Retirée',
+    };
+    const CYCLES_LIB: Record<string, string> = {
+      PRESCOLAIRE: 'Préscolaire',
+      PRIMAIRE: 'Primaire',
+      COLLEGE: 'Collège',
+      LYCEE: 'Lycée',
+      ALPHABETISATION: 'Alphabétisation',
+      ADMINISTRATION: 'Administration',
+    };
+    const duree = (d: DemandeMutation) => {
+      const mois = d.dureeMois;
+      if (mois === null || mois === undefined) return null;
+      const a = Math.floor(mois / 12);
+      const r = mois % 12;
+      return (
+        [a ? `${a} an${a > 1 ? 's' : ''}` : '', r ? `${r} mois` : '']
+          .filter(Boolean)
+          .join(' ') || 'Moins d’un mois'
+      );
+    };
+    const lignes: LigneExport[] = ids.flatMap((id) => {
+      const d = parId.get(id);
+      if (!d) return [];
+      return [
+        {
+          numero: d.numeroEnregistrement,
+          dateEnregistrement: d.dateEnregistrement,
+          nom: d.nomComplet,
+          genre: d.genre,
+          grade:
+            d.gradeBrut ??
+            ([d.grade, d.echelon]
+              .filter((x) => x !== null && x !== undefined)
+              .join(' ') ||
+              null),
+          matricule: d.matricule,
+          type: d.typeAgent === 'FINALISTE' ? 'Finaliste' : 'Fonctionnaire',
+          statut:
+            d.statutAgent === 'PERSONNEL_ADMINISTRATIF'
+              ? 'Pers. administratif'
+              : 'Enseignant',
+          origine: d.departementOrigine?.nom ?? null,
+          lieuService: d.lieuService,
+          cycle: d.cycle
+            ? (CYCLES_LIB[codeCycle(d.cycle) ?? ''] ?? d.cycle)
+            : null,
+          specialite: d.specialite,
+          datePriseService: d.datePriseService,
+          duree: duree(d),
+          sollicite: d.departementSollicite?.nom ?? null,
+          lieuSollicite: d.lieuSollicite,
+          motif: MOTIFS[d.motif as MotifMutation]?.libelle ?? d.motif,
+          justificatif: d.justificatif,
+          etat: ETAPES[etatMutation(d)] ?? etatMutation(d),
+          note: d.noteId ? (notes.get(d.noteId) ?? 'oui') : null,
+          // Les mêmes points que l’écran (liste, bandeau « Points à vérifier »)
+          anomalies: d.anomalies ?? [],
+        },
+      ];
+    });
+    const filtres = [
+      f.motif ? (MOTIFS[f.motif as MotifMutation]?.libelle ?? f.motif) : '',
+      f.etat ? (ETAPES[f.etat] ?? f.etat) : '',
+      f.recherche ? `recherche « ${f.recherche} »` : '',
+    ]
+      .filter(Boolean)
+      .join(' · ');
+    await this.journal.log(u, 'EXPORT_MUTATIONS', 'demande_mutation', null, {
+      demandes: lignes.length,
+      filtres,
+    });
+    return {
+      nom: `Base des mutations ${new Date().toISOString().slice(0, 10)}.xlsx`,
+      contenu: await classeurMutations(lignes, { filtres, par: u.nom }),
+    };
+  }
+
+  async completerDepuisPersonnel(
+    u: UtilisateurConnecte,
+    essai: boolean,
+    o: {
+      /** Pour de bon : seulement ces demandes (cochées à l'écran). */
+      ids?: string[] | null;
+      /** Fiche choisie à la main : demande → fiche du personnel. */
+      choix?: Record<string, number>;
+    } = {},
+  ) {
     const demandes = await this.repo.find({
       where: { noteId: IsNull(), retiree: false },
     });
-    const { fiches, doute, sansFiche } =
-      await this.rattachement.fichesSuresMutation(demandes.map((d) => d.id));
-    const vide = (v: unknown) =>
-      v === null || v === undefined || String(v).trim() === '';
-    const texteDe = (v: unknown) => {
-      const t = enTexte(v).replace(/\s+/g, ' ').trim();
-      return t || null;
-    };
+    const { fiches, choisies, doutes, sans, doute, sansFiche } =
+      await this.rattachement.fichesSuresMutation(
+        demandes.map((d) => d.id),
+        o.choix ?? {},
+      );
+    const cochees = o.ids ? new Set(o.ids) : null;
+    const nomsDeps = new Map(
+      (await this.deps.find()).map((d) => [d.id, d.nom] as const),
+    );
     const parChamp: Record<string, number> = {};
-    const exemples: {
+    const aCompleter: {
       id: string;
       nom: string;
-      fiche: string;
+      matricule: string | null;
+      departement: string | null;
+      fiche: { id: number; numero: string | null; nom: string };
+      choisie: boolean;
       ajouts: { champ: string; valeur: string }[];
     }[] = [];
     let completees = 0;
     for (const d of demandes) {
       const f = fiches.get(d.id);
       if (!f) continue;
-      const don = f.donnees ?? {};
-      const ajouts: { champ: string; valeur: string }[] = [];
+      // Les cases vides de la demande prennent ce que dit la fiche
+      const pv = this.valeursDuPersonnel(f);
       const champs: Partial<DemandeMutation> = {};
-      const mettre = <K extends keyof DemandeMutation>(
-        k: K,
-        libelle: string,
-        v: DemandeMutation[K] | null,
-        affiche?: string,
-      ) => {
-        if (vide(v) || !vide(d[k])) return;
-        champs[k] = v as DemandeMutation[K];
-        ajouts.push({ champ: libelle, valeur: affiche ?? String(v) });
-        parChamp[libelle] = (parChamp[libelle] ?? 0) + 1;
-      };
-      const matricule = texteDe(f.matricule) ?? texteDe(don.MATRICULE_SOLDE);
-      if (matricule && cleCompacte(matricule) !== 'X')
-        mettre('matricule', 'Matricule solde', matricule);
-      if (vide(d.gradeBrut) && vide(d.grade)) {
-        const abrege = gradeAbrege(texteDe(don.GRADE));
-        const echelon = /\d{1,2}/.exec(enTexte(don.ECHELON))?.[0];
-        if (abrege) {
-          const brut = echelon ? `${abrege} ${Number(echelon)}` : abrege;
-          const ge = lireGradeEchelon(brut);
-          mettre('gradeBrut', 'Grade et échelon', brut);
-          if (champs.gradeBrut) {
-            champs.grade = ge.grade;
-            champs.echelon = ge.echelon;
-          }
+      const ajouts: { champ: string; valeur: string }[] = [];
+      for (const [k, libelle] of CHAMPS_PERSONNEL) {
+        if (videMut(pv[k]) || !videMut(d[k])) continue;
+        if (k === 'gradeBrut' && !videMut(d.grade)) continue;
+        (champs as Record<string, unknown>)[k] = pv[k];
+        if (k === 'gradeBrut') {
+          champs.grade = pv.grade;
+          champs.echelon = pv.echelon;
         }
-      }
-      mettre(
-        'departementOrigineId',
-        "Département d'origine",
-        f.departementId,
-        (await this.nomDepartement(f.departementId)) ?? undefined,
-      );
-      mettre('lieuService', 'Lieu de service', texteDe(don.LIEU_SERVICE));
-      mettre('specialite', 'Spécialité', texteDe(don.SPECIALITE));
-      const prise = enTexte(don.DATE_PRISE_SERVICE).slice(0, 10);
-      if (/^\d{4}-\d{2}-\d{2}$/.test(prise))
-        mettre(
-          'datePriseService',
-          'Date de prise de service',
-          prise,
-          prise.split('-').reverse().join('/'),
-        );
-      if (!ajouts.length) continue;
-      completees++;
-      if (exemples.length < 300)
-        exemples.push({
-          id: d.id,
-          nom: d.nomComplet,
-          fiche: f.nomComplet,
-          ajouts,
+        ajouts.push({
+          champ: libelle,
+          valeur: this.lisiblePersonnel(k, pv[k], nomsDeps),
         });
-      if (!essai) {
-        const apres = { ...d, ...champs };
+      }
+      const choisie = choisies.has(d.id);
+      if (!ajouts.length && !choisie) continue;
+      aCompleter.push({
+        id: d.id,
+        nom: d.nomComplet,
+        matricule: d.matricule,
+        departement: d.departementOrigineId
+          ? (nomsDeps.get(d.departementOrigineId) ?? null)
+          : null,
+        fiche: { id: f.id, numero: f.numeroFiche, nom: f.nomComplet },
+        choisie,
+        ajouts,
+      });
+      if (!ajouts.length) continue;
+      if (cochees && !cochees.has(d.id)) continue;
+      completees++;
+      for (const a of ajouts) parChamp[a.champ] = (parChamp[a.champ] ?? 0) + 1;
+      if (!essai)
         await this.repo.update(d.id, {
           ...champs,
-          anomalies: anomaliesMutation(apres),
+          anomalies: anomaliesMutation({ ...d, ...champs }),
         });
-      }
     }
+    const resume = (d: DemandeMutation) => ({
+      id: d.id,
+      nom: d.nomComplet,
+      matricule: d.matricule,
+      grade: d.gradeBrut,
+      departement: d.departementOrigineId
+        ? (nomsDeps.get(d.departementOrigineId) ?? null)
+        : null,
+      lieuService: d.lieuService,
+    });
+    const parIdDemande = new Map(demandes.map((d) => [d.id, d] as const));
     if (!essai)
       await this.journal.log(
         u,
         'MUTATIONS_COMPLETEES_PERSONNEL',
         'demande_mutation',
         null,
-        { completees, parChamp },
+        { completees, parChamp, choisies: choisies.size },
       );
     return {
       essai,
@@ -655,7 +774,37 @@ export class MutationService {
       parChamp,
       doute,
       sansFiche,
-      exemples,
+      aCompleter,
+      /** Plusieurs fiches possibles : la demande et ses fiches candidates, à choisir. */
+      doutes: [...doutes].flatMap(([id, l]) => {
+        const d = parIdDemande.get(id);
+        return d
+          ? [
+              {
+                ...resume(d),
+                candidats: l.map((f) => {
+                  const v = this.valeursDuPersonnel(f);
+                  return {
+                    id: f.id,
+                    numero: f.numeroFiche,
+                    nom: f.nomComplet,
+                    matricule: v.matricule ?? null,
+                    grade: v.gradeBrut ?? null,
+                    departement: f.departementId
+                      ? (nomsDeps.get(f.departementId) ?? null)
+                      : null,
+                    lieuService: v.lieuService ?? null,
+                  };
+                }),
+              },
+            ]
+          : [];
+      }),
+      /** Aucune fiche trouvée : on peut la chercher à la main. */
+      sans: sans.flatMap((id) => {
+        const d = parIdDemande.get(id);
+        return d ? [resume(d)] : [];
+      }),
     };
   }
 

@@ -205,6 +205,9 @@ export class EcartsVolontairesService {
     const nomsDeps = await this.nomsDeps();
     return {
       reliees: paires.length,
+      // Le registre garde aussi les sortis (recrutés, déserteurs…) : on dit combien de chaque
+      enPoste: paires.filter((p) => p.v.statut === 'EN_POSTE').length,
+      sortis: paires.filter((p) => p.v.statut !== 'EN_POSTE').length,
       rubriques: CORRESPONDANCES.map((c) => {
         let completer = 0;
         let different = 0;

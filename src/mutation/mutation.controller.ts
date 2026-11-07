@@ -34,6 +34,7 @@ import {
 } from '../auth/auth';
 import { MOTIFS_MUTATION } from '../common/referentiels';
 import { StockageService } from '../common/stockage';
+import { classeurStatistiques } from './export-statistiques';
 import { type CorrectionAnomalies, MutationService } from './mutation.service';
 
 const DATE = /^\d{4}-\d{2}-\d{2}$/;
@@ -121,6 +122,33 @@ export class MutationController {
     });
   }
 
+  /** La base des mutations en Excel, avec les filtres de la liste ; points à vérifier en orange. */
+  @Roles(...ROLES_TRAITEMENT)
+  @Get('excel')
+  async excel(
+    @Utilisateur() u: UtilisateurConnecte,
+    @Res() res: Response,
+    @Query('motif') motif?: string,
+    @Query('etat') etat?: string,
+    @Query('departementId') departementId?: string,
+    @Query('recherche') recherche?: string,
+    @Query('groupe') groupe?: string,
+  ) {
+    const { nom, contenu } = await this.service.exporterExcel(
+      { motif, etat, departementId: optInt(departementId), recherche, groupe },
+      u,
+    );
+    res.setHeader(
+      'Content-Type',
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    );
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename*=UTF-8''${encodeURIComponent(nom)}`,
+    );
+    res.send(contenu);
+  }
+
   /**
    * Retrouver l'agent dans la base du personnel avant de taper sa demande (07/11/2026) : matricule
    * ou nom (dans n'importe quel ordre). Ses informations remplissent le formulaire.
@@ -138,6 +166,29 @@ export class MutationController {
     @Query('exclure') exclure?: string,
   ) {
     return this.service.doublons(nom, matricule, exclure);
+  }
+
+  /** Les statistiques en Excel : fiche officielle (M, R, E) et mouvements par département. */
+  @Roles(...ROLES_TRAITEMENT)
+  @Get('statistiques/excel')
+  async statistiquesExcel(
+    @Utilisateur() u: UtilisateurConnecte,
+    @Res() res: Response,
+    @Query('base') base?: 'accordees' | 'toutes',
+  ) {
+    const s = await this.service.statistiques(
+      base === 'toutes' ? 'toutes' : 'accordees',
+    );
+    const contenu = await classeurStatistiques(s, u.nom);
+    res.setHeader(
+      'Content-Type',
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    );
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename*=UTF-8''${encodeURIComponent(`Statistiques des mutations ${new Date().toISOString().slice(0, 10)}.xlsx`)}`,
+    );
+    res.send(contenu);
   }
 
   @Get('statistiques')
@@ -252,8 +303,20 @@ export class MutationController {
   completerDepuisPersonnel(
     @Utilisateur() u: UtilisateurConnecte,
     @Query('essai') essai?: string,
+    // Les demandes cochées (pour de bon) et les fiches choisies à la main (07/11/2026)
+    @Body() corps?: { ids?: string[]; choix?: Record<string, number> },
   ) {
-    return this.service.completerDepuisPersonnel(u, essai === '1');
+    return this.service.completerDepuisPersonnel(u, essai === '1', {
+      ids: Array.isArray(corps?.ids) ? corps.ids.map(String) : null,
+      choix:
+        corps?.choix && typeof corps.choix === 'object'
+          ? Object.fromEntries(
+              Object.entries(corps.choix)
+                .map(([k, v]) => [k, Number(v)] as const)
+                .filter(([, v]) => Number.isInteger(v) && v > 0),
+            )
+          : {},
+    });
   }
 
   /** Corriger les points à vérifier d'une demande (depuis la liste), ou les déclarer vérifiés. */

@@ -1260,6 +1260,115 @@ export class CircuitService implements OnModuleInit {
     return { ok: true };
   }
 
+  /**
+   * Compléter le circuit en série, depuis la liste des demandes (DG, 07/11/2026) : pour les demandes
+   * cochées, toutes les étapes restantes reçoivent le même avis (favorable ou défavorable) avec la
+   * même motivation, puis, si on le demande, la décision finale (accordée ou rejetée). Chaque étape
+   * porte « complété en série par … » ; tout est inscrit au journal, et le circuit est prévenu.
+   * Les demandes déjà décidées, dans une note ou retirées sont laissées (et comptées).
+   */
+  async completerEnSerie(
+    u: UtilisateurConnecte,
+    o: {
+      ids: string[];
+      sens: 'FAVORABLE' | 'DEFAVORABLE';
+      motivation: string;
+      jusquaDecision: boolean;
+    },
+  ) {
+    if (!['ADMIN', 'DG'].includes(u.role))
+      throw new ForbiddenException('Réservé au DG.');
+    if (o.sens !== 'FAVORABLE' && o.sens !== 'DEFAVORABLE')
+      throw new BadRequestException('Choisissez : favorable ou défavorable.');
+    const motivation = o.motivation?.trim();
+    if (!motivation || motivation.length < 3)
+      throw new BadRequestException('La motivation est obligatoire.');
+    if (!o.ids?.length) throw new BadRequestException('Aucune demande cochée.');
+    const favorable = o.sens === 'FAVORABLE';
+    const bilan = { completees: 0, decidees: 0, laissees: [] as string[] };
+    for (const d of await this.demandes.find({ where: { id: In(o.ids) } })) {
+      if (d.retiree || d.noteId || !d.circuit || d.etapeCourante === null) {
+        bilan.laissees.push(
+          `${d.nomComplet} : ${d.retiree ? 'retirée' : d.noteId ? 'dans une note' : 'déjà décidée'}`,
+        );
+        continue;
+      }
+      const circuit = [...d.circuit];
+      const derniere = circuit.length - 1;
+      const fin = o.jusquaDecision ? derniere : derniere - 1;
+      const visa = `${u.nom} (circuit complété en série)`;
+      const maj: Partial<DemandeMutation> = {};
+      for (let i = d.etapeCourante; i <= fin; i++) {
+        const e = {
+          ...circuit[i],
+          visaPar: visa,
+          visaLe: maintenant(),
+          motivation,
+        };
+        e.avis = favorable ? 'FAVORABLE' : 'REJET';
+        if (!e.arriveeLe) e.arriveeLe = maintenant();
+        circuit[i] = e;
+        if (e.type === 'DDEPPSA')
+          Object.assign(maj, {
+            avisDdeppsa: favorable ? 'FAVORABLE' : 'DEFAVORABLE',
+            avisDdeppsaCommentaire: motivation,
+            avisDdeppsaPar: visa,
+          });
+        if (e.type === 'DGRHAS')
+          Object.assign(maj, {
+            avisDgrhas: favorable ? 'FAVORABLE' : 'DEFAVORABLE',
+            avisDgrhasCommentaire: motivation,
+            avisDgrhasPar: visa,
+          });
+      }
+      const decide = fin === derniere;
+      if (decide) {
+        const decision = favorable ? 'ACCORDEE' : 'REJETEE';
+        Object.assign(maj, {
+          decision,
+          decisionMotivation: motivation,
+          decisionPar: visa,
+          decisionLe: new Date(),
+          etapeCourante: null,
+          instructionMinistre: favorable ? 'ACCORDEE' : 'REFUSEE',
+          instructionCommentaire: motivation,
+          instructionPar: u.nom,
+        });
+        bilan.decidees++;
+      } else {
+        // Arrêté avant la décision : la demande attend la dernière étape
+        circuit[derniere] = { ...circuit[derniere], arriveeLe: maintenant() };
+        maj.etapeCourante = derniere;
+      }
+      maj.circuit = circuit;
+      await this.demandes.update(d.id, maj);
+      await this.alerter(
+        d.id,
+        decide ? 'DECISION' : 'A_TRAITER',
+        decide
+          ? `Demande n° ${d.numeroEnregistrement} (${d.nomComplet}) : circuit complété en série, ${favorable ? 'accordée' : 'rejetée'} (${u.nom}).`
+          : `Demande n° ${d.numeroEnregistrement} (${d.nomComplet}) : circuit complété en série (avis ${favorable ? 'favorables' : 'défavorables'}). C’est à ${circuit[derniere].sigle} de décider.`,
+        circuit.map((x) => x.structureId).filter((x): x is number => !!x),
+      );
+      bilan.completees++;
+    }
+    await this.journal.log(
+      u,
+      'CIRCUIT_COMPLETE_EN_SERIE',
+      'demande_mutation',
+      null,
+      {
+        sens: o.sens,
+        jusquaDecision: o.jusquaDecision,
+        completees: bilan.completees,
+        decidees: bilan.decidees,
+        laissees: bilan.laissees.length,
+        motivation,
+      },
+    );
+    return bilan;
+  }
+
   /** Une étape sans responsable (structure fermée…) : la DGRHAS la franchit en le justifiant. */
   async sauter(u: UtilisateurConnecte, id: string, motif: string) {
     const d = await this.demandes.findOne({ where: { id } });
