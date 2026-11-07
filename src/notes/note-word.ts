@@ -750,6 +750,30 @@ export async function noteWord(
     }),
   );
 
+  // Pied de page : le texte de gauche (« Mutations Ancienneté/Collège-Lycée-Administration/2026-2027 »)
+  // et celui de droite sur une seule ligne (07/11/2026) : chaque colonne prend la largeur de son texte,
+  // « Page X sur N » le milieu ; police un peu réduite seulement si cela ne suffit pas
+  const pied = (() => {
+    const MARGES = 4.5; // marges intérieures des cases Word et un peu de jeu (mm)
+    const CENTRE = 26; // « Page 12 sur 12 » en gras
+    for (let taille = 8; taille >= 6; taille -= 0.5) {
+      const g = largeurLigne(c.piedDePage ?? '', taille) + MARGES;
+      const d = largeurLigne(e.piedDroite ?? '', taille) + MARGES;
+      if (g + d + CENTRE <= LARGEUR_UTILE || taille === 6) {
+        // Le milieu au centre de la page tant que possible : les côtés gardent la même largeur
+        const cote = Math.max(g, d);
+        const largeurs =
+          2 * cote + CENTRE <= LARGEUR_UTILE
+            ? [cote, LARGEUR_UTILE - 2 * cote, cote]
+            : [g, LARGEUR_UTILE - g - d, d];
+        return { taille, largeurs };
+      }
+    }
+    return {
+      taille: 8,
+      largeurs: [LARGEUR_UTILE / 3, LARGEUR_UTILE / 3, LARGEUR_UTILE / 3],
+    };
+  })();
   // Le pied de page garde sa taille
   ECHELLE_ACTIVE = false;
   const doc = new Document({
@@ -781,15 +805,13 @@ export async function noteWord(
                   size: Math.round(LARGEUR_UTILE * MM),
                   type: WidthType.DXA,
                 },
-                columnWidths: [1, 1, 1].map(() =>
-                  Math.round((LARGEUR_UTILE / 3) * MM),
-                ),
+                columnWidths: pied.largeurs.map((x) => Math.round(x * MM)),
                 borders: SANS_BORD,
                 rows: [
                   new TableRow({
                     children: [
                       new TableCell({
-                        children: [p(c.piedDePage, { taille: 8 })],
+                        children: [p(c.piedDePage, { taille: pied.taille })],
                       }),
                       new TableCell({
                         children: [
@@ -814,7 +836,10 @@ export async function noteWord(
                       }),
                       new TableCell({
                         children: [
-                          p(e.piedDroite, { droite: true, taille: 8 }),
+                          p(e.piedDroite, {
+                            droite: true,
+                            taille: pied.taille,
+                          }),
                         ],
                       }),
                     ],
