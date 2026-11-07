@@ -88,7 +88,11 @@ export const RUBRIQUES_API: Record<string, string[]> = {
     'enrolement/enroles',
     'enrolement/specialites',
   ],
-  '/enrolement/statistiques': ['enrolement/statistiques'],
+  '/enrolement/statistiques': [
+    'enrolement/statistiques',
+    'enrolement/base-definitive',
+  ],
+  '/enrolement/repartition': ['enrolement/repartition'],
   '/notes/enrolement': ['notes', 'notes/preparer/enrolement'],
   '/enrolement/volontaires': [
     'enrolement/volontaires',

@@ -446,6 +446,27 @@ export class EnrolementController {
         b.lignes.reduce((a, l) => a + l.cumul, 0),
       ]).font = { bold: true };
     }
+    // Face à l'enveloppe (DG, 06/11/2026)
+    titre(`4. Face à l’enveloppe de bourse (${s.budget.mois} mois)`);
+    entete([
+      'Cycle',
+      'Dossiers',
+      'Places prévues',
+      'Bourse par mois',
+      'Coût si tous',
+    ]);
+    for (const l of s.budget.parCycle)
+      ws.addRow([l.cycle, l.dossiers, l.places || '', l.bourse, l.coutTous]);
+    ws.addRow(['Total', '', '', '', s.budget.coutTous]).font = { bold: true };
+    ws.addRow(['Enveloppe', '', '', '', s.budget.enveloppe || 'non fixée']);
+    if (s.budget.ecart !== null)
+      ws.addRow([
+        s.budget.ecart >= 0 ? 'Reste' : 'Dépassement',
+        '',
+        '',
+        '',
+        Math.abs(s.budget.ecart),
+      ]).font = { bold: true };
     ws.columns = [
       { width: 24 },
       { width: 26 },

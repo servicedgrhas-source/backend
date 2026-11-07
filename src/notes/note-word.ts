@@ -5,6 +5,7 @@ import {
   Footer,
   Packer,
   PageNumber,
+  PageOrientation,
   Paragraph,
   Table,
   TableCell,
@@ -96,10 +97,29 @@ const LARGEUR: Record<string, number> = {
   accueil: 19,
   // Notes d'enrôlement : « BET-Préscolaire », « CFEEN-Préscolaire » (cadrage du 05/11/2026)
   diplome: 26,
+  // Notes de mutation : durée, justification, lieu sollicité (réunion DG du 06/11/2026)
+  duree: 20,
+  justification: 34,
+  lieuSollicite: 26,
 };
 const MM = 56.7; // twips par millimètre
 const MARGE = 16; // mm, comme la version imprimée
-const LARGEUR_UTILE = 210 - 2 * MARGE;
+/** Largeur de la page (mm) : 210 en portrait, 297 quand le tableau ne tient pas (06/11/2026). */
+let LARGEUR_PAGE = 210;
+let LARGEUR_UTILE = LARGEUR_PAGE - 2 * MARGE;
+
+/** Même calcul que l'écran (note-imprimable.tsx, enPaysage) : le nom garde au moins 30 mm (comme avant). */
+function enPaysage(c: {
+  classification?: boolean;
+  colonnes: { cle: string }[];
+}) {
+  if (c.classification) return false;
+  const fixes = [
+    'n',
+    ...c.colonnes.map((x) => x.cle).filter((k) => k !== 'nom'),
+  ].reduce((s, k) => s + (LARGEUR[k] ?? 20), 0);
+  return fixes + 30 > 210 - 2 * MARGE;
+}
 /** Police de la note en cours d'écriture (Times New Roman par défaut, ou Sylfaen : paramètre). */
 let POLICE = 'Times New Roman';
 /** Sylfaen est jusqu'à 6 % plus large que Times New Roman : les largeurs estimées en tiennent compte. */
@@ -307,6 +327,9 @@ export async function noteWord(
   ELARGISSEMENT = POLICE === 'Sylfaen' ? 1.06 : 1;
   const c = n.contenu;
   const e = n.entete;
+  const paysage = enPaysage(c);
+  LARGEUR_PAGE = paysage ? 297 : 210;
+  LARGEUR_UTILE = LARGEUR_PAGE - 2 * MARGE;
   // Visas de l'en-tête : service (chef de service, sinon de bureau), direction, direction générale
   const avis = (niv: string) =>
     (n.conformite ?? []).find((x) => x.niveau === niv && x.conforme)?.par ??
@@ -720,7 +743,14 @@ export async function noteWord(
       {
         properties: {
           page: {
-            size: { width: Math.round(210 * MM), height: Math.round(297 * MM) },
+            size: paysage
+              ? {
+                  // docx inverse lui-même largeur et hauteur en paysage
+                  width: Math.round(210 * MM),
+                  height: Math.round(297 * MM),
+                  orientation: PageOrientation.LANDSCAPE,
+                }
+              : { width: Math.round(210 * MM), height: Math.round(297 * MM) },
             margin: {
               top: Math.round(12 * MM),
               bottom: Math.round(20 * MM),

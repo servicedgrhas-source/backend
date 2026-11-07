@@ -272,6 +272,57 @@ const COLONNES_POSSIBLES: Record<string, string> = {
   etablissement: 'Etablissement',
 };
 
+/**
+ * Colonnes possibles d'une note de mutation (en plus du N° et du nom). « Durée » et « Justification »
+ * sont mises par défaut : le DG veut voir sur le projet de note de quoi décider (réunion du 06/11/2026).
+ */
+const COLONNES_MUTATION: Record<string, string> = {
+  ge: 'G/E',
+  matricule: 'Matricule Solde',
+  cycle: 'Cycle',
+  specialite: 'Spécialité',
+  ancienPoste: 'Ancien Poste',
+  origine: "Dépar-tement d'origine",
+  accueil: "Dépar-tement d'accueil",
+  lieuSollicite: 'Lieu sollicité',
+  duree: 'Durée dans le poste',
+  justification: 'Justification',
+  obs: 'Obs',
+};
+const COLONNES_MUTATION_DEFAUT = [
+  'ge',
+  'matricule',
+  'cycle',
+  'specialite',
+  'ancienPoste',
+  'origine',
+  'duree',
+  'justification',
+  'obs',
+];
+
+/** « 7 ans », « 8 mois », « 3 ans 2 mois » ; sinon calculée depuis la prise de service. */
+function dureeDansLePoste(d: DemandeMutation) {
+  let mois = d.dureeMois;
+  if ((mois === null || mois === undefined) && d.datePriseService) {
+    const debut = new Date(d.datePriseService);
+    if (!Number.isNaN(debut.getTime())) {
+      const m = new Date();
+      mois =
+        (m.getFullYear() - debut.getFullYear()) * 12 +
+        (m.getMonth() - debut.getMonth());
+    }
+  }
+  if (mois === null || mois === undefined || mois < 0) return null;
+  const a = Math.floor(mois / 12);
+  const r = mois % 12;
+  return (
+    [a ? `${a} an${a > 1 ? 's' : ''}` : '', r ? `${r} mois` : '']
+      .filter(Boolean)
+      .join(' ') || 'Moins d’un mois'
+  );
+}
+
 /** « Quatre-vingt-deux (82) », « Quatre (04) » : effectif d'un département sur la note. */
 const effectifEnLettres = (n: number) => {
   const l = nombreEnLettres(n);
@@ -670,26 +721,54 @@ export class NotesService {
       .filter((d) => (d.lotRangement ?? null) === (n.lotRangement ?? null));
   }
 
-  /** Colonnes d'une note de mutation (la permutation dit aussi le département d'accueil). */
-  private colonnesMutation(motif: MotifMutation): Colonne[] {
+  /**
+   * Colonnes d'une note de mutation : celles choisies pour la note, sinon celles par défaut (avec la
+   * durée et la justification, 06/11/2026). La permutation dit aussi le département d'accueil. Le
+   * rectificatif garde les colonnes du modèle (« au lieu de … lire … »).
+   */
+  private colonnesMutation(
+    motif: MotifMutation,
+    choisies?: string[] | null,
+    rectificatif = false,
+  ): Colonne[] {
     const permutation = motif === 'PERMUTATION';
+    let cles = choisies?.length
+      ? choisies.filter((k) => COLONNES_MUTATION[k])
+      : COLONNES_MUTATION_DEFAUT.flatMap((k) =>
+          k === 'origine' && permutation ? [k, 'accueil'] : [k],
+        );
+    if (rectificatif)
+      cles = cles.filter((k) => k !== 'duree' && k !== 'justification');
     return [
       { cle: 'nom', libelle: 'Noms et prénoms' },
-      { cle: 'ge', libelle: 'G/E' },
-      { cle: 'matricule', libelle: 'Matricule Solde' },
-      { cle: 'cycle', libelle: 'Cycle' },
-      { cle: 'specialite', libelle: 'Spécialité' },
-      { cle: 'ancienPoste', libelle: 'Ancien Poste' },
-      { cle: 'origine', libelle: "Dépar-tement d'origine" },
-      ...(permutation
-        ? [{ cle: 'accueil', libelle: "Dépar-tement d'accueil" }]
-        : []),
-      { cle: 'obs', libelle: 'Obs' },
+      ...cles.map((cle) => ({ cle, libelle: COLONNES_MUTATION[cle] })),
     ];
   }
 
+  /** Ce qui justifie la demande : la pièce ou le motif précis, le permutant, l'acte de mariage. */
+  private justificationMutation(d: DemandeMutation, permutant?: string | null) {
+    const t = (d.justificatif ?? '').trim();
+    if (d.motif === 'PERMUTATION')
+      return (
+        [permutant ? `Permute avec ${permutant}` : '', t]
+          .filter(Boolean)
+          .join(' ; ') || null
+      );
+    if (d.motif === 'RAPPROCHEMENT_CONJOINT')
+      return t
+        ? /acte|mariage/i.test(t)
+          ? t
+          : `Acte de mariage : ${t}`
+        : null;
+    return t || null;
+  }
+
   /** Ligne d'une demande dans la note (aussi les « au lieu de » d'un rectificatif). */
-  private ligneMutation(d: DemandeMutation, n: number): LigneNote {
+  private ligneMutation(
+    d: DemandeMutation,
+    n: number,
+    permutant?: string | null,
+  ): LigneNote {
     return {
       id: d.id,
       n,
@@ -711,6 +790,9 @@ export class NotesService {
       ancienPoste: d.lieuService,
       origine: d.departementOrigine?.nom ?? null,
       accueil: d.departementSollicite?.nom ?? null,
+      lieuSollicite: d.lieuSollicite,
+      duree: dureeDansLePoste(d),
+      justification: this.justificationMutation(d, permutant),
       obs:
         d.typeAgent === 'FINALISTE'
           ? 'Finaliste'
@@ -730,8 +812,24 @@ export class NotesService {
     const liste = await this.demandesDeLaNoteMutation(note);
     const deps = await this.deps.find({ order: { ordre: 'ASC' } });
     const permutation = motif === 'PERMUTATION';
-    const colonnes = this.colonnesMutation(motif);
-    const ligne = (d: DemandeMutation, n: number) => this.ligneMutation(d, n);
+    const colonnes = this.colonnesMutation(motif, note.colonnesNote);
+    // Le nom du permutant (pour la colonne « Justification »)
+    const permutants = new Map<string, string>();
+    const avec = liste
+      .map((d) => d.permutationAvecId)
+      .filter((x): x is string => !!x);
+    if (avec.length)
+      for (const x of await this.demandes.find({
+        where: { id: In(avec) },
+        select: { id: true, nomComplet: true },
+      }))
+        permutants.set(x.id, x.nomComplet);
+    const ligne = (d: DemandeMutation, n: number) =>
+      this.ligneMutation(
+        d,
+        n,
+        d.permutationAvecId ? permutants.get(d.permutationAvecId) : null,
+      );
     const tri = (a: DemandeMutation, b: DemandeMutation) =>
       a.nomComplet.localeCompare(b.nomComplet, 'fr');
     const sections: SectionNote[] = permutation
@@ -1340,7 +1438,11 @@ export class NotesService {
       return {
         titre: 'RECTIFICATIF',
         introduction: '',
-        colonnes: this.colonnesMutation(n.motif as MotifMutation),
+        colonnes: this.colonnesMutation(
+          n.motif as MotifMutation,
+          n.colonnesNote,
+          true,
+        ),
         classification: false,
         sections,
         total,
@@ -2067,16 +2169,18 @@ export class NotesService {
     cles: string[] | null,
   ) {
     const n = await this.charger(id);
-    if (n.module !== 'ENROLEMENT')
+    if (n.module !== 'ENROLEMENT' && n.module !== 'MUTATION')
       throw new BadRequestException(
-        'Le choix des colonnes concerne les notes d’enrôlement.',
+        'Le choix des colonnes concerne les notes d’enrôlement et de mutation.',
       );
+    const possibles =
+      n.module === 'MUTATION' ? COLONNES_MUTATION : COLONNES_POSSIBLES;
     if (n.statut === 'SIGNEE')
       throw new BadRequestException(
         'La note est signée : elle ne change plus.',
       );
     const liste = cles?.length ? [...new Set(cles)] : null;
-    if (liste?.some((k) => !COLONNES_POSSIBLES[k]))
+    if (liste?.some((k) => !possibles[k]))
       throw new BadRequestException('Colonne inconnue.');
     await this.notes.update(id, { colonnesNote: liste });
     await this.journal.log(u, 'MODIFICATION_NOTE', 'note_service', id, {
@@ -2698,6 +2802,48 @@ export class NotesService {
     return res;
   }
 
+  /** Clé d'un département sur la note : son titre sans le numéro romain (« II- … »). */
+  private cleSection(titre: string | null | undefined) {
+    return normaliser((titre ?? '').replace(/^[IVXLCDM]+\s*-\s*/i, ''));
+  }
+
+  /**
+   * Numéros d'un ADDITIF (réunion DG 06/11/2026) : dans chaque département, la liste reprend après
+   * le dernier numéro de la note signée qu'il complète, et des additifs déjà validés de cette note.
+   * Un département absent de la note reprend à 1.
+   */
+  private async continuerNumeros(
+    n: NoteService,
+    parentId: string,
+    contenu: ContenuNote,
+  ) {
+    const deja = await this.notes.find({
+      where: [{ id: parentId }, { additifDe: parentId, id: Not(n.id) }],
+      select: ['id', 'contenu'],
+    });
+    const derniers = new Map<string, number>();
+    for (const x of deja) {
+      const c = x.contenu as ContenuNote | null;
+      if (!c) continue; // additif pas encore validé : ses numéros ne sont pas pris
+      for (const sec of c.sections ?? []) {
+        const k = this.cleSection(sec.titre);
+        const max = Math.max(
+          0,
+          ...(sec.lignes ?? []).map((l) => Number(l.n) || 0),
+        );
+        derniers.set(k, Math.max(derniers.get(k) ?? 0, max));
+      }
+    }
+    for (const sec of contenu.sections ?? []) {
+      const debut = derniers.get(this.cleSection(sec.titre)) ?? 0;
+      if (debut)
+        sec.lignes = sec.lignes.map((l) => ({
+          ...l,
+          n: (Number(l.n) || 0) + debut,
+        }));
+    }
+  }
+
   async obtenir(id: string) {
     const trouvee = await this.notes.findOne({ where: { id } });
     if (!trouvee) throw new NotFoundException('Note introuvable');
@@ -2728,6 +2874,10 @@ export class NotesService {
         contenu.titre = n.additifDe ? 'ADDITIF' : 'RECTIFICATIF';
         contenu.introduction = await this.introductionLiee(n, liee);
       }
+      // Un additif encore en préparation continue les numéros de la note complétée (figés ensuite
+      // avec le contenu, à la validation)
+      if (n.additifDe && !n.contenu)
+        await this.continuerNumeros(n, n.additifDe, contenu);
       // Introduction et conclusion réécrites pour cette note (06/11/2026)
       if (n.textesLibres?.introduction)
         contenu.introduction = n.textesLibres.introduction.replaceAll(
@@ -3601,6 +3751,286 @@ export class NotesService {
   }
 
   /** La note au format Excel (mêmes informations que la version imprimée). */
+  /**
+   * RÉCAPITULATIF d'une note (réunion DG du 06/11/2026) : « une note à laquelle on a ajouté des noms,
+   * on a rectifié… il faut connaître la liste définitive ». On part de la note de base, on ajoute
+   * les personnes de ses additifs, on applique ses rectificatifs (« au lieu de … lire … » ; la
+   * personne remplacée sort de la liste, celle qui la remplace y entre). Rien n'est enregistré :
+   * c'est une vue, recalculée à chaque fois. Les notes pas encore signées sont signalées.
+   */
+  async recapitulatif(id: string) {
+    let racine = await this.charger(id);
+    // Remonter à la note de base (un rectificatif d'additif remonte aussi)
+    for (let i = 0; i < 5; i++) {
+      const parent = racine.additifDe ?? racine.rectificatifDe;
+      if (!parent) break;
+      racine = await this.charger(parent);
+    }
+    if (racine.module !== 'ENROLEMENT' && racine.module !== 'MUTATION')
+      throw new BadRequestException(
+        'Le récapitulatif concerne les notes d’enrôlement et de mutation.',
+      );
+    const additifs = await this.notes.find({
+      where: { additifDe: racine.id },
+      order: { creeLe: 'ASC' },
+    });
+    const rectificatifs = await this.notes.find({
+      where: { rectificatifDe: In([racine.id, ...additifs.map((a) => a.id)]) },
+      order: { creeLe: 'ASC' },
+    });
+    const signee = (x: NoteService) => x.statut === 'SIGNEE';
+    const nomDe = (x: NoteService, type: string) =>
+      `${type}${x.numero ? ` n° ${x.numero}` : ''}${x.dateSignature ? ` du ${x.dateSignature.split('-').reverse().join('/')}` : ''}${signee(x) ? '' : ' (pas encore signé)'}`;
+    const base = await this.obtenir(racine.id);
+    const colonnes = base.contenu.colonnes;
+    // Les sections, par département (titre sans le numéro romain)
+    type Ligne = {
+      id: string;
+      n: number;
+      source: string;
+      changements: string[];
+      provisoire: boolean;
+      [cle: string]: unknown;
+    };
+    const sections = new Map<string, { titre: string; lignes: Ligne[] }>();
+    const sectionDe = (titre: string | null) => {
+      const t = (titre ?? '').replace(/^[IVXLCDM]+\s*-\s*/i, '');
+      const k = this.cleSection(t);
+      if (!sections.has(k)) sections.set(k, { titre: t, lignes: [] });
+      return sections.get(k)!;
+    };
+    const ajouter = async (x: NoteService, type: string) => {
+      const o = x.id === racine.id ? base : await this.obtenir(x.id);
+      let titre: string | null = null;
+      for (const s of o.contenu.sections) {
+        if (s.titre) titre = s.titre;
+        const sec = sectionDe(titre);
+        for (const l of s.lignes)
+          sec.lignes.push({
+            ...l,
+            source: nomDe(x, type),
+            changements: [],
+            provisoire: !signee(x),
+          });
+      }
+    };
+    await ajouter(racine, 'Note');
+    for (const a of additifs) await ajouter(a, 'Additif');
+    // Rectificatifs : corrections et remplacements
+    const deps = new Map(
+      (await this.deps.find()).map((d) => [d.id, d] as const),
+    );
+    const sectionDuDepartement = (depId: number) => {
+      const d = deps.get(depId);
+      if (!d) return null;
+      const nom = normaliser(d.nom);
+      for (const [k, s] of sections) if (k.endsWith(nom)) return s;
+      return sectionDe(titreDepartement(d));
+    };
+    const retires: {
+      nom: string;
+      raison: string;
+      provisoire: boolean;
+    }[] = [];
+    const champsLire: [string, string][] = [
+      ['nom', 'nom'],
+      ['matricule', 'matricule'],
+      ['ge', 'ge'],
+      ['cycle', 'cycle'],
+      ['specialite', 'specialite'],
+      ['ancienPoste', 'ancienPoste'],
+      ['lieuSollicite', 'lieuSollicite'],
+      ['naissance', 'naissance'],
+      ['lieu', 'lieu'],
+      ['promotion', 'promotion'],
+      ['diplome', 'diplome'],
+    ];
+    for (const r of rectificatifs) {
+      const nomR = nomDe(r, 'Rectificatif');
+      for (const x of r.rectifications ?? []) {
+        let trouve: { sec: { lignes: Ligne[] }; i: number } | null = null;
+        for (const sec of sections.values()) {
+          const i = sec.lignes.findIndex((l) => l.id === x.enroleId);
+          if (i >= 0) trouve = { sec, i };
+        }
+        if (!trouve) continue;
+        const avant = trouve.sec.lignes[trouve.i];
+        const lire = x.lire as unknown as Record<string, unknown>;
+        const nouvelle: Ligne = {
+          ...avant,
+          changements: [...avant.changements],
+          provisoire: avant.provisoire || !signee(r),
+        };
+        for (const [cle, champ] of champsLire)
+          if (cle in avant && lire[champ] !== undefined)
+            nouvelle[cle] = (lire[champ] as string | null) ?? null;
+        if (x.type === 'REMPLACEMENT') {
+          // Ce que le rectificatif ne dit pas de la personne qui remplace reste vide (pas la
+          // durée ou la justification de celle qui est remplacée)
+          const dits = new Set(
+            champsLire
+              .filter(([, champ]) => lire[champ] !== undefined)
+              .map(([cle]) => cle),
+          );
+          for (const c of colonnes)
+            if (c.cle !== 'origine' && !dits.has(c.cle)) nouvelle[c.cle] = null;
+          if (x.lire.enroleId) nouvelle.id = x.lire.enroleId;
+          nouvelle.source = nomR;
+          nouvelle.changements = [`Remplace ${String(avant.nom)}`];
+          retires.push({
+            nom: String(avant.nom),
+            raison: `Remplacé(e) par ${x.lire.nom} (${nomR})`,
+            provisoire: !signee(r),
+          });
+        } else {
+          const ecarts = champsLire
+            .filter(
+              ([cle]) =>
+                cle in avant &&
+                String(avant[cle] ?? '') !== String(nouvelle[cle] ?? ''),
+            )
+            .map(
+              ([cle]) =>
+                `${cle === 'nom' ? 'nom' : (colonnes.find((c) => c.cle === cle)?.libelle.replace('-', '') ?? cle)} : ${String(avant[cle] ?? '—')} → ${String(nouvelle[cle] ?? '—')}`,
+            );
+          nouvelle.changements.push(
+            `Rectifié (${nomR})${ecarts.length ? ` : ${ecarts.join(' ; ')}` : ''}`,
+          );
+        }
+        // Un autre département : la ligne change de tableau
+        const cible =
+          x.lire.departementId != null
+            ? sectionDuDepartement(x.lire.departementId)
+            : null;
+        if (cible && cible !== trouve.sec) {
+          trouve.sec.lignes.splice(trouve.i, 1);
+          cible.lignes.push(nouvelle);
+          if (x.type !== 'REMPLACEMENT')
+            nouvelle.changements.push(`Département changé (${nomR})`);
+        } else trouve.sec.lignes[trouve.i] = nouvelle;
+      }
+    }
+    // Numéros définitifs : de 1 à n dans chaque département
+    const finales = [...sections.values()]
+      .filter((s) => s.lignes.length)
+      .map((s, i) => ({
+        titre: s.titre ? `${entierVersRomain(i + 1)}- ${s.titre}` : null,
+        lignes: s.lignes.map((l, j) => ({ ...l, n: j + 1 })),
+      }));
+    const total = finales.reduce((t, s) => t + s.lignes.length, 0);
+    const notesFamille = [
+      {
+        id: racine.id,
+        type: 'NOTE',
+        nom: nomDe(racine, 'Note'),
+        signee: signee(racine),
+        effectif: base.contenu.total,
+      },
+      ...(await Promise.all(
+        additifs.map(async (a) => ({
+          id: a.id,
+          type: 'ADDITIF',
+          nom: nomDe(a, 'Additif'),
+          signee: signee(a),
+          effectif: (await this.obtenir(a.id)).contenu.total,
+        })),
+      )),
+      ...rectificatifs.map((r) => ({
+        id: r.id,
+        type: 'RECTIFICATIF',
+        nom: nomDe(r, 'Rectificatif'),
+        signee: signee(r),
+        effectif: (r.rectifications ?? []).length,
+      })),
+    ];
+    return {
+      racine: {
+        id: racine.id,
+        libelle: base.libelle,
+        module: racine.module,
+        numero: racine.numero,
+        dateSignature: racine.dateSignature,
+        statut: racine.statut,
+      },
+      notes: notesFamille,
+      colonnes,
+      sections: finales,
+      retires,
+      total,
+      // Une note vide pas encore signée (additif sans personne) ne change rien à la liste
+      provisoire: notesFamille.some((x) => !x.signee && x.effectif > 0),
+    };
+  }
+
+  /** Le récapitulatif en Excel : la liste définitive, avec la provenance et les changements. */
+  async recapitulatifExcel(id: string) {
+    const r = await this.recapitulatif(id);
+    const wb = new ExcelJS.Workbook();
+    const ws = wb.addWorksheet('Récapitulatif', {
+      pageSetup: {
+        paperSize: 9,
+        orientation: 'landscape',
+        fitToPage: true,
+        fitToWidth: 1,
+        fitToHeight: 0,
+      },
+    });
+    const cles = ['n', ...r.colonnes.map((c) => c.cle)];
+    ws.addRow([`RÉCAPITULATIF — ${r.racine.libelle}`]).font = {
+      bold: true,
+      size: 13,
+    };
+    ws.addRow([
+      r.notes.map((x) => x.nom).join(' ; ') +
+        (r.provisoire
+          ? ' — liste provisoire : une note de la famille n’est pas encore signée.'
+          : ''),
+    ]);
+    ws.addRow([]);
+    const entete = ws.addRow([
+      'N°',
+      ...r.colonnes.map((c) => c.libelle.replace('-', '')),
+      'Vient de',
+      'Changements',
+    ]);
+    entete.font = { bold: true };
+    for (const s of r.sections) {
+      if (s.titre) ws.addRow([s.titre]).font = { bold: true };
+      for (const l of s.lignes)
+        ws.addRow([
+          ...cles.map((k) => l[k] ?? ''),
+          l.source,
+          l.changements.join(' ; '),
+        ]);
+    }
+    if (r.retires.length) {
+      ws.addRow([]);
+      ws.addRow(['Ne figurent plus sur la liste']).font = { bold: true };
+      for (const x of r.retires) ws.addRow(['', x.nom, x.raison]);
+    }
+    ws.addRow([]);
+    ws.addRow([`Total : ${r.total}`]).font = { bold: true };
+    ws.columns = [...cles, 'source', 'changements'].map((k) => ({
+      width:
+        k === 'n'
+          ? 5
+          : k === 'nom'
+            ? 34
+            : k === 'changements'
+              ? 48
+              : k === 'source'
+                ? 30
+                : 16,
+    }));
+    return {
+      nom: `Récapitulatif - ${r.racine.libelle}.xlsx`.replace(
+        /[\\/:*?"<>|]/g,
+        '-',
+      ),
+      contenu: Buffer.from(await wb.xlsx.writeBuffer()),
+    };
+  }
+
   async excel(id: string): Promise<{ nom: string; contenu: Buffer }> {
     const n = await this.obtenir(id);
     const c = n.contenu;

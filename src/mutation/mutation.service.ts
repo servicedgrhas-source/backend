@@ -23,8 +23,10 @@ import {
   type GroupeMutation,
   type MotifMutation,
 } from '../common/referentiels';
+import { gradeAbrege } from '../nominations/categories';
 import {
   cleCompacte,
+  enTexte,
   lireDate,
   nettoyer,
   normaliser,
@@ -510,6 +512,129 @@ export class MutationService {
     if (d.noteId)
       throw new BadRequestException('Demande déjà dans une note validée');
     return d;
+  }
+
+  /**
+   * Compléter les demandes depuis la base du personnel, avant le traitement (DG, 06/11/2026) : « au
+   * lieu d'aller chercher, il va dans la base générale, il trouve, il fait la mise à jour ». Seules
+   * les cases VIDES sont remplies (matricule, grade et échelon, département d'origine, lieu de
+   * service, spécialité, date de prise de service), et seulement depuis une fiche sûre. Les demandes
+   * déjà dans une note ne bougent pas. La base du personnel n'est pas modifiée.
+   * `essai` : on montre ce qui serait rempli, sans rien enregistrer.
+   */
+  async completerDepuisPersonnel(u: UtilisateurConnecte, essai: boolean) {
+    const demandes = await this.repo.find({
+      where: { noteId: IsNull(), retiree: false },
+    });
+    const { fiches, doute, sansFiche } =
+      await this.rattachement.fichesSuresMutation(demandes.map((d) => d.id));
+    const vide = (v: unknown) =>
+      v === null || v === undefined || String(v).trim() === '';
+    const texteDe = (v: unknown) => {
+      const t = enTexte(v).replace(/\s+/g, ' ').trim();
+      return t || null;
+    };
+    const parChamp: Record<string, number> = {};
+    const exemples: {
+      id: string;
+      nom: string;
+      fiche: string;
+      ajouts: { champ: string; valeur: string }[];
+    }[] = [];
+    let completees = 0;
+    for (const d of demandes) {
+      const f = fiches.get(d.id);
+      if (!f) continue;
+      const don = f.donnees ?? {};
+      const ajouts: { champ: string; valeur: string }[] = [];
+      const champs: Partial<DemandeMutation> = {};
+      const mettre = <K extends keyof DemandeMutation>(
+        k: K,
+        libelle: string,
+        v: DemandeMutation[K] | null,
+        affiche?: string,
+      ) => {
+        if (vide(v) || !vide(d[k])) return;
+        champs[k] = v as DemandeMutation[K];
+        ajouts.push({ champ: libelle, valeur: affiche ?? String(v) });
+        parChamp[libelle] = (parChamp[libelle] ?? 0) + 1;
+      };
+      const matricule = texteDe(f.matricule) ?? texteDe(don.MATRICULE_SOLDE);
+      if (matricule && cleCompacte(matricule) !== 'X')
+        mettre('matricule', 'Matricule solde', matricule);
+      if (vide(d.gradeBrut) && vide(d.grade)) {
+        const abrege = gradeAbrege(texteDe(don.GRADE));
+        const echelon = /\d{1,2}/.exec(enTexte(don.ECHELON))?.[0];
+        if (abrege) {
+          const brut = echelon ? `${abrege} ${Number(echelon)}` : abrege;
+          const ge = lireGradeEchelon(brut);
+          mettre('gradeBrut', 'Grade et échelon', brut);
+          if (champs.gradeBrut) {
+            champs.grade = ge.grade;
+            champs.echelon = ge.echelon;
+          }
+        }
+      }
+      mettre(
+        'departementOrigineId',
+        "Département d'origine",
+        f.departementId,
+        (await this.nomDepartement(f.departementId)) ?? undefined,
+      );
+      mettre('lieuService', 'Lieu de service', texteDe(don.LIEU_SERVICE));
+      mettre('specialite', 'Spécialité', texteDe(don.SPECIALITE));
+      const prise = enTexte(don.DATE_PRISE_SERVICE).slice(0, 10);
+      if (/^\d{4}-\d{2}-\d{2}$/.test(prise))
+        mettre(
+          'datePriseService',
+          'Date de prise de service',
+          prise,
+          prise.split('-').reverse().join('/'),
+        );
+      if (!ajouts.length) continue;
+      completees++;
+      if (exemples.length < 300)
+        exemples.push({
+          id: d.id,
+          nom: d.nomComplet,
+          fiche: f.nomComplet,
+          ajouts,
+        });
+      if (!essai) {
+        const apres = { ...d, ...champs };
+        await this.repo.update(d.id, {
+          ...champs,
+          anomalies: anomaliesMutation(apres),
+        });
+      }
+    }
+    if (!essai)
+      await this.journal.log(
+        u,
+        'MUTATIONS_COMPLETEES_PERSONNEL',
+        'demande_mutation',
+        null,
+        { completees, parChamp },
+      );
+    return {
+      essai,
+      lues: demandes.length,
+      avecFiche: fiches.size,
+      completees,
+      parChamp,
+      doute,
+      sansFiche,
+      exemples,
+    };
+  }
+
+  private nomsDeps: Map<number, string> | null = null;
+  private async nomDepartement(id: number | null) {
+    if (!id) return null;
+    this.nomsDeps ??= new Map(
+      (await this.deps.find()).map((x) => [x.id, x.nom] as const),
+    );
+    return this.nomsDeps.get(id) ?? null;
   }
 
   /**

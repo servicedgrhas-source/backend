@@ -8,6 +8,11 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { In, Repository } from 'typeorm';
 import type { UtilisateurConnecte } from '../auth/auth';
 import { parPreseance, posteResponsable } from '../circuit/catalogue';
+import {
+  ABREVIATIONS_CYCLE,
+  nomAbrege,
+  parCycleEtNom,
+} from '../common/etablissement-nom';
 import { matiereEnseignant, reconnaitreMatiere } from './matieres';
 import { normaliser } from '../common/texte';
 import { JournalService, ParametresService } from '../core/core.service';
@@ -125,6 +130,15 @@ export class EtablissementsService {
     private readonly journal: JournalService,
   ) {}
 
+  /** Nom d'une école tel qu'affiché : l'abréviation du cycle devant (« EP Moungali 3 »), réglée dans les paramètres. */
+  nomEcole(nom: string, cycle: string | null) {
+    return nomAbrege(nom, cycle, (c) => {
+      const [cle, defaut] = ABREVIATIONS_CYCLE[c] ?? [];
+      if (!cle) return null;
+      return (this.params.get(cle) || defaut || '').trim() || null;
+    });
+  }
+
   /** Heures de cours par semaine d'un enseignant : 20 h au collège, 15 h au lycée (paramètres). */
   heuresEnseignant(cycle?: string | null) {
     return cycle === 'LYCEE'
@@ -204,12 +218,19 @@ export class EtablissementsService {
           sigle: string;
           type: string;
           ordre: number;
+          cycle: string | null;
         }[]
       >(
-        `SELECT id, nom, sigle, type, ordre FROM structure WHERE "parentId" = $1 AND actif`,
+        `SELECT id, nom, sigle, type, ordre, cycle FROM structure WHERE "parentId" = $1 AND actif`,
         [id],
       ),
     ]);
+    // Les écoles sous une structure : par cycle, puis l'ordre alphabétique (DG, 06/11/2026)
+    const etabs = dessous
+      .filter((x) => x.type === 'ETABLISSEMENT')
+      .map((x) => ({ ...x, nom: this.nomEcole(x.nom, x.cycle) }))
+      .sort(parCycleEtNom);
+    const autres = dessous.filter((x) => x.type !== 'ETABLISSEMENT');
     return {
       structure: {
         id: s.id,
@@ -222,7 +243,7 @@ export class EtablissementsService {
         responsableInterim: s.responsableInterim,
       },
       chemin,
-      dessous: dessous.sort(parPreseance),
+      dessous: [...autres.sort(parPreseance), ...etabs],
       // Le responsable en poste : sa fonction est celle de la structure (chef de service, inspecteur…)
       agents: (agents.get(id) ?? []).map((a) => ({
         ...a,
@@ -300,11 +321,18 @@ export class EtablissementsService {
          LEFT JOIN departement d ON d.id = s."departementId"
          LEFT JOIN structure i ON i.id = s."parentId"
         WHERE ${conds.join(' AND ')}
-        ORDER BY (SELECT count(*) FROM classe c WHERE c."structureId" = s.id AND c."anneeScolaire" = $1) DESC, s.nom
+        ORDER BY CASE s.cycle WHEN 'PRESCOLAIRE' THEN 1 WHEN 'PRIMAIRE' THEN 2 WHEN 'COLLEGE' THEN 3 WHEN 'LYCEE' THEN 4 ELSE 9 END, s.nom
         LIMIT 200`,
       params,
     );
-    return { annee, lignes };
+    // Par cycle (préscolaire, primaire, collège, lycée), puis l'ordre alphabétique du nom abrégé
+    // (« EP Moungali 3 ») : DG, 06/11/2026
+    return {
+      annee,
+      lignes: lignes
+        .map((l) => ({ ...l, nom: this.nomEcole(l.nom, l.cycle) }))
+        .sort(parCycleEtNom),
+    };
   }
 
   /* ------------------------------ Fiche d'une école ------------------------------ */

@@ -186,6 +186,41 @@ export class RattachementService {
   }
 
   /**
+   * La fiche sûre de chaque mutation (même matricule, ou même nom et une seule fiche possible), avec
+   * ses rubriques : pour compléter les cases vides des demandes (06/11/2026). Rien n'est écrit.
+   * Renvoie aussi les demandes en doute (plusieurs fiches) et sans fiche.
+   */
+  async fichesSuresMutation(ids: string[]) {
+    const ix = await this.indexPersonnel();
+    const sures = new Map<string, number>();
+    let doute = 0;
+    let sansFiche = 0;
+    for (const d of await this.demandes('MUTATION', ids)) {
+      const r = this.chercher(d, ix);
+      if ((r.etat === 'MATRICULE' || r.etat === 'NOM') && r.agentId)
+        sures.set(d.id, r.agentId);
+      else if (r.etat === 'A_VERIFIER') doute++;
+      else sansFiche++;
+    }
+    const fiches = sures.size
+      ? await this.agents.find({
+          where: { id: In([...new Set(sures.values())]) },
+          select: ['id', 'nomComplet', 'matricule', 'departementId', 'donnees'],
+        })
+      : [];
+    const parId = new Map(fiches.map((f) => [f.id, f] as const));
+    return {
+      fiches: new Map(
+        [...sures].flatMap(([d, a]) =>
+          parId.get(a) ? [[d, parId.get(a)!] as const] : [],
+        ),
+      ),
+      doute,
+      sansFiche,
+    };
+  }
+
+  /**
    * Rattache les demandes pas encore rattachées (toutes, ou celles données). Les décisions déjà
    * prises (rattachée, créée, laissée sans fiche) ne sont pas refaites.
    */

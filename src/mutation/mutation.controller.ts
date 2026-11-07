@@ -233,6 +233,19 @@ export class MutationController {
     return this.service.creer(u, dto);
   }
 
+  /**
+   * Compléter les cases vides des demandes depuis la base du personnel (fiches sûres seulement).
+   * `?essai=1` : ce qui serait rempli, sans rien enregistrer.
+   */
+  @Roles(...ROLES_TRAITEMENT)
+  @Post('completer-personnel')
+  completerDepuisPersonnel(
+    @Utilisateur() u: UtilisateurConnecte,
+    @Query('essai') essai?: string,
+  ) {
+    return this.service.completerDepuisPersonnel(u, essai === '1');
+  }
+
   /** Corriger les points à vérifier d'une demande (depuis la liste), ou les déclarer vérifiés. */
   @Roles(...ROLES_TRAITEMENT)
   @Patch(':id/anomalies')

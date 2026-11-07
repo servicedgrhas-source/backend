@@ -129,6 +129,8 @@ export class LiaisonVolontairesService implements OnApplicationBootstrap {
         NOMS_PRENOMS: v.nomComplet,
         DATE_NAISSANCE: v.dateNaissance,
         LIEU_NAISSANCE: v.lieuNaissance,
+        // Sexe lu dans les bases biométrique et des communautaires (07/11/2026)
+        GENRE: v.genre,
         TELEPHONE_1: v.telephone,
         DIPLOME_PRO: v.diplome,
         SPECIALITE: v.specialite,

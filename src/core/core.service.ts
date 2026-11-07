@@ -130,6 +130,23 @@ export const PARAMETRES_DEFAUT: Record<string, [string, string]> = {
     'MEPPSA-CAB-DGRHAS-DRSC-SR',
     'Suffixe du numéro de note : le chemin hiérarchique, du cabinet au service qui a initié la note',
   ],
+  // Abréviation du cycle devant le nom des établissements (DG, 06/11/2026 : « EP devant le nom »)
+  ABREV_PRESCOLAIRE: [
+    'CEP',
+    'Abréviation des centres d’éducation préscolaire, écrite devant leur nom (CEP Bacongo)',
+  ],
+  ABREV_PRIMAIRE: [
+    'EP',
+    'Abréviation des écoles primaires, écrite devant leur nom (EP Moungali 3)',
+  ],
+  ABREV_COLLEGE: [
+    'CEG',
+    'Abréviation des collèges d’enseignement général, écrite devant leur nom (CEG Mindouli)',
+  ],
+  ABREV_LYCEE: [
+    'Lycée',
+    'Mot écrit devant le nom des lycées qui ne commencent pas déjà par « Lycée »',
+  ],
   PIED_PAGE_DROITE: [
     // « MEPPSA/2026 » et non plus « MEPPSA 2026 » (DG, 01/11/2026)
     'MEPPSA/{an}',

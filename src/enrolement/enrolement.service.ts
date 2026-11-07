@@ -831,9 +831,33 @@ export class EnrolementService implements OnApplicationBootstrap {
         (e) => e.diplome === 'LICENCE' && noteEnrolementDe(e) === 'MASTER',
       ],
     ];
+    // Face à l'enveloppe (DG, 06/11/2026 : « si je prends tout le monde, combien ? ») : par cycle,
+    // les dossiers de la base, la bourse, ce que coûterait de tous les prendre (12 mois)
+    const enveloppe = Number(c.enveloppe ?? 0);
+    const parCycle = CYCLES_ENROLEMENT.map((cycle) => {
+      const n = base.filter(
+        (e) => e.cycle === cycle && e.etat !== 'NON_RETENU',
+      ).length;
+      const montant = this.bourse(c, cycle);
+      return {
+        cycle,
+        dossiers: n,
+        places: c.placesParCycle?.[cycle] ?? 0,
+        bourse: montant,
+        coutTous: n * montant * MOIS,
+      };
+    });
+    const coutTous = parCycle.reduce((t, x) => t + x.coutTous, 0);
     return {
       campagne: { id: c.id, annee: c.annee, anneeScolaire: c.anneeScolaire },
       parmi,
+      budget: {
+        enveloppe,
+        mois: MOIS,
+        parCycle,
+        coutTous,
+        ecart: enveloppe > 0 ? enveloppe - coutTous : null,
+      },
       parDiplome,
       total: compter(liste),
       college: {

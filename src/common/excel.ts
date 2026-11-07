@@ -1,3 +1,4 @@
+import { BadRequestException } from '@nestjs/common';
 import ExcelJS from 'exceljs';
 import { Readable } from 'node:stream';
 import { inflateRawSync } from 'node:zlib';
@@ -56,7 +57,14 @@ export async function lireClasseur(
   } catch {
     // La lecture en flux échoue quand le fichier range « workbook.xml » après
     // les feuilles (fichiers produits par certains logiciels) : lecture complète.
-    return lireEnEntier(contenu, requises, options);
+    try {
+      return await lireEnEntier(contenu, requises, options);
+    } catch {
+      // Fichier abîmé (copie interrompue, mauvais format) : un message clair plutôt qu'une erreur 500
+      throw new BadRequestException(
+        'Ce fichier Excel ne peut pas être lu : il est peut-être abîmé ou n’est pas un vrai .xlsx. Ouvrez-le dans Excel, faites « Enregistrer sous » (format .xlsx), puis réessayez.',
+      );
+    }
   }
 }
 

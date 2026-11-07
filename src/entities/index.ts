@@ -1048,7 +1048,44 @@ export class CampagneEnrolement {
   montantsParCycle: Record<string, number>;
   @Column({ type: 'boolean', default: true }) ouverte: boolean;
   @Column({ type: 'varchar', nullable: true }) observation: string | null;
+  /**
+   * Base définitive (réunion DG du 06/11/2026) : arrêtée quand les doublons et les « déjà connus »
+   * sont tranchés ; les statistiques et la répartition partent de là. Un dossier ajouté après la
+   * rend de nouveau provisoire (on le signale).
+   */
+  @Column({ type: 'timestamptz', nullable: true }) baseArreteeLe: Date | null;
+  @Column({ type: 'varchar', nullable: true }) baseArreteePar: string | null;
   @CreateDateColumn() creeLe: Date;
+}
+
+/**
+ * Répartition des retenus par département (commission, réunion DG du 06/11/2026) : des places par
+ * département, croisées avec un critère au choix (cycle, diplôme, spécialité, ou rien), puis un
+ * BROUILLON où l'on place chaque candidat. Rien n'est appliqué avant la validation du DG, qui donne
+ * à chaque candidat placé son département retenu.
+ */
+@Entity('repartition_enrolement')
+export class RepartitionEnrolement {
+  @PrimaryGeneratedColumn() id: number;
+  @Index('IDX_repartition_enrolement_campagne', { unique: true })
+  @Column({ type: 'int' })
+  campagneId: number;
+  /** Critère croisé avec le département : CYCLE, DIPLOME, SPECIALITE ou AUCUN. */
+  @Column({ default: 'CYCLE' }) critere: string;
+  /** Places : « CYCLE|3|Primaire » → 10 (une grille par critère, gardée quand on change). */
+  @Column({ type: 'jsonb', default: () => "'{}'" }) quotas: Record<
+    string,
+    number
+  >;
+  /** Brouillon : dossier → département où la commission le place. */
+  @Column({ type: 'jsonb', default: () => "'{}'" }) placements: Record<
+    string,
+    number
+  >;
+  @Column({ type: 'varchar', nullable: true }) modifiePar: string | null;
+  @UpdateDateColumn() modifieLe: Date;
+  @Column({ type: 'varchar', nullable: true }) valideePar: string | null;
+  @Column({ type: 'timestamptz', nullable: true }) valideeLe: Date | null;
 }
 
 /** Membre de la commission d'une campagne d'enrôlement, avec ses places. */
@@ -1147,6 +1184,9 @@ export class Volontaire {
     number | null;
   @Column({ type: 'varchar', nullable: true }) departementBrut: string | null;
   @Column({ type: 'varchar', nullable: true }) etablissement: string | null;
+  /** Sexe (M/F) et circonscription, lus dans les bases biométrique et des communautaires (07/11/2026). */
+  @Column({ type: 'varchar', length: 1, nullable: true }) genre: string | null;
+  @Column({ type: 'varchar', nullable: true }) circonscription: string | null;
   /** Vague ou campagne d'arrivée (« 2018-2019 », « 7e vague », « Enrôlement 2026 »). */
   @Column({ type: 'varchar', nullable: true }) vague: string | null;
   /** Note de service d'affectation (« n° 1006 du 29/09/2026 »). */
@@ -1886,6 +1926,7 @@ export class PiecePrestation {
 
 export const ENTITES = [
   Utilisateur,
+  RepartitionEnrolement,
   Journal,
   Parametre,
   Departement,

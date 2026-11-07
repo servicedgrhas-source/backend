@@ -18,6 +18,8 @@ import { BourseService } from './enrolement/bourse.service';
 import { ConfigEnrolementService } from './enrolement/configuration';
 import { VolontairesController } from './enrolement/volontaires.controller';
 import { GestionEnrolementController } from './enrolement/gestion-enrolement.controller';
+import { RepartitionController } from './enrolement/repartition.controller';
+import { RepartitionService } from './enrolement/repartition.service';
 import { MiseEnRouteService } from './enrolement/mise-en-route.service';
 import { PilotageEnrolementService } from './enrolement/pilotage-enrolement.service';
 import { RegularisationsService } from './enrolement/regularisations.service';
@@ -80,6 +82,7 @@ import {
 } from './prestations/prestations.controller';
 import { PrestationsService } from './prestations/prestations.service';
 import { LiaisonVolontairesService } from './recensement/liaison-volontaires.service';
+import { EcartsVolontairesService } from './recensement/ecarts-volontaires.service';
 import { AffectationsPersonnelService } from './recensement/affectations-personnel.service';
 import { DoublonsService } from './affectation/doublons.service';
 import { OubliesService } from './affectation/oublies.service';
@@ -144,6 +147,7 @@ import { ReferentielsService } from './referentiels/referentiels.service';
     EnrolementController,
     VolontairesController,
     GestionEnrolementController,
+    RepartitionController,
     AmorcageController,
     RecensementController,
     RecommandationsController,
@@ -203,6 +207,8 @@ import { ReferentielsService } from './referentiels/referentiels.service';
     PrestationsService,
     ExcelRecensementService,
     LiaisonVolontairesService,
+    RepartitionService,
+    EcartsVolontairesService,
     AffectationsPersonnelService,
   ],
 })

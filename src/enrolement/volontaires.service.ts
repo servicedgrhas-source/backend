@@ -108,6 +108,22 @@ export function vagueNormalisee(brut: unknown): string | null {
   return s;
 }
 
+/** Rubriques qu'une réimportation peut compléter, et leur nom à l'écran (07/11/2026). */
+export const CHAMPS_MISE_A_JOUR: Record<string, string> = {
+  dateNaissance: 'Date de naissance',
+  lieuNaissance: 'Lieu de naissance',
+  genre: 'Sexe',
+  telephone: 'Téléphone',
+  diplome: 'Diplôme',
+  specialite: 'Spécialité',
+  cycleBrut: 'Cycle',
+  departementId: 'Département',
+  etablissement: 'Établissement',
+  circonscription: 'Circonscription',
+  datePriseService: 'Date de prise de service',
+  vague: 'Vague',
+};
+
 @Injectable()
 export class VolontairesService implements OnModuleInit {
   constructor(
@@ -765,7 +781,14 @@ export class VolontairesService implements OnModuleInit {
     nomFichier: string,
     o: {
       feuille: string;
-      type: 'EN_POSTE' | 'SORTI' | 'NOTE';
+      type: 'EN_POSTE' | 'SORTI' | 'NOTE' | 'MISE_A_JOUR';
+      /**
+       * Fiches déjà dans le registre (07/11/2026) : NON (on ne les touche pas), VIDES (on complète
+       * leurs cases vides, par défaut). `remplacer` : rubriques dont une valeur différente du
+       * fichier remplace celle du registre.
+       */
+      miseAJour?: 'NON' | 'VIDES';
+      remplacer?: string[];
       motif?: string;
       premierMois?: string;
       noteReference?: string;
@@ -789,6 +812,8 @@ export class VolontairesService implements OnModuleInit {
       throw new BadRequestException(
         'Catégorie par défaut inconnue (voir la configuration).',
       );
+    const maj = o.type === 'MISE_A_JOUR' || o.miseAJour !== 'NON';
+    const remplacer = new Set(o.remplacer ?? []);
     if (o.type === 'EN_POSTE' && !MOIS_RE.test(o.premierMois ?? ''))
       throw new BadRequestException(
         'Indiquez le mois de bourse de cette liste (ex. 2026-09) : ces volontaires sont payés à partir de ce mois.',
@@ -860,7 +885,27 @@ export class VolontairesService implements OnModuleInit {
       relies: [] as string[],
       agesHorsLimites: [] as string[],
       telephonesPartages: [] as string[],
+      /** Mise à jour des fiches déjà présentes (07/11/2026). */
+      fichesTrouvees: 0,
+      fichesCompletees: 0,
+      parChamp: {} as Record<string, number>,
+      differences: {} as Record<
+        string,
+        {
+          n: number;
+          cle: string;
+          remplace: boolean;
+          exemples: { nom: string; registre: string; fichier: string }[];
+        }
+      >,
+      plusieursFiches: [] as string[],
+      introuvables: [] as string[],
     };
+    /** Fiches à mettre à jour : id → champs (le dernier fichier lu l'emporte pour une même fiche). */
+    const aMettreAJour = new Map<
+      string,
+      { nom: string; champs: Partial<Volontaire> }
+    >();
     const c = this.config.get();
     const aujourdhui = new Date().toISOString().slice(0, 10);
     const aRelier: { id: string; ici: string }[] = [];
@@ -899,6 +944,31 @@ export class VolontairesService implements OnModuleInit {
       const ici = `${nom} (ligne ${l._ligne})`;
 
       const deja = index.probables(nom, naissance);
+      if (maj) {
+        const cible = this.ficheSure(deja, nom, naissance);
+        if (cible) {
+          rapport.fichesTrouvees++;
+          this.preparerMiseAJour(
+            cible,
+            this.valeursDuFichier(l, {
+              naissance,
+              cycleBrut,
+              diplome,
+              departementId,
+              depBrut,
+              population: cible.population,
+            }),
+            remplacer,
+            rapport,
+            aMettreAJour,
+          );
+        } else if (deja.length > 1)
+          rapport.plusieursFiches.push(
+            `${ici} : ${deja.map((x) => x.nomComplet).join(', ')}`,
+          );
+        else if (o.type === 'MISE_A_JOUR') rapport.introuvables.push(ici);
+        if (o.type === 'MISE_A_JOUR') continue;
+      }
       if (deja.length && o.type === 'NOTE') {
         const autre = deja.find(
           (x) => x.noteReference && x.noteReference !== noteRef,
@@ -1080,6 +1150,15 @@ export class VolontairesService implements OnModuleInit {
     }
     rapport.ajoutes = nouveaux.length;
     rapport.sortis = aSortir.length;
+    rapport.fichesCompletees = aMettreAJour.size;
+    if (!o.essai)
+      for (const [id, x] of aMettreAJour) {
+        await this.volontaires.update(id, x.champs);
+        await this.mouvement(u, id, 'MODIFICATION', null, 'MISE_A_JOUR', {
+          source: `${nomFichier} · ${f.nom}`,
+          champs: Object.keys(x.champs),
+        });
+      }
     // Sans date dans la liste, la bourse s'arrête tout de suite (comme pour une fiche ajoutée sortie)
     if (!o.essai)
       for (const s of aSortir) {
@@ -1142,6 +1221,8 @@ export class VolontairesService implements OnModuleInit {
       relies: court(rapport.relies),
       agesHorsLimites: court(rapport.agesHorsLimites),
       telephonesPartages: court(rapport.telephonesPartages),
+      plusieursFiches: court(rapport.plusieursFiches),
+      introuvables: court(rapport.introuvables),
       essai: o.essai,
     };
     // Import pour de bon : le rapport complet est gardé au journal, pour le revoir plus tard
@@ -1154,11 +1235,174 @@ export class VolontairesService implements OnModuleInit {
         population,
         ajoutes: nouveaux.length,
         sortis: aSortir.length,
+        completees: aMettreAJour.size,
         rapport: sortie,
       });
-      if (nouveaux.length || aSortir.length) await this.lier();
+      if (nouveaux.length || aSortir.length || aMettreAJour.size)
+        await this.lier();
     }
     return sortie;
+  }
+
+  /**
+   * La fiche du registre d'une ligne du fichier, quand elle est sûre : une seule fiche possible, ou
+   * une seule écrite exactement pareil, ou une seule née le même jour. Sinon, rien (à voir à la main).
+   */
+  private ficheSure(deja: Volontaire[], nom: string, naissance: string | null) {
+    if (deja.length === 1) return deja[0];
+    const exactes = deja.filter((x) => x.nomNormalise === normaliser(nom));
+    if (exactes.length === 1) return exactes[0];
+    if (naissance) {
+      const nes = deja.filter((x) => x.dateNaissance === naissance);
+      if (nes.length === 1) return nes[0];
+    }
+    return null;
+  }
+
+  /** Ce que dit une ligne du fichier, champ par champ (vide : le fichier ne dit rien). */
+  private valeursDuFichier(
+    l: Ligne,
+    x: {
+      naissance: string | null;
+      cycleBrut: string | null;
+      diplome: string | null;
+      departementId: number | null;
+      depBrut: string | null;
+      population: string;
+    },
+  ): Partial<Volontaire> {
+    const sexe = normaliser(enTexte(this.valeur(l, ['SEXE', 'GENRE'])));
+    const etab = nettoyer(this.valeur(l, ['ETABLISSEMENT']));
+    const cat = x.cycleBrut
+      ? this.config.categorieDepuisTexte(
+          x.cycleBrut,
+          populationDe(x.population),
+        )
+      : null;
+    const vague =
+      x.population === 'COMMUNAUTAIRE'
+        ? null
+        : vagueNormalisee(this.valeur(l, ['VAGUE', 'PROMOTION']));
+    return {
+      dateNaissance: x.naissance,
+      lieuNaissance: nettoyer(
+        this.valeur(l, ['LIEUDENAISSANCE', 'LIEUDENAIS']),
+      ),
+      genre: sexe.startsWith('F')
+        ? 'F'
+        : sexe.startsWith('M') || sexe.startsWith('H')
+          ? 'M'
+          : null,
+      telephone: nettoyer(this.valeur(l, ['TELEPHONE', 'TEL'])),
+      diplome: x.diplome,
+      specialite: nettoyer(this.valeur(l, ['SPECIALITE'])),
+      cycleBrut: x.cycleBrut,
+      categorie: cat?.code ?? null,
+      departementId: x.departementId,
+      departementBrut: x.departementId ? x.depBrut : null,
+      etablissement: etab ?? nettoyer(this.valeur(l, ['LIEUDESERVICE'])),
+      circonscription: nettoyer(this.valeur(l, ['CIRCONSCRIPTION', 'CIRCONS'])),
+      datePriseService: lireDate(
+        this.valeur(l, [
+          'DATEDEPRISEDESERVICE',
+          'DATEDEPRISEDESERVI',
+          'PRISEDESERVICE',
+          'DATEPRISESERVICE',
+        ]),
+      ),
+      vague,
+      vagueNumero: vague ? this.config.numeroVague(vague) : null,
+    };
+  }
+
+  /**
+   * Compare la fiche et la ligne : une case vide de la fiche prend la valeur du fichier ; une valeur
+   * différente n'est remplacée que si sa rubrique est cochée (sinon elle est seulement montrée).
+   */
+  private preparerMiseAJour(
+    v: Volontaire,
+    fichier: Partial<Volontaire>,
+    remplacer: Set<string>,
+    rapport: {
+      parChamp: Record<string, number>;
+      differences: Record<
+        string,
+        {
+          n: number;
+          cle: string;
+          remplace: boolean;
+          exemples: { nom: string; registre: string; fichier: string }[];
+        }
+      >;
+    },
+    aMettreAJour: Map<string, { nom: string; champs: Partial<Volontaire> }>,
+  ) {
+    const vide = (x: unknown) =>
+      x === null || x === undefined || String(x).trim() === '';
+    const pareil = (k: string, a: unknown, b: unknown) =>
+      k === 'telephone'
+        ? String(a).replace(/\D/g, '').slice(-8) ===
+          String(b).replace(/\D/g, '').slice(-8)
+        : // « 2-Primaire » et « Primaire » : même cycle s'ils donnent le même barème
+          k === 'cycleBrut' && fichier.categorie && v.categorie
+          ? fichier.categorie === v.categorie
+          : // Lettres seulement : « Lycée de Bouansa » = « LYCEE DE BOUANSA »
+            normaliser(enTexte(a)).replace(/[^A-Z0-9]/g, '') ===
+            normaliser(enTexte(b)).replace(/[^A-Z0-9]/g, '');
+    // Rubriques liées : le département porte aussi son texte, la vague son numéro, le cycle sa catégorie
+    const suit: Record<string, string> = {
+      departementBrut: 'departementId',
+      vagueNumero: 'vague',
+      categorie: 'cycleBrut',
+    };
+    const champs: Partial<Volontaire> = {
+      ...(aMettreAJour.get(v.id)?.champs ?? {}),
+    };
+    for (const [k, valeur] of Object.entries(fichier) as [
+      keyof Volontaire,
+      unknown,
+    ][]) {
+      if (suit[k] || vide(valeur)) continue;
+      const actuel = v[k];
+      const libelle = CHAMPS_MISE_A_JOUR[k] ?? k;
+      let prendre = false;
+      if (vide(actuel)) prendre = true;
+      else if (!pareil(k, actuel, valeur)) {
+        const d = (rapport.differences[libelle] ??= {
+          n: 0,
+          cle: k,
+          remplace: remplacer.has(k),
+          exemples: [],
+        });
+        d.n++;
+        if (d.exemples.length < 20)
+          d.exemples.push({
+            nom: v.nomComplet,
+            registre:
+              k === 'departementId'
+                ? String(v.departementBrut ?? actuel)
+                : enTexte(actuel),
+            fichier:
+              k === 'departementId'
+                ? String(fichier.departementBrut ?? valeur)
+                : enTexte(valeur),
+          });
+        prendre = remplacer.has(k);
+      }
+      if (!prendre) continue;
+      (champs as Record<string, unknown>)[k] = valeur;
+      for (const [lie, maitre] of Object.entries(suit))
+        if (maitre === k && !vide(fichier[lie as keyof Volontaire]))
+          (champs as Record<string, unknown>)[lie] =
+            fichier[lie as keyof Volontaire];
+      if (
+        !aMettreAJour.get(v.id)?.champs ||
+        !(k in (aMettreAJour.get(v.id)?.champs ?? {}))
+      )
+        rapport.parChamp[libelle] = (rapport.parChamp[libelle] ?? 0) + 1;
+    }
+    if (Object.keys(champs).length)
+      aMettreAJour.set(v.id, { nom: v.nomComplet, champs });
   }
 
   /** Le rapport du dernier import (pour de bon) de cette population : revu après coup. */

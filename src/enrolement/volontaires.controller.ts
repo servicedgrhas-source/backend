@@ -28,7 +28,12 @@ import { BottinService } from './bottin.service';
 import { BourseService, CONTROLES } from './bourse.service';
 import { ConfigEnrolementService, LIBELLES_DEBUT } from './configuration';
 import { CYCLES_ENROLEMENT } from './enrolement.service';
-import { VolontairesService, type VolontaireDto } from './volontaires.service';
+import { EcartsVolontairesService } from '../recensement/ecarts-volontaires.service';
+import {
+  CHAMPS_MISE_A_JOUR,
+  VolontairesService,
+  type VolontaireDto,
+} from './volontaires.service';
 
 const entierOuRien = (v?: string) =>
   v && /^\d+$/.test(v) ? Number(v) : undefined;
@@ -40,7 +45,50 @@ export class VolontairesController {
     private readonly bourse: BourseService,
     private readonly bottin: BottinService,
     private readonly config: ConfigEnrolementService,
+    private readonly ecarts: EcartsVolontairesService,
   ) {}
+
+  /* ---- Écarts avec la base du personnel (07/11/2026) : registre ↔ fiche du personnel ---- */
+
+  @Roles(...ROLES_TRAITEMENT)
+  @Get('volontaires/ecarts')
+  bilanEcarts(@Query('population') population: string) {
+    return this.ecarts.bilan(population);
+  }
+
+  @Roles(...ROLES_TRAITEMENT)
+  @Get('volontaires/ecarts/liste')
+  listeEcarts(
+    @Query('population') population: string,
+    @Query('cle') cle: string,
+    @Query('type') type: string,
+    @Query('page') page?: string,
+    @Query('recherche') recherche?: string,
+  ) {
+    return this.ecarts.liste(
+      population,
+      cle,
+      type === 'DIFFERENT' ? 'DIFFERENT' : 'COMPLETER',
+      Math.max(1, Number(page) || 1),
+      recherche ?? '',
+    );
+  }
+
+  @Roles('CHEF_SERVICE', 'DG')
+  @Post('volontaires/ecarts/appliquer')
+  appliquerEcarts(
+    @Utilisateur() u: UtilisateurConnecte,
+    @Body()
+    corps: {
+      population: string;
+      cle: string;
+      type: 'COMPLETER' | 'DIFFERENT';
+      choix: 'PERSONNEL' | 'REGISTRE';
+      ids?: string[];
+    },
+  ) {
+    return this.ecarts.appliquer(u, corps ?? ({} as never));
+  }
 
   /* ---------------------------- Configuration ---------------------------- */
 
@@ -312,11 +360,20 @@ export class VolontairesController {
     @Query('categorie') categorie: string | undefined,
     @Query('essai') essai: string,
     @Query('population') population: string | undefined,
+    // Fiches déjà dans le registre : « VIDES » (compléter, par défaut) ou « NON » ; rubriques
+    // dont la valeur du fichier remplace celle du registre (« dateNaissance,telephone »)
+    @Query('miseAJour') miseAJour: string | undefined,
+    @Query('remplacer') remplacer: string | undefined,
     @UploadedFile() fichier?: Express.Multer.File,
   ) {
-    if (type !== 'EN_POSTE' && type !== 'SORTI' && type !== 'NOTE')
+    if (
+      type !== 'EN_POSTE' &&
+      type !== 'SORTI' &&
+      type !== 'NOTE' &&
+      type !== 'MISE_A_JOUR'
+    )
       throw new BadRequestException(
-        'Type de liste : volontaires en poste, sortants ou note de service.',
+        'Type de liste : volontaires en poste, sortants, note de service ou mise à jour des fiches.',
       );
     if (!feuille)
       throw new BadRequestException('Choisissez la feuille à reprendre.');
@@ -333,6 +390,11 @@ export class VolontairesController {
         dateNote: dateNote || undefined,
         categorie: categorie || undefined,
         population: population || undefined,
+        miseAJour: miseAJour === 'NON' ? 'NON' : 'VIDES',
+        remplacer: (remplacer ?? '')
+          .split(',')
+          .map((x) => x.trim())
+          .filter((x) => x in CHAMPS_MISE_A_JOUR),
         essai: essai === '1',
       },
     );

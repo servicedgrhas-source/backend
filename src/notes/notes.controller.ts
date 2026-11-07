@@ -197,6 +197,26 @@ export class NotesController {
     });
   }
 
+  /** Récapitulatif : la note de base, ses additifs et ses rectificatifs, en une liste définitive. */
+  @Get(':id/recapitulatif')
+  recapitulatif(@Param('id') id: string) {
+    return this.service.recapitulatif(id);
+  }
+
+  @Get(':id/recapitulatif/excel')
+  async recapitulatifExcel(@Param('id') id: string, @Res() res: Response) {
+    const { nom, contenu } = await this.service.recapitulatifExcel(id);
+    res.setHeader(
+      'Content-Type',
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    );
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename*=UTF-8''${encodeURIComponent(nom)}`,
+    );
+    res.send(contenu);
+  }
+
   @Get(':id/excel')
   async excel(@Param('id') id: string, @Res() res: Response) {
     const { nom, contenu } = await this.service.excel(id);
