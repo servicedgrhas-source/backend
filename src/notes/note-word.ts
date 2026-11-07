@@ -575,7 +575,8 @@ export async function noteWord(
         }),
       ],
     }),
-    p(c.titre, { centre: true, gras: true, taille: 16, avant: 14, apres: 8 }),
+    // Une ligne et demie plus bas qu'avant : moins collé au numéro de la note (07/11/2026)
+    p(c.titre, { centre: true, gras: true, taille: 16, avant: 37, apres: 8 }),
   );
   // Le corps de la note suit l'échelle (l'en-tête et le titre gardent leur taille)
   ECHELLE_ACTIVE = true;
