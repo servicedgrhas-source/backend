@@ -4,6 +4,7 @@ import {
   Controller,
   Delete,
   Get,
+  NotFoundException,
   Param,
   ParseIntPipe,
   Patch,
@@ -29,6 +30,7 @@ import { normaliser } from '../common/texte';
 import { StockageService } from '../common/stockage';
 import { ComplementsService } from './complements.service';
 import { DossiersService, type FiltresEnvois } from './dossiers.service';
+import { DetectionDoublonsService } from './detection-doublons.service';
 import { RapprochementService } from './rapprochement.service';
 
 class OrigineDto {
@@ -63,6 +65,7 @@ export class DossiersController {
     private readonly service: DossiersService,
     private readonly complements: ComplementsService,
     private readonly rapprochement: RapprochementService,
+    private readonly detection: DetectionDoublonsService,
     private readonly stockage: StockageService,
   ) {}
 
@@ -162,6 +165,72 @@ export class DossiersController {
     res.setHeader(
       'Content-Disposition',
       'attachment; filename="Rapprochement.xlsx"',
+    );
+    res.send(contenu);
+  }
+
+  /*
+   * Rapprochement et détection des doublons (DG, 08/11/2026) : fichiers entre eux et avec toutes
+   * les bases sauf celle des enrôlés. Lectures seulement : rien n'est enregistré.
+   */
+  @Roles(...ROLES_TRAITEMENT)
+  @Post('rapprochement/doublons')
+  @UseInterceptors(
+    FilesInterceptor('fichiers', 4, { limits: { fileSize: 40 * 1024 * 1024 } }),
+  )
+  detecterDoublons(
+    @UploadedFiles() fichiers: Express.Multer.File[],
+    @Body() body: { avecBase?: string; masquees?: string; feuilles?: string },
+  ) {
+    return this.detection.detecter(this.fichiersRapprochement(fichiers), {
+      avecBase: body.avecBase === '1',
+      masquees: body.masquees === '1',
+      feuilles: this.feuillesChoisies(body.feuilles),
+    });
+  }
+
+  /** « doublons » : les lignes écartées et leur raison ; « nettoye » : chaque personne une seule fois. */
+  @Roles(...ROLES_TRAITEMENT)
+  @Post('rapprochement/doublons/:quoi')
+  @UseInterceptors(
+    FilesInterceptor('fichiers', 4, { limits: { fileSize: 40 * 1024 * 1024 } }),
+  )
+  async fichierDoublons(
+    @Param('quoi') quoi: string,
+    @UploadedFiles() fichiers: Express.Multer.File[],
+    @Body()
+    body: {
+      avecBase?: string;
+      masquees?: string;
+      feuilles?: string;
+      decisions?: string;
+    },
+    @Res() res: Response,
+  ) {
+    if (quoi !== 'doublons' && quoi !== 'nettoye')
+      throw new NotFoundException('Fichier inconnu');
+    const options = {
+      avecBase: body.avecBase === '1',
+      masquees: body.masquees === '1',
+      feuilles: this.feuillesChoisies(body.feuilles),
+    };
+    const lus = this.fichiersRapprochement(fichiers);
+    const contenu =
+      quoi === 'doublons'
+        ? await this.detection.excelDoublons(lus, options, body.decisions)
+        : await this.detection.excelNettoye(lus, options, body.decisions);
+    const le = new Date().toLocaleDateString('fr-FR').replaceAll('/', '-');
+    const nom =
+      quoi === 'doublons'
+        ? `Doublons détectés ${le}.xlsx`
+        : `Fichier nettoyé sans doublons ${le}.xlsx`;
+    res.setHeader(
+      'Content-Type',
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    );
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename*=UTF-8''${encodeURIComponent(nom)}`,
     );
     res.send(contenu);
   }

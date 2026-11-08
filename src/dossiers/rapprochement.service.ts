@@ -27,7 +27,7 @@ const DETAILS: [string, string][] = [
   ['OBS', 'Obs.'],
 ];
 
-interface Personne {
+export interface Personne {
   i: number;
   /** n° du fichier (0 à 3), ou -1 pour la base du système */
   fichier: number;
@@ -39,6 +39,8 @@ interface Personne {
   cle: string;
   naissance: string | null;
   details: string;
+  /** Cases remplies sur la ligne du fichier (pour garder la plus complète d'une même personne). */
+  remplies?: number;
 }
 
 export type Niveau = 'IDENTIQUE' | 'PROBABLE';
@@ -54,7 +56,8 @@ export class RapprochementService {
     @InjectRepository(Agent) private readonly agents: Repository<Agent>,
   ) {}
 
-  private async lireFichier(
+  /** Personnes d'un fichier (feuilles avec une colonne « Noms et prénoms »). */
+  async lireFichier(
     contenu: Buffer,
     n: number,
     nomFichier: string,
@@ -91,6 +94,9 @@ export class RapprochementService {
           cle: [...mots].sort().join(' '),
           naissance: cleNaissance ? this.naissance(l[cleNaissance]) : null,
           details: this.details(l, f.entetes),
+          remplies: Object.entries(l).filter(
+            ([k, v]) => k !== '_ligne' && nettoyer(v),
+          ).length,
         });
       }
     }

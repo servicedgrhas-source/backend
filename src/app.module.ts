@@ -12,6 +12,7 @@ import { LotsReceptionService } from './affectation/lots-reception.service';
 import { DossiersController } from './dossiers/dossiers.controller';
 import { DossiersService } from './dossiers/dossiers.service';
 import { RapprochementService } from './dossiers/rapprochement.service';
+import { DetectionDoublonsService } from './dossiers/detection-doublons.service';
 import { EnrolementController } from './enrolement/enrolement.controller';
 import { EnrolementService } from './enrolement/enrolement.service';
 import { BourseService } from './enrolement/bourse.service';
@@ -190,6 +191,7 @@ import { ReferentielsService } from './referentiels/referentiels.service';
     ControleAffectationsService,
     StatistiquesService,
     RapprochementService,
+    DetectionDoublonsService,
     EnrolementService,
     ConfigEnrolementService,
     VolontairesService,
