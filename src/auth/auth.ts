@@ -23,6 +23,8 @@ import {
   validerDroits,
   type ConfigDroits,
 } from './droits';
+import { parametresDeLaRoute } from '../securite/route';
+import { compteSignale, SecuriteService } from '../securite/securite.service';
 import { SessionService } from './session.service';
 
 /** Paramètre où le DG range les droits par rubrique (Administration › Droits). */
@@ -49,6 +51,8 @@ export interface UtilisateurConnecte {
    * (`role` vaut alors « ADMIN ») ; ce drapeau garde trace du vrai rôle.
    */
   informatique?: boolean;
+  /** Compte suspendu par l'outil de détection : toute requête est refusée. */
+  suspendu?: boolean;
 }
 
 /** Types de fichiers qu'un visiteur ne reçoit jamais (filet de sécurité derrière les adresses). */
@@ -160,6 +164,7 @@ export class AuthGuard implements CanActivate {
     private readonly reflector: Reflector,
     private readonly params: ParametresService,
     private readonly journal: JournalService,
+    private readonly securite: SecuriteService,
   ) {}
 
   /** Dernière consultation notée par visiteur et rubrique (une ligne de journal par heure). */
@@ -189,17 +194,31 @@ export class AuthGuard implements CanActivate {
 
   async canActivate(ctx: ExecutionContext): Promise<boolean> {
     const cibles = [ctx.getHandler(), ctx.getClass()];
+    const req = ctx
+      .switchToHttp()
+      .getRequest<
+        Request & { user?: UtilisateurConnecte; routeTrouvee?: boolean }
+      >();
+    // Une route existe pour cette adresse (une adresse inconnue n'arrive jamais ici)
+    req.routeTrouvee = true;
     if (this.reflector.getAllAndOverride<boolean>(CLE_PUBLIC, cibles))
       return true;
 
-    const req = ctx
-      .switchToHttp()
-      .getRequest<Request & { user?: UtilisateurConnecte }>();
     const entete = req.headers.authorization ?? '';
     const jeton = entete.startsWith('Bearer ') ? entete.slice(7).trim() : null;
     if (!jeton) throw new UnauthorizedException('Authentification requise');
     // Le compte est relu en base : désactivation, rôle et sessions fermées valent tout de suite
     req.user = await this.sessions.profilDuJeton(jeton);
+    // Outil de détection (08/11/2026) : compte suspendu, puis règles de la requête
+    if (req.user.suspendu) throw compteSignale();
+    if (
+      await this.securite.avant(
+        req,
+        req.user,
+        parametresDeLaRoute(ctx.getClass() as never, ctx.getHandler() as never),
+      )
+    )
+      throw compteSignale();
     const config = this.config();
     const droits = droitsDe(config, req.user);
     req.user.droits = droits;

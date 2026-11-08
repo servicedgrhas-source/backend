@@ -152,6 +152,7 @@ export const RUBRIQUES_API: Record<string, string[]> = {
   '/administration/origines': ['origines'],
   '/administration/menu': ['menu/configuration'],
   '/journal': ['journal'],
+  '/administration/securite': ['securite'],
 };
 
 /** Ce que l'on ne peut jamais fermer : la page des droits elle-même. */
@@ -187,12 +188,14 @@ export const RUBRIQUES_INTERDITES_INFORMATIQUE = [
   '/administration',
   '/administration/droits',
   '/administration/sauvegarde',
+  '/administration/securite',
   '/journal',
 ];
 const ADRESSES_INTERDITES_INFORMATIQUE = [
   'utilisateurs',
   'droits',
   'sauvegarde',
+  'securite',
   'journal',
 ];
 const ECRITURES_CONFIGURATION = [

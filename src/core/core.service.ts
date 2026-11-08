@@ -29,9 +29,35 @@ const PARAMETRES_ENTIERS: Record<string, [number, number, string]> = {
   PRESENCE_RETARD_GRAVE: [5, 600, 'un nombre de minutes entre 5 et 600'],
   PRESENCE_RETARDS_FREQUENTS: [1, 60, 'un nombre de retards entre 1 et 60'],
   PRESENCE_ABSENCES_FREQUENTES: [1, 60, 'un nombre d’absences entre 1 et 60'],
+  // Outil de détection (08/11/2026)
+  SECURITE_SEUIL_SURVEILLANCE: [5, 1000, 'un score entre 5 et 1000'],
+  SECURITE_SEUIL_ALERTE: [5, 1000, 'un score entre 5 et 1000'],
+  SECURITE_SEUIL_SUSPENSION: [5, 1000, 'un score entre 5 et 1000'],
+  SECURITE_DEMI_VIE: [5, 1440, 'un nombre de minutes entre 5 et 1440'],
 };
 
 export const PARAMETRES_DEFAUT: Record<string, [string, string]> = {
+  // Outil de détection (08/11/2026) : réglés sur la page Sécurité (DG, administrateur), jamais montrés aux autres
+  SECURITE_MODE: [
+    'OBSERVATION',
+    'Outil de détection : OBSERVATION (note et alerte sans suspendre, sauf les signes certains) ou ACTIF (suspend au seuil)',
+  ],
+  SECURITE_SEUIL_SURVEILLANCE: [
+    '40',
+    'Score à partir duquel un compte est surveillé de près',
+  ],
+  SECURITE_SEUIL_ALERTE: [
+    '70',
+    'Score à partir duquel le DG et l’administrateur sont alertés',
+  ],
+  SECURITE_SEUIL_SUSPENSION: [
+    '100',
+    'Score à partir duquel le compte est suspendu (mode ACTIF)',
+  ],
+  SECURITE_DEMI_VIE: [
+    '30',
+    'Minutes au bout desquelles le score d’un compte est divisé par deux',
+  ],
   // Présence du personnel (DG, 30/10/2026 : « comme une vraie école », avec des marges réglables)
   PRESENCE_TOLERANCE_ARRIVEE: [
     '10',
@@ -382,6 +408,8 @@ export class ParametresService {
       !['OUI', 'NON'].includes(valeur)
     )
       throw new BadRequestException('Choisissez Oui ou Non');
+    if (cle === 'SECURITE_MODE' && !['OBSERVATION', 'ACTIF'].includes(valeur))
+      throw new BadRequestException('Choisissez OBSERVATION ou ACTIF');
     if (
       cle === 'ANNEE_SCOLAIRE' ||
       (cle === 'ANNEE_SCOLAIRE_MUTATION' && valeur)

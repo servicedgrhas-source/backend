@@ -86,7 +86,38 @@ export class Utilisateur {
   dernierEchec: Date | null;
   /** Trop d'échecs : connexion refusée jusqu'à cette heure. */
   @Column({ type: 'timestamptz', nullable: true }) bloqueJusqua: Date | null;
+  /**
+   * Compte suspendu par l'outil de détection (08/11/2026) : toute requête est refusée jusqu'à ce
+   * que le DG ou l'administrateur le rétablisse.
+   */
+  @Column({ type: 'timestamptz', nullable: true }) suspenduLe: Date | null;
+  /** Ce qui a déclenché la suspension (règles franchies), pour la vérification humaine. */
+  @Column({ type: 'text', nullable: true, select: false })
+  suspensionMotif: string | null;
   @CreateDateColumn() creeLe: Date;
+}
+
+/**
+ * Journal de sécurité (08/11/2026) : chaque règle franchie par un compte, avec les points ajoutés et
+ * le score atteint. Lu seulement par le DG et l'administrateur (Sécurité › Comptes signalés).
+ */
+@Entity('evenement_securite')
+@Index('IDX_evenement_securite_utilisateur', ['utilisateurId', 'creeLe'])
+export class EvenementSecurite {
+  @PrimaryGeneratedColumn() id: number;
+  @Column({ type: 'uuid' }) utilisateurId: string;
+  /** Code de la règle (A4_ADRESSE_INCONNUE…), ou SURVEILLANCE, ALERTE, SUSPENSION, RETABLI. */
+  @Column({ type: 'varchar' }) regle: string;
+  @Column({ type: 'int', default: 0 }) points: number;
+  @Column({ type: 'int', default: 0 }) score: number;
+  @Column({ type: 'varchar', nullable: true }) chemin: string | null;
+  @Column({ type: 'varchar', nullable: true }) ip: string | null;
+  @Column({ type: 'varchar', nullable: true }) navigateur: string | null;
+  @Column({ type: 'jsonb', nullable: true }) details: Record<
+    string,
+    unknown
+  > | null;
+  @CreateDateColumn({ type: 'timestamptz' }) creeLe: Date;
 }
 
 @Entity('journal')
@@ -1932,6 +1963,7 @@ export class PiecePrestation {
 
 export const ENTITES = [
   Utilisateur,
+  EvenementSecurite,
   RepartitionEnrolement,
   Journal,
   Parametre,

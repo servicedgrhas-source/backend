@@ -30,6 +30,8 @@ import { CircuitService } from './circuit/circuit.service';
 import { BeneficiairesService } from './pilotage/beneficiaires.service';
 import { PortailController } from './circuit/portail.controller';
 import { AuthGuard } from './auth/auth';
+import { SecuriteController } from './securite/securite.controller';
+import { SecuriteService } from './securite/securite.service';
 import { AnomaliesService } from './common/anomalies';
 import { StockageService } from './common/stockage';
 import { ConfigurationController } from './configuration/configuration.controller';
@@ -120,6 +122,7 @@ import { ReferentielsService } from './referentiels/referentiels.service';
     }),
   ],
   controllers: [
+    SecuriteController,
     SauvegardeController,
     DemandesController,
     PrestationsController,
@@ -155,6 +158,7 @@ import { ReferentielsService } from './referentiels/referentiels.service';
   ],
   providers: [
     { provide: APP_GUARD, useClass: AuthGuard },
+    SecuriteService,
     SessionService,
     JournalService,
     ParametresService,

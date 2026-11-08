@@ -1,4 +1,4 @@
-import { Logger, ValidationPipe } from '@nestjs/common';
+import { Logger } from '@nestjs/common';
 import { HttpAdapterHost, NestFactory } from '@nestjs/core';
 import type { NestExpressApplication } from '@nestjs/platform-express';
 import compression from 'compression';
@@ -9,6 +9,10 @@ import { AppModule } from './app.module';
 import { ErreursBaseFilter } from './common/erreurs-base.filter';
 import { ErreursEnvoiFilter } from './common/erreurs-envoi.filter';
 import { FichiersLusInterceptor } from './common/fichiers-lus';
+import { SessionService } from './auth/session.service';
+import { ValidationSurveillee } from './securite/route';
+import { requeteEnCours, SecuriteService } from './securite/securite.service';
+import type { NextFunction, Request, Response } from 'express';
 
 // Les colonnes DATE restent des chaînes « AAAA-MM-JJ » : sans cela, le pilote
 // les convertit en minuit heure locale et elles reculent d'un jour en UTC.
@@ -24,12 +28,35 @@ async function bootstrap() {
   // Réponses compressées (gzip) : le JSON pèse environ dix fois moins sur le réseau. Seuls les
   // types qui s'y prêtent le sont (pas les PDF ni les images), et pas les très petites réponses.
   app.use(compression({ threshold: 1024 }));
+  // Outil de détection (08/11/2026) : après chaque réponse, les refus en série et les adresses
+  // inconnues ou pièges (une route inexistante ne passe jamais par le contrôle des droits)
+  const securite = app.get(SecuriteService);
+  const sessions = app.get(SessionService);
+  app.use((req: Request, res: Response, next: NextFunction) => {
+    if (!req.path.startsWith('/api/')) return next();
+    res.on('finish', () => {
+      const r = req as Request & { routeTrouvee?: boolean };
+      if (r.routeTrouvee) {
+        void securite.apres(req, res.statusCode).catch(() => undefined);
+        return;
+      }
+      const entete = req.headers.authorization ?? '';
+      if (res.statusCode === 404 && entete.startsWith('Bearer '))
+        void sessions
+          .profilDuJeton(entete.slice(7).trim())
+          .then((u) => securite.adresseInconnue(req, u))
+          .catch(() => undefined);
+    });
+    requeteEnCours.run({ req }, () => next());
+  });
   // Envois groupés (5 000 dossiers déclarés conformes d'un coup : 200 Ko d'identifiants) : la
   // limite par défaut de 100 Ko renvoyait « requête trop grande » (05/11/2026)
   app.useBodyParser('json', { limit: '10mb' });
   // X-Jeton : nouveau jeton après changement de son propre code ou mot de passe
   app.enableCors({ origin: originesAutorisees(), exposedHeaders: ['X-Jeton'] });
-  app.useGlobalPipes(new ValidationPipe({ whitelist: true, transform: true }));
+  app.useGlobalPipes(
+    new ValidationSurveillee(securite, { whitelist: true, transform: true }),
+  );
   app.useGlobalInterceptors(new FichiersLusInterceptor());
   const adaptateur = app.get(HttpAdapterHost).httpAdapter;
   app.useGlobalFilters(
@@ -43,7 +70,7 @@ async function bootstrap() {
   await app.listen(port);
   // Le proxy de l'interface garde ses connexions ouvertes : si le serveur les fermait
   // avant lui (5 s par défaut), une requête tomberait sur une connexion coupée (ECONNRESET).
-  const serveur = app.getHttpServer() as import('http').Server;
+  const serveur = app.getHttpServer();
   serveur.keepAliveTimeout = 65_000;
   serveur.headersTimeout = 66_000;
   Logger.log(

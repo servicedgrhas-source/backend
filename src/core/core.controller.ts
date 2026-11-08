@@ -567,8 +567,13 @@ export class CoreController {
   /* ---------------------------- Paramètres --------------------------- */
 
   @Get('parametres')
-  parametres() {
-    return this.params.tous();
+  parametres(@Moi() moi: UtilisateurConnecte) {
+    // Les réglages de l'outil de détection ne sont montrés qu'au DG et à l'administrateur
+    const voitSecurite =
+      (moi.role === 'DG' || moi.role === 'ADMIN') && !moi.informatique;
+    return this.params
+      .tous()
+      .filter((p) => voitSecurite || !p.cle.startsWith('SECURITE_'));
   }
 
   @Roles('DG')

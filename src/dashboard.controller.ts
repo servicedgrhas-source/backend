@@ -1,7 +1,14 @@
 import { Controller, Get } from '@nestjs/common';
 import { InjectDataSource } from '@nestjs/typeorm';
 import { DataSource } from 'typeorm';
-import { Public, Roles, ROLES_TRAITEMENT } from './auth/auth';
+import {
+  Public,
+  Roles,
+  ROLES_TRAITEMENT,
+  Utilisateur,
+  type UtilisateurConnecte,
+} from './auth/auth';
+import { SecuriteService } from './securite/securite.service';
 import { ParametresService } from './core/core.service';
 
 type Ligne = Record<string, string | number | null>;
@@ -15,6 +22,7 @@ export class DashboardController {
   constructor(
     @InjectDataSource() private readonly db: DataSource,
     private readonly params: ParametresService,
+    private readonly securite: SecuriteService,
   ) {}
 
   @Public()
@@ -25,7 +33,7 @@ export class DashboardController {
 
   /** Travail en attente par rubrique : compteurs du menu et des pages d'accueil. */
   @Get('menu/compteurs')
-  async compteurs() {
+  async compteurs(@Utilisateur() u: UtilisateurConnecte) {
     const [c] = await this.db.query<Record<string, number>[]>(`
       SELECT
         (SELECT count(*) FROM agent WHERE "origineFiche" = 'SAISIE' AND feuille = 'MEPPSA'
@@ -61,6 +69,9 @@ export class DashboardController {
         (SELECT count(*) FROM note_service WHERE module = 'MUTATION' AND statut = 'VALIDEE')::int AS "notesMutASigner",
         (SELECT count(*) FROM note_service WHERE module = 'ENROLEMENT' AND statut = 'VALIDEE')::int AS "notesEnrASigner",
         (SELECT count(*) FROM note_service WHERE module = 'NOMINATION' AND statut = 'VALIDEE')::int AS "notesNomASigner"`);
+    // Comptes suspendus par l'outil de détection : seulement pour le DG et l'administrateur
+    if ((u.role === 'DG' || u.role === 'ADMIN') && !u.informatique)
+      c.comptesSignales = await this.securite.aVerifier();
     return c;
   }
 

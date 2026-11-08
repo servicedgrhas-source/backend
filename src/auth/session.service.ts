@@ -11,6 +11,7 @@ import { In, Repository } from 'typeorm';
 import { codeValide } from '../common/code-personnel';
 import { JournalService } from '../core/core.service';
 import { Utilisateur } from '../entities';
+import { compteSignale, SecuriteService } from '../securite/securite.service';
 import type { UtilisateurConnecte } from './auth';
 
 /** Ce que porte le jeton : le compte et la version de ses sessions, rien d'autre. */
@@ -115,6 +116,7 @@ export class SessionService {
     private readonly users: Repository<Utilisateur>,
     private readonly jwt: JwtService,
     private readonly journal: JournalService,
+    private readonly securite: SecuriteService,
   ) {}
 
   /* ------------------------------ Jetons ------------------------------ */
@@ -160,6 +162,7 @@ export class SessionService {
         'u.codeCreeLe',
         'u.versionSession',
         'u.finAcces',
+        'u.suspenduLe',
       ])
       .where('u.id = :id', { id: contenu.id })
       .getOne();
@@ -183,6 +186,7 @@ export class SessionService {
       structureId: u.structureId,
       aCode: !!u.codeCreeLe,
       finAcces: u.finAcces,
+      ...(u.suspenduLe ? { suspendu: true } : {}),
     };
   }
 
@@ -221,7 +225,7 @@ export class SessionService {
 
     const u = await this.users
       .createQueryBuilder('u')
-      .addSelect(['u.motDePasseHash', 'u.codeChiffre'])
+      .addSelect(['u.motDePasseHash', 'u.codeChiffre', 'u.echecsConnexion'])
       .where('lower(u.email) = :e', { e: email })
       .getOne();
 
@@ -260,6 +264,18 @@ export class SessionService {
       );
       throw new UnauthorizedException(finAccesMessage(u.finAcces!));
     }
+    // Compte suspendu par l'outil de détection : l'écran de vérification s'affiche
+    if (u.suspenduLe) {
+      await this.journal.log(
+        { id: u.id, nom: u.nom } as UtilisateurConnecte,
+        'CONNEXION_REFUSEE',
+        'utilisateur',
+        u.id,
+        { email, ip, motif: 'compte signalé' },
+      );
+      throw compteSignale();
+    }
+    const echecsAvant = u.echecsConnexion ?? 0;
     if (u.bloqueJusqua) await this.debloquer(u.id);
     else
       await this.users.update(u.id, { echecsConnexion: 0, dernierEchec: null });
@@ -278,6 +294,8 @@ export class SessionService {
     await this.journal.log(utilisateur, 'CONNEXION', 'utilisateur', u.id, {
       ip,
     });
+    if (echecsAvant >= 3)
+      await this.securite.connexionApresEchecs(utilisateur, echecsAvant, ip);
     return { jeton, utilisateur };
   }
 
