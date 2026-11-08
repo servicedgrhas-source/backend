@@ -17,6 +17,7 @@ import {
   lienTelechargement,
   lister,
 } from './cloudinary';
+import { NOMS_TABLES, TEXTES_SAUVEGARDE } from './textes';
 import {
   ACTION_CLOUDINARY,
   ACTION_SAUVEGARDE,
@@ -43,8 +44,13 @@ export class SauvegardeController {
 
   @Roles('DG', 'ADMIN')
   @Get('apercu')
-  apercu() {
-    return this.service.apercu();
+  async apercu() {
+    // Les textes de la page viennent d'ici : rien n'est écrit dans le code de l'interface
+    return {
+      ...(await this.service.apercu()),
+      textes: TEXTES_SAUVEGARDE,
+      noms: NOMS_TABLES,
+    };
   }
 
   /** Le fichier .sql.gz, écrit au fur et à mesure (la mémoire du serveur reste petite). */

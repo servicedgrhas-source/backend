@@ -150,6 +150,18 @@ export class SecuriteService {
     return !!u.email && this.exemptes.has(u.email.toLowerCase());
   }
 
+  /**
+   * Sauvegarde de la base (08/11/2026) : le DG, le compte administrateur de départ (ADMIN_EMAIL) et
+   * les comptes de SECURITE_COMPTES_EXEMPTES. Ni les autres administrateurs, ni le compte Informatique.
+   */
+  accesSauvegarde(u: {
+    role: string;
+    email?: string | null;
+    informatique?: boolean;
+  }) {
+    return (u.role === 'DG' && !u.informatique) || this.exempte(u);
+  }
+
   listeExemptes() {
     return [...this.exemptes];
   }

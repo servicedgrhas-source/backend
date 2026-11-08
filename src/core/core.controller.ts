@@ -33,6 +33,7 @@ import {
 import type { Response } from 'express';
 import { Not, Repository } from 'typeorm';
 import { SessionService } from '../auth/session.service';
+import { SecuriteService } from '../securite/securite.service';
 import {
   Public,
   Roles,
@@ -129,6 +130,7 @@ export class CoreController {
     private readonly regles: Repository<RegleDiplome>,
     @InjectRepository(Grade) private readonly grades: Repository<Grade>,
     private readonly sessions: SessionService,
+    private readonly securite: SecuriteService,
     private readonly journal: JournalService,
     private readonly params: ParametresService,
   ) {}
@@ -157,6 +159,8 @@ export class CoreController {
       ...u,
       // Le vrai rôle (le serveur traite le compte Informatique comme l'administrateur)
       role: u.informatique ? 'INFORMATIQUE' : u.role,
+      // La sauvegarde n'apparaît dans le menu que des comptes qui y ont accès
+      ...(this.securite.accesSauvegarde(u) ? { sauvegarde: true } : {}),
       informatique: undefined,
       structureType: s?.type ?? null,
     };

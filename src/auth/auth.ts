@@ -231,6 +231,16 @@ export class AuthGuard implements CanActivate {
         throw compteSignale();
       throw new NotFoundException(`Cannot ${req.method} ${req.originalUrl}`);
     }
+    // Sauvegarde de la base (08/11/2026) : le DG, le compte administrateur de départ et les comptes
+    // exemptés seulement ; pour tous les autres (administrateurs compris), elle n'existe pas
+    if (
+      /^\/api\/sauvegarde(\/|$)/.test(req.path) &&
+      !this.securite.accesSauvegarde(req.user)
+    ) {
+      if (await this.securite.pageReservee(req, req.user))
+        throw compteSignale();
+      throw new NotFoundException(`Cannot ${req.method} ${req.originalUrl}`);
+    }
     const config = this.config();
     const droits = droitsDe(config, req.user);
     req.user.droits = droits;
