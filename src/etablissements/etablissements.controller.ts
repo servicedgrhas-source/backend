@@ -9,7 +9,14 @@ import {
   Post,
   Put,
   Query,
+  Res,
 } from '@nestjs/common';
+import type { Response } from 'express';
+import {
+  excelListe,
+  wordListe,
+  type ListeExportee,
+} from '../common/export-liste';
 import {
   Roles,
   ROLES_TRAITEMENT,
@@ -21,6 +28,37 @@ import { EtablissementsService } from './etablissements.service';
 import { EmploisDuTempsService } from './emplois-du-temps.service';
 
 const nombre = (v?: string) => (v && /^\d+$/.test(v) ? Number(v) : undefined);
+/** Envoie une liste exportée : en Excel, en Word, ou ses lignes pour la page d'impression. */
+async function envoyerListe(
+  res: Response,
+  format: string,
+  nom: string,
+  r: { liste: ListeExportee } & Record<string, unknown>,
+) {
+  if (format === 'json') {
+    const { liste: _l, ...reste } = r;
+    void _l;
+    // Le sous-titre (filtres rappelés) est le même que dans les fichiers Excel et Word
+    return res.json({ ...reste, sousTitre: r.liste.sousTitre });
+  }
+  if (format !== 'excel' && format !== 'word')
+    throw new NotFoundException('Format inconnu');
+  const contenu =
+    format === 'excel' ? await excelListe(r.liste) : await wordListe(r.liste);
+  const fichier = `${nom} ${new Date().toLocaleDateString('fr-FR').replaceAll('/', '-')}.${format === 'excel' ? 'xlsx' : 'docx'}`;
+  res.setHeader(
+    'Content-Type',
+    format === 'excel'
+      ? 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+      : 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  );
+  res.setHeader(
+    'Content-Disposition',
+    `attachment; filename*=UTF-8''${encodeURIComponent(fichier)}`,
+  );
+  res.send(contenu);
+}
+
 const QUOI = {
   batiments: 'batiment',
   salles: 'salle',
@@ -81,6 +119,27 @@ export class EtablissementsController {
       cycle: q.cycle || undefined,
       annee: q.annee,
     });
+  }
+
+  /** Liste des écoles du filtre choisi : « json » (impression), « excel » ou « word ». */
+  @Get('export/:format')
+  async exporter(
+    @Utilisateur() u: UtilisateurConnecte,
+    @Param('format') format: string,
+    @Query() q: Record<string, string | undefined>,
+    @Res() res: Response,
+  ) {
+    return envoyerListe(
+      res,
+      format,
+      'Liste des écoles',
+      await this.service.exportEcoles(u, {
+        q: q.q,
+        departement: nombre(q.departement),
+        cycle: q.cycle || undefined,
+        annee: q.annee,
+      }),
+    );
   }
 
   /** Matière enseignée par un enseignant de l'école (rubrique « Spécialité » de sa fiche). */
@@ -208,6 +267,26 @@ export class StructuresController {
   @Get('arbre')
   arbre(@Utilisateur() u: UtilisateurConnecte) {
     return this.service.arbreStructures(u);
+  }
+
+  /** Liste des structures (filtres : recherche, type, département) : « json », « excel » ou « word ». */
+  @Get('export/:format')
+  async exporter(
+    @Utilisateur() u: UtilisateurConnecte,
+    @Param('format') format: string,
+    @Query() q: Record<string, string | undefined>,
+    @Res() res: Response,
+  ) {
+    return envoyerListe(
+      res,
+      format,
+      'Liste des structures administratives',
+      await this.service.exportStructures(u, {
+        q: q.q,
+        type: q.type || undefined,
+        departement: nombre(q.departement),
+      }),
+    );
   }
 
   @Get(':id/personnel')

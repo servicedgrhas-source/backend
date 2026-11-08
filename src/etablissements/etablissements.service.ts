@@ -14,6 +14,7 @@ import {
   parCycleEtNom,
 } from '../common/etablissement-nom';
 import { matiereEnseignant, reconnaitreMatiere } from './matieres';
+import type { ListeExportee } from '../common/export-liste';
 import { normaliser } from '../common/texte';
 import { JournalService, ParametresService } from '../core/core.service';
 import { Batiment, Classe, Referentiel, Salle, Structure } from '../entities';
@@ -112,6 +113,31 @@ const entier = (v: unknown, min: number, max: number) => {
   if (!Number.isInteger(n) || n < min || n > max)
     throw new BadRequestException(`Nombre attendu entre ${min} et ${max}.`);
   return n;
+};
+
+/** Cycles et types de structure en clair, pour les listes exportées. */
+const LIBELLE_CYCLE_ECOLE: Record<string, string> = {
+  PRESCOLAIRE: 'Préscolaire',
+  PRIMAIRE: 'Primaire',
+  COLLEGE: 'Collège',
+  LYCEE: 'Lycée',
+  ALPHABETISATION: 'Alphabétisation',
+};
+const LIBELLE_TYPE_STRUCTURE: Record<string, string> = {
+  MINISTERE: 'Ministère',
+  CABINET: 'Cabinet',
+  INSPECTION_GENERALE: 'Inspection générale',
+  DIRECTION_GENERALE: 'Direction générale',
+  ORGANISME_TUTELLE: 'Organisme sous tutelle',
+  DGRHAS: 'Direction générale',
+  DIRECTION_CENTRALE: 'Direction centrale',
+  DIRECTION_DGRHAS: 'Direction',
+  SERVICE: 'Service',
+  SERVICE_DGRHAS: 'Service',
+  BUREAU: 'Bureau',
+  BUREAU_DGRHAS: 'Bureau',
+  DDEPPSA: 'Direction départementale',
+  INSPECTION: 'Inspection',
 };
 
 @Injectable()
@@ -284,6 +310,8 @@ export class EtablissementsService {
       annee?: string;
       page?: number;
       taille?: number;
+      /** Toutes les écoles d'un coup (export, impression) : pas de page. */
+      tout?: boolean;
     },
   ) {
     const p = await this.rec.perimetre(u);
@@ -336,7 +364,7 @@ export class EtablissementsService {
         ORDER BY CASE s.cycle WHEN 'PRESCOLAIRE' THEN 1 WHEN 'PRIMAIRE' THEN 2 WHEN 'COLLEGE' THEN 3 WHEN 'LYCEE' THEN 4 ELSE 9 END,
                  -- le nom sans l'abréviation du cycle : le même ordre d'une page à l'autre
                  regexp_replace(upper(s.nom), '^(CEP|EP|CEG|LYCEE|LYCÉE|ECOLE|ÉCOLE)\\s+', ''), s.id
-        LIMIT ${taille} OFFSET ${(page - 1) * taille}`,
+        ${f.tout ? '' : `LIMIT ${taille} OFFSET ${(page - 1) * taille}`}`,
       params,
     );
     // Par cycle (préscolaire, primaire, collège, lycée), puis l'ordre alphabétique du nom abrégé
@@ -361,6 +389,188 @@ export class EtablissementsService {
           agents: l.agents,
         }))
         .sort(parCycleEtNom),
+    };
+  }
+
+  /* ------------------------------ Listes à exporter ------------------------------ */
+
+  /** Nom d'un département (pour rappeler le filtre dans le titre d'une liste). */
+  private async nomDepartement(id?: number) {
+    if (!id) return null;
+    const [d] = await this.structures.query<{ nom: string }[]>(
+      `SELECT nom FROM departement WHERE id = $1`,
+      [id],
+    );
+    return d?.nom ?? null;
+  }
+
+  /**
+   * Liste des écoles à imprimer ou exporter (DG, 08/11/2026) : toutes celles du filtre choisi à
+   * l'écran (recherche, département, cycle), sans page.
+   */
+  async exportEcoles(
+    u: UtilisateurConnecte,
+    f: { q?: string; departement?: number; cycle?: string; annee?: string },
+  ) {
+    const r = await this.liste(u, { ...f, tout: true });
+    const dep = await this.nomDepartement(f.departement);
+    const filtres = [
+      dep && `Département : ${dep}`,
+      f.cycle && `Cycle : ${LIBELLE_CYCLE_ECOLE[f.cycle] ?? f.cycle}`,
+      f.q?.trim() && `Recherche : « ${f.q.trim()} »`,
+    ].filter(Boolean);
+    const liste: ListeExportee = {
+      titre: 'LISTE DES ÉCOLES',
+      sousTitre: `Année scolaire ${r.annee} · ${r.total.toLocaleString('fr-FR')} école(s)${filtres.length ? ` · ${filtres.join(' · ')}` : ''}`,
+      nomFeuille: 'Écoles',
+      entetes: [
+        'N°',
+        'École',
+        'Cycle',
+        'Inspection',
+        'Localité',
+        'Département',
+        'Classes',
+        'Salles',
+        'Agents rattachés',
+      ],
+      largeurs: [6, 40, 14, 18, 22, 18, 9, 9, 12],
+      nombres: [0, 6, 7, 8],
+      lignes: r.lignes.map((l, i) => [
+        i + 1,
+        l.nom,
+        l.cycle ? (LIBELLE_CYCLE_ECOLE[l.cycle] ?? l.cycle) : '',
+        l.inspection ?? '',
+        l.localite ?? '',
+        l.departement ?? '',
+        l.classes,
+        l.salles,
+        l.agents,
+      ]),
+    };
+    return { annee: r.annee, total: r.total, lignes: r.lignes, liste };
+  }
+
+  /**
+   * Liste des structures administratives à imprimer ou exporter (DG, 08/11/2026), dans l'ordre de
+   * l'organigramme, chacune en retrait sous celle dont elle dépend. Filtres : recherche (sigle ou
+   * nom), type, département.
+   */
+  async exportStructures(
+    u: UtilisateurConnecte,
+    f: { q?: string; type?: string; departement?: number },
+  ) {
+    const toutes = await this.arbreStructures(u);
+    const ids = new Set(toutes.map((x) => x.id));
+    const enfants = new Map<number, typeof toutes>();
+    const racines: typeof toutes = [];
+    const ministere = toutes.find((x) => x.type === 'MINISTERE' && !x.parentId);
+    for (const x of toutes) {
+      // Les DDEPPSA sans structure au-dessus : sous le ministère, après les directions générales
+      const parent =
+        x.parentId && ids.has(x.parentId)
+          ? x.parentId
+          : x.type === 'DDEPPSA' && ministere
+            ? ministere.id
+            : null;
+      if (parent === null) racines.push(x);
+      else enfants.set(parent, [...(enfants.get(parent) ?? []), x]);
+    }
+    const parId = new Map(toutes.map((x) => [x.id, x]));
+    // Personnel avec tout ce qui en dépend
+    const totalDe = new Map<number, number>();
+    const compter = (id: number): number => {
+      if (totalDe.has(id)) return totalDe.get(id)!;
+      const t =
+        (parId.get(id)?.agents ?? 0) +
+        (enfants.get(id) ?? []).reduce((s, x) => s + compter(x.id), 0);
+      totalDe.set(id, t);
+      return t;
+    };
+    const ordre: { s: (typeof toutes)[number]; niveau: number }[] = [];
+    const parcourir = (x: (typeof toutes)[number], niveau: number) => {
+      ordre.push({ s: x, niveau });
+      for (const e of enfants.get(x.id) ?? []) parcourir(e, niveau + 1);
+    };
+    for (const r of racines) parcourir(r, 0);
+    const mots = normaliser(f.q ?? '')
+      .split(/\s+/)
+      .filter(Boolean);
+    const garde = ordre.filter(
+      ({ s }) =>
+        (!f.type || s.type === f.type) &&
+        (!f.departement || s.departementId === f.departement) &&
+        mots.every((m) => normaliser(`${s.sigle} ${s.nom}`).includes(m)),
+    );
+    const filtre = !!(f.type || f.departement || mots.length);
+    // Filtrée, la liste n'a plus d'arbre : pas de retrait
+    const base = filtre ? Math.min(...garde.map((x) => x.niveau), 0) : 0;
+    const lignes = garde.map(({ s, niveau }) => ({
+      id: s.id,
+      niveau: filtre ? 0 : niveau - base,
+      sigle: s.sigle,
+      nom: s.nom,
+      type: LIBELLE_TYPE_STRUCTURE[s.type] ?? s.type,
+      superieure: s.parentId ? (parId.get(s.parentId)?.sigle ?? '') : '',
+      departement: s.departementId,
+      agents: s.agents,
+      agentsTotal: compter(s.id),
+      dessous: (enfants.get(s.id) ?? []).length,
+      ecoles: s.ecoles,
+    }));
+    const deps = new Map(
+      (
+        await this.structures.query<{ id: number; nom: string }[]>(
+          `SELECT id, nom FROM departement`,
+        )
+      ).map((d) => [d.id, d.nom]),
+    );
+    const filtres = [
+      f.type && `Type : ${LIBELLE_TYPE_STRUCTURE[f.type] ?? f.type}`,
+      f.departement && `Département : ${deps.get(f.departement) ?? ''}`,
+      mots.length && `Recherche : « ${f.q!.trim()} »`,
+    ].filter(Boolean);
+    const liste: ListeExportee = {
+      titre: 'LISTE DES STRUCTURES ADMINISTRATIVES',
+      sousTitre: `${lignes.length.toLocaleString('fr-FR')} structure(s), dans l’ordre de l’organigramme${filtres.length ? ` · ${filtres.join(' · ')}` : ''}`,
+      nomFeuille: 'Structures',
+      entetes: [
+        'N°',
+        'Sigle',
+        'Nom',
+        'Type',
+        'Dépend de',
+        'Département',
+        'Agents de la structure',
+        'Agents avec ce qui en dépend',
+        'Structures en dessous',
+        'Écoles rattachées',
+      ],
+      largeurs: [6, 20, 52, 20, 16, 16, 12, 14, 12, 11],
+      nombres: [0, 6, 7, 8, 9],
+      retrait: filtre
+        ? undefined
+        : { colonne: 1, niveaux: lignes.map((l) => l.niveau) },
+      lignes: lignes.map((l, i) => [
+        i + 1,
+        l.sigle,
+        l.nom,
+        l.type,
+        l.superieure,
+        l.departement ? (deps.get(l.departement) ?? '') : '',
+        l.agents,
+        l.agentsTotal,
+        l.dessous,
+        l.ecoles,
+      ]),
+    };
+    return {
+      total: lignes.length,
+      lignes: lignes.map((l) => ({
+        ...l,
+        departement: l.departement ? (deps.get(l.departement) ?? null) : null,
+      })),
+      liste,
     };
   }
 
