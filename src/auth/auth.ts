@@ -142,6 +142,14 @@ export const TOUS_LES_ROLES: Role[] = [
 ];
 
 /**
+ * Comptes du ministère, sans ceux des écoles et inspections : routes communes de l'interface
+ * (menu, paramètres, travail en attente de la personne connectée).
+ */
+export const ROLES_INTERNES: Role[] = TOUS_LES_ROLES.filter(
+  (r) => r !== 'STRUCTURE',
+);
+
+/**
  * Voit tout le pays : l'administrateur, la DGRHAS, et un visiteur sans département ni structure
  * (dans les rubriques qui lui sont ouvertes en lecture).
  */

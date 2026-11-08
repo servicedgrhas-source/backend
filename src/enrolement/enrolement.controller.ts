@@ -36,6 +36,7 @@ import {
 export class EnrolementController {
   constructor(private readonly service: EnrolementService) {}
 
+  @Roles(...ROLES_TRAITEMENT)
   @Get('diplomes')
   diplomes() {
     return Object.entries(DIPLOMES_ENROLEMENT).map(([code, d]) => ({
@@ -45,6 +46,7 @@ export class EnrolementController {
   }
 
   /** Cycles, et spécialités proposées dans la saisie (liste déroulante). */
+  @Roles(...ROLES_TRAITEMENT)
   @Get('referentiel')
   referentiel() {
     return { cycles: CYCLES_ENROLEMENT, specialites: SPECIALITES_ENROLEMENT };

@@ -189,6 +189,7 @@ export class RecrutementController {
 
   /* ------------------------- Saisie des candidats ------------------------ */
 
+  @Roles(...ROLES_TRAITEMENT)
   @Get('candidats')
   async liste(
     @Utilisateur() u: UtilisateurConnecte,
@@ -206,11 +207,13 @@ export class RecrutementController {
     return liste.map((f) => ({ ...f, salaireBrut: null }));
   }
 
+  @Roles(...ROLES_TRAITEMENT)
   @Get('candidats/compteurs')
   compteurs() {
     return this.candidats.compteurs();
   }
 
+  @Roles(...ROLES_TRAITEMENT)
   @Get('candidats/prochain-numero')
   async prochainNumero(@Query('quota') quota?: string) {
     return {
@@ -222,6 +225,7 @@ export class RecrutementController {
   }
 
   /** Places du quota réajusté par bénéficiaire et par cycle, pour le formulaire de saisie (sans montants). */
+  @Roles(...ROLES_TRAITEMENT)
   @Get('candidats/quota-beneficiaires')
   quotaBeneficiaires(
     @Query('quota') quota: string,
@@ -233,6 +237,7 @@ export class RecrutementController {
     );
   }
 
+  @Roles(...ROLES_TRAITEMENT)
   @Get('candidats/lots')
   lots(
     @Query('quota') quota?: string,
@@ -251,17 +256,20 @@ export class RecrutementController {
   }
 
   /** Volontaires et communautaires de la base du personnel, à choisir au lieu de les ressaisir. */
+  @Roles(...ROLES_TRAITEMENT)
   @Get('candidats/personnel')
   personnel(@Query('recherche') recherche?: string) {
     return this.candidats.personnel(recherche);
   }
 
   /** Volontaires en poste par vague, et ceux déjà présentés dans ce quota. */
+  @Roles(...ROLES_TRAITEMENT)
   @Get('candidats/vagues')
   vagues(@Query('quota') quota?: string) {
     return this.candidats.vagues(Number(quota) || null);
   }
 
+  @Roles(...ROLES_TRAITEMENT)
   @Get('candidats/doublons')
   doublons(
     @Query('nom') nom?: string,
@@ -365,6 +373,7 @@ export class RecrutementController {
 
   /* ------------------ Transmission à la Fonction Publique ---------------- */
 
+  @Roles(...ROLES_TRAITEMENT)
   @Get('transmissions')
   transmissions() {
     return this.candidats.transmissions();
@@ -407,6 +416,7 @@ export class RecrutementController {
 
   /* --------------------- Membres de la commission --------------------- */
 
+  @Roles(...ROLES_TRAITEMENT)
   @Get('commission/membres')
   membres(@Query('quota') quota: string) {
     return this.candidats.membresCommission(
@@ -540,6 +550,7 @@ export class RecrutementController {
     );
   }
 
+  @Roles(...ROLES_TRAITEMENT)
   @Get('transmissions/:quota/:numero/soit-transmis')
   soitTransmis(
     @Param('quota', ParseIntPipe) quota: number,
@@ -548,6 +559,7 @@ export class RecrutementController {
     return this.candidats.soitTransmis(quota, numero);
   }
 
+  @Roles(...ROLES_TRAITEMENT)
   @Get('transmissions/:quota/:numero/listes')
   listes(
     @Param('quota', ParseIntPipe) quota: number,
@@ -574,11 +586,13 @@ export class RecrutementController {
 
   /* ------------------ Réception des textes de la FP ---------------------- */
 
+  @Roles(...ROLES_TRAITEMENT)
   @Get('reception/paquets')
   paquets() {
     return this.reception.paquets();
   }
 
+  @Roles(...ROLES_TRAITEMENT)
   @Get('reception/paquet')
   textesDuPaquet(@Query('date') date: string) {
     if (!/^\d{4}-\d{2}-\d{2}$/.test(date ?? ''))
@@ -586,11 +600,13 @@ export class RecrutementController {
     return this.reception.textesDuPaquet(date);
   }
 
+  @Roles(...ROLES_TRAITEMENT)
   @Get('reception/texte')
   texte(@Query('type') type: string, @Query('numero') numero: string) {
     return this.reception.texte(type, numero);
   }
 
+  @Roles(...ROLES_TRAITEMENT)
   @Get('reception/lots/:numero')
   textesDuLot(@Param('numero', ParseIntPipe) numero: number) {
     return this.reception.textesDuLot(numero);

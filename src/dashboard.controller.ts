@@ -7,6 +7,7 @@ import {
   ROLES_TRAITEMENT,
   Utilisateur,
   type UtilisateurConnecte,
+  ROLES_INTERNES,
 } from './auth/auth';
 import { SecuriteService } from './securite/securite.service';
 import { ParametresService } from './core/core.service';
@@ -32,6 +33,7 @@ export class DashboardController {
   }
 
   /** Travail en attente par rubrique : compteurs du menu et des pages d'accueil. */
+  @Roles(...ROLES_INTERNES)
   @Get('menu/compteurs')
   async compteurs(@Utilisateur() u: UtilisateurConnecte) {
     const [c] = await this.db.query<Record<string, number>[]>(`

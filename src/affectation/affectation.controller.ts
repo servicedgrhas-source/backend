@@ -209,6 +209,7 @@ export class AffectationController {
     return a;
   }
 
+  @Roles(...ROLES_TRAITEMENT)
   @Get('agents/:id/doublons')
   candidatsDoublon(@Param('id') id: string) {
     return this.doublons.candidats(id);
@@ -337,6 +338,7 @@ export class AffectationController {
   }
 
   /** Personnes sans lot de publication : elles n'entrent dans aucune note. */
+  @Roles(...ROLES_TRAITEMENT)
   @Get('recrutes/sans-lot')
   sansLot() {
     return this.importation.sansLot();
@@ -362,6 +364,7 @@ export class AffectationController {
   }
 
   /** Liste des oubliés : personnes ajoutées à la main, contrôlées avant d'entrer dans une note. */
+  @Roles(...ROLES_TRAITEMENT)
   @Get('recrutes/oublies')
   oublies() {
     return this.oublis.liste();
@@ -436,6 +439,7 @@ export class AffectationController {
     );
   }
 
+  @Roles(...ROLES_TRAITEMENT)
   @Get('lots')
   lots() {
     return this.service.listeLots();
@@ -465,6 +469,7 @@ export class AffectationController {
   }
 
   /** Plusieurs lots et groupes de quota à la fois : « ?lots=3,4&groupes=MEPPSA,AUTRES_AVEC ». */
+  @Roles(...ROLES_TRAITEMENT)
   @Get('lots/selection/resume')
   resumeSelection(
     @Query('lots') lots?: string,
@@ -476,11 +481,13 @@ export class AffectationController {
     );
   }
 
+  @Roles(...ROLES_TRAITEMENT)
   @Get('lots/:numero/resume')
   resume(@Param('numero', ParseIntPipe) numero: number) {
     return this.service.resumeLot(numero);
   }
 
+  @Roles(...ROLES_TRAITEMENT)
   @Get('agents')
   agents(
     @Query('recherche') recherche?: string,
@@ -502,12 +509,14 @@ export class AffectationController {
     });
   }
 
+  @Roles(...ROLES_TRAITEMENT)
   @Get('agents/anomalies')
   anomalies() {
     return this.service.resumeAnomalies();
   }
 
   /** Cycle du fichier différent de celui du diplôme : fiches avec l'avertissement, et masquées. */
+  @Roles(...ROLES_TRAITEMENT)
   @Get('agents/anomalies/cycle')
   cyclesDifferents() {
     return this.service.cyclesDifferents();
@@ -540,6 +549,7 @@ export class AffectationController {
     return this.service.reafficherCycles(u, dto.ids ?? []);
   }
 
+  @Roles(...ROLES_TRAITEMENT)
   @Get('agents/statistiques')
   statistiques() {
     return this.service.statistiquesAgents();
@@ -555,6 +565,7 @@ export class AffectationController {
     return this.service.modifierAgent(u, id, dto);
   }
 
+  @Roles(...ROLES_TRAITEMENT)
   @Get('affectations')
   affectations(
     @Query('lot') lot?: string,
@@ -584,6 +595,7 @@ export class AffectationController {
   }
 
   /** La même liste, filtrée, en Excel ou en Word (DG, 01/11/2026). */
+  @Roles(...ROLES_TRAITEMENT)
   @Get('affectations/export')
   async exporter(
     @Res() res: Response,

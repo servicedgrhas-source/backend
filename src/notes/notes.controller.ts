@@ -32,6 +32,7 @@ import {
   ROLES_TRAITEMENT,
   Utilisateur,
   type UtilisateurConnecte,
+  ROLES_INTERNES,
 } from '../auth/auth';
 import { StockageService } from '../common/stockage';
 import { type CritereLot, NotesService } from './notes.service';
@@ -75,6 +76,7 @@ export class NotesController {
     private readonly stockage: StockageService,
   ) {}
 
+  @Roles(...ROLES_TRAITEMENT, 'SECRETARIAT')
   @Get()
   liste(@Query('module') module?: string, @Query('lot') lot?: string) {
     return this.service.liste(module, lot ? Number(lot) : undefined);
@@ -112,6 +114,7 @@ export class NotesController {
     );
   }
 
+  @Roles(...ROLES_TRAITEMENT)
   @Post('preparer/nomination')
   preparerNomination(
     @Utilisateur() u: UtilisateurConnecte,
@@ -120,12 +123,14 @@ export class NotesController {
     return this.service.preparerNomination(u, dto?.annee);
   }
 
+  @Roles(...ROLES_TRAITEMENT)
   @Post('preparer/mutation')
   preparerMutation(@Utilisateur() u: UtilisateurConnecte) {
     return this.service.preparerMutation(u);
   }
 
   /** Ce qui attend la personne connectée (avis, impressions, scans, dossiers à confier au secrétariat). */
+  @Roles(...ROLES_INTERNES)
   @Get('a-faire')
   aFaire(@Utilisateur() u: UtilisateurConnecte) {
     return this.service.aFaire(u);
@@ -188,6 +193,7 @@ export class NotesController {
     }
   }
 
+  @Roles(...ROLES_TRAITEMENT, 'SECRETARIAT')
   @Get(':id/scan')
   async telechargerScan(@Param('id') id: string, @Res() res: Response) {
     const { fichier, nom } = await this.service.cheminScan(id);
@@ -198,11 +204,13 @@ export class NotesController {
   }
 
   /** Récapitulatif : la note de base, ses additifs et ses rectificatifs, en une liste définitive. */
+  @Roles(...ROLES_TRAITEMENT, 'SECRETARIAT')
   @Get(':id/recapitulatif')
   recapitulatif(@Param('id') id: string) {
     return this.service.recapitulatif(id);
   }
 
+  @Roles(...ROLES_TRAITEMENT, 'SECRETARIAT')
   @Get(':id/recapitulatif/excel')
   async recapitulatifExcel(@Param('id') id: string, @Res() res: Response) {
     const { nom, contenu } = await this.service.recapitulatifExcel(id);
@@ -217,6 +225,7 @@ export class NotesController {
     res.send(contenu);
   }
 
+  @Roles(...ROLES_TRAITEMENT, 'SECRETARIAT')
   @Get(':id/excel')
   async excel(@Param('id') id: string, @Res() res: Response) {
     const { nom, contenu } = await this.service.excel(id);
@@ -232,6 +241,7 @@ export class NotesController {
   }
 
   /** La note au format Word, modifiable (réunion DG du 26/10/2026). */
+  @Roles(...ROLES_TRAITEMENT, 'SECRETARIAT')
   @Get(':id/word')
   async word(
     @Param('id') id: string,
@@ -263,6 +273,7 @@ export class NotesController {
     return this.service.rouvrir(u, id);
   }
 
+  @Roles(...ROLES_TRAITEMENT, 'SECRETARIAT')
   @Get(':id')
   obtenir(@Param('id') id: string) {
     return this.service.obtenir(id);
@@ -457,6 +468,7 @@ export class NotesController {
     return this.service.creerRectificatif(u, id);
   }
 
+  @Roles(...ROLES_TRAITEMENT)
   @Get(':id/rectificatif/choix')
   choixRectificatif(@Param('id') id: string) {
     return this.service.choixRectificatif(id);

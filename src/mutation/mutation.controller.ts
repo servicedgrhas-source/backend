@@ -159,6 +159,7 @@ export class MutationController {
     return this.service.rechercherAgents(q ?? '');
   }
 
+  @Roles(...ROLES_TRAITEMENT)
   @Get('doublons')
   doublons(
     @Query('nom') nom?: string,
@@ -191,6 +192,7 @@ export class MutationController {
     res.send(contenu);
   }
 
+  @Roles(...ROLES_TRAITEMENT, 'DDEPPSA', 'CABINET')
   @Get('statistiques')
   statistiques(@Query('base') base?: 'accordees' | 'toutes') {
     return this.service.statistiques(

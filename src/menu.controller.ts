@@ -7,7 +7,12 @@ import {
 } from '@nestjs/common';
 import { InjectDataSource } from '@nestjs/typeorm';
 import { DataSource } from 'typeorm';
-import { Roles, Utilisateur, type UtilisateurConnecte } from './auth/auth';
+import {
+  Roles,
+  Utilisateur,
+  type UtilisateurConnecte,
+  ROLES_INTERNES,
+} from './auth/auth';
 import { JournalService, ParametresService } from './core/core.service';
 
 const CLE = 'MENU_CONFIG';
@@ -153,6 +158,7 @@ export class MenuController {
   ) {}
 
   /** Pour tous les comptes : le menu s'affiche avec ces noms. */
+  @Roles(...ROLES_INTERNES)
   @Get('configuration')
   configuration(): ConfigMenu {
     try {

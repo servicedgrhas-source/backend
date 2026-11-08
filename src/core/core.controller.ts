@@ -40,6 +40,7 @@ import {
   Utilisateur as Moi,
   type UtilisateurConnecte,
   TOUS_LES_ROLES,
+  ROLES_INTERNES,
 } from '../auth/auth';
 import {
   NOTES_AFFECTATION,
@@ -570,6 +571,7 @@ export class CoreController {
 
   /* ---------------------------- Paramètres --------------------------- */
 
+  @Roles(...ROLES_INTERNES)
   @Get('parametres')
   parametres(@Moi() moi: UtilisateurConnecte) {
     // Les réglages de l'outil de détection ne sont montrés qu'au DG et à l'administrateur

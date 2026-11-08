@@ -32,6 +32,7 @@ class DecisionDto {
 export class RecommandationsController {
   constructor(private readonly service: RecommandationsService) {}
 
+  @Roles(...ROLES_TRAITEMENT)
   @Get('recommandations')
   liste(
     @Query('statut') statut?: string,
