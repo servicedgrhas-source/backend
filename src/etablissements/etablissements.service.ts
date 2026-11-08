@@ -277,9 +277,19 @@ export class EtablissementsService {
   /** Écoles du périmètre, avec leurs chiffres (classes, salles, agents rattachés). */
   async liste(
     u: UtilisateurConnecte,
-    f: { q?: string; departement?: number; cycle?: string; annee?: string },
+    f: {
+      q?: string;
+      departement?: number;
+      cycle?: string;
+      annee?: string;
+      page?: number;
+      taille?: number;
+    },
   ) {
     const p = await this.rec.perimetre(u);
+    // Une page à la fois (08/11/2026 : toutes les écoles, page après page)
+    const taille = Math.min(200, Math.max(10, f.taille ?? 50));
+    const page = Math.max(1, f.page ?? 1);
     const annee = this.annee(f.annee);
     const conds = [`s.type = 'ETABLISSEMENT'`, 's.actif'];
     const params: unknown[] = [annee];
@@ -311,26 +321,45 @@ export class EtablissementsService {
         classes: number;
         salles: number;
         agents: number;
+        total: number;
       }[]
     >(
       `SELECT s.id, s.nom, s.cycle, s.localite, d.nom AS departement, i.sigle AS inspection,
               (SELECT count(*)::int FROM classe c WHERE c."structureId" = s.id AND c."anneeScolaire" = $1) AS classes,
               (SELECT count(*)::int FROM salle x WHERE x."structureId" = s.id) AS salles,
-              (SELECT count(*)::int FROM agent_recense a WHERE a."structureId" = s.id AND coalesce(a.contentieux->>'etat', 'CONFIRME') = 'CONFIRME') AS agents
+              (SELECT count(*)::int FROM agent_recense a WHERE a."structureId" = s.id AND coalesce(a.contentieux->>'etat', 'CONFIRME') = 'CONFIRME') AS agents,
+              count(*) OVER ()::int AS total
          FROM structure s
          LEFT JOIN departement d ON d.id = s."departementId"
          LEFT JOIN structure i ON i.id = s."parentId"
         WHERE ${conds.join(' AND ')}
-        ORDER BY CASE s.cycle WHEN 'PRESCOLAIRE' THEN 1 WHEN 'PRIMAIRE' THEN 2 WHEN 'COLLEGE' THEN 3 WHEN 'LYCEE' THEN 4 ELSE 9 END, s.nom
-        LIMIT 200`,
+        ORDER BY CASE s.cycle WHEN 'PRESCOLAIRE' THEN 1 WHEN 'PRIMAIRE' THEN 2 WHEN 'COLLEGE' THEN 3 WHEN 'LYCEE' THEN 4 ELSE 9 END,
+                 -- le nom sans l'abréviation du cycle : le même ordre d'une page à l'autre
+                 regexp_replace(upper(s.nom), '^(CEP|EP|CEG|LYCEE|LYCÉE|ECOLE|ÉCOLE)\\s+', ''), s.id
+        LIMIT ${taille} OFFSET ${(page - 1) * taille}`,
       params,
     );
     // Par cycle (préscolaire, primaire, collège, lycée), puis l'ordre alphabétique du nom abrégé
     // (« EP Moungali 3 ») : DG, 06/11/2026
+    const total = lignes[0]?.total ?? 0;
     return {
       annee,
+      page,
+      taille,
+      total,
+      pages: Math.max(1, Math.ceil(total / taille)),
       lignes: lignes
-        .map((l) => ({ ...l, nom: this.nomEcole(l.nom, l.cycle) }))
+        .map((l) => ({
+          id: l.id,
+          nom: this.nomEcole(l.nom, l.cycle),
+          cycle: l.cycle,
+          localite: l.localite,
+          departement: l.departement,
+          inspection: l.inspection,
+          classes: l.classes,
+          salles: l.salles,
+          agents: l.agents,
+        }))
         .sort(parCycleEtNom),
     };
   }

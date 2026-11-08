@@ -65,6 +65,8 @@ export class EtablissementsController {
       departement: nombre(q.departement),
       cycle: q.cycle || undefined,
       annee: q.annee,
+      page: nombre(q.page),
+      taille: nombre(q.taille),
     });
   }
 

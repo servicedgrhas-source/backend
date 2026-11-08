@@ -712,6 +712,8 @@ export class CarriereService {
     const valeurs = Object.fromEntries(
       [
         ...SITUATION,
+        // Date d'entrée dans l'administration ou d'intégration (DG, 08/11/2026)
+        'DATE_RECRUTEMENT',
         'DATE_GRADE',
         'FONCTION',
         'LIEU_SERVICE',
