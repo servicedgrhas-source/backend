@@ -15,6 +15,8 @@ import {
   decider,
   deciderVisiteur,
   droitsDe,
+  permisInformatique,
+  refusInformatique,
   rubriqueDuChemin,
   rolePersoDe,
   type Niveau,
@@ -42,6 +44,11 @@ export interface UtilisateurConnecte {
   rolePerso?: string | null;
   /** Dernier jour d'accès (comptes visiteurs), sinon absent. */
   finAcces?: string | null;
+  /**
+   * Compte Informatique (DG, 08/11/2026) : sur le serveur, il a les droits de l'administrateur
+   * (`role` vaut alors « ADMIN ») ; ce drapeau garde trace du vrai rôle.
+   */
+  informatique?: boolean;
 }
 
 /** Types de fichiers qu'un visiteur ne reçoit jamais (filet de sécurité derrière les adresses). */
@@ -57,7 +64,10 @@ export function bloquerFichiers(res: Response) {
   const write = res.write.bind(res) as (...a: unknown[]) => boolean;
   const end = res.end.bind(res) as (...a: unknown[]) => Response;
   let bloque = false;
-  res.setHeader = ((nom: string, valeur: number | string | readonly string[]) => {
+  res.setHeader = ((
+    nom: string,
+    valeur: number | string | readonly string[],
+  ) => {
     const n = nom.toLowerCase();
     if (
       n === 'content-disposition' ||
@@ -207,7 +217,20 @@ export class AuthGuard implements CanActivate {
       return true;
     }
     const d = decider(droits, chemin, req.method);
-    if (d.decision === 'refuse') throw new ForbiddenException(d.message);
+    // (l'aperçu d'une règle et son propre code restent permis à l'informatique malgré la lecture seule)
+    if (
+      d.decision === 'refuse' &&
+      !(req.user.role === 'INFORMATIQUE' && permisInformatique(chemin))
+    )
+      throw new ForbiddenException(d.message);
+    // Informatique : la configuration en lecture seule, puis tout le reste comme l'administrateur
+    if (req.user.role === 'INFORMATIQUE') {
+      const refus = refusInformatique(chemin, req.method);
+      if (refus) throw new ForbiddenException(refus);
+      req.user.role = 'ADMIN';
+      req.user.informatique = true;
+      return true;
+    }
     // Un compte d'école ou d'inspection n'est jamais ouvert au-delà de ses routes
     if (d.decision === 'permis' && req.user.role !== 'STRUCTURE') return true;
 

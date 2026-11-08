@@ -153,7 +153,13 @@ export class CoreController {
           [u.structureId],
         )
       : [];
-    return { ...u, structureType: s?.type ?? null };
+    return {
+      ...u,
+      // Le vrai rôle (le serveur traite le compte Informatique comme l'administrateur)
+      role: u.informatique ? 'INFORMATIQUE' : u.role,
+      informatique: undefined,
+      structureType: s?.type ?? null,
+    };
   }
 
   /**
@@ -299,6 +305,11 @@ export class CoreController {
         'Mot de passe ou code personnel incorrect : les codes ne sont pas affichés.',
       );
     }
+    // Compte Informatique : seulement son propre code (les comptes ne sont pas les siens)
+    if (moi.informatique && (dto.ids?.length !== 1 || dto.ids[0] !== moi.id))
+      throw new ForbiddenException(
+        'Compte Informatique : vous ne gérez que votre propre code personnel.',
+      );
     const tous = !dto.ids?.length;
     let cibles = await this.users
       .createQueryBuilder('u')

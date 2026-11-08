@@ -31,6 +31,7 @@ export interface ConfigDroits {
 /** Rôles qui ne peuvent pas servir de départ à un rôle personnalisé. */
 export const BASES_INTERDITES: Role[] = [
   'ADMIN',
+  'INFORMATIQUE',
   'DG',
   'STRUCTURE',
   'VISITEUR',
@@ -162,6 +163,72 @@ const RUBRIQUES_FIXES = new Set(['/administration/droits']);
  */
 export const RUBRIQUES_NON_OUVRABLES = new Set(['/administration']);
 
+/**
+ * Configuration du système (DG, 08/11/2026) : rubriques en lecture seule pour le rôle Informatique,
+ * et adresses du serveur dont l'enregistrement lui est refusé quoi qu'il arrive.
+ */
+export const RUBRIQUES_CONFIGURATION = [
+  '/administration/parametres',
+  '/administration/regles',
+  '/administration/organigramme',
+  '/administration/referentiels',
+  '/administration/prestations',
+  '/administration/origines',
+  '/administration/menu',
+  '/enrolement/configuration',
+  '/personnel/configuration',
+];
+/**
+ * Comptes et droits par rubrique (DG, 08/11/2026) : le rôle Informatique ne les voit pas du tout
+ * (rubriques masquées, adresses refusées même en lecture), et le DG ne peut pas les lui ouvrir.
+ */
+export const RUBRIQUES_INTERDITES_INFORMATIQUE = [
+  '/administration',
+  '/administration/droits',
+];
+const ADRESSES_INTERDITES_INFORMATIQUE = ['utilisateurs', 'droits'];
+const ECRITURES_CONFIGURATION = [
+  'parametres',
+  'configuration',
+  'structures',
+  'referentiels',
+  'prestations',
+  'origines',
+  'menu/configuration',
+  'enrolement/configuration',
+  'recensement/configuration',
+  'amorcage',
+];
+/** Enregistrement permis malgré tout : aperçu d'une règle (rien n'est enregistré). */
+const ECRITURES_CONFIGURATION_PERMISES = ['configuration/apercu'];
+
+/** Enregistrement de configuration permis malgré la lecture seule (aperçu d'une règle). */
+export function permisInformatique(chemin: string): boolean {
+  const c = chemin.replace(/^\/+/, '');
+  return ECRITURES_CONFIGURATION_PERMISES.some(
+    (p) => c === p || c.startsWith(`${p}/`),
+  );
+}
+
+/**
+ * Refus pour un compte Informatique (null : permis) : les comptes et les droits par rubrique, même
+ * en lecture ; tout enregistrement de la configuration.
+ */
+export function refusInformatique(
+  chemin: string,
+  methode: string,
+): string | null {
+  const c = chemin.replace(/^\/+/, '');
+  const dans = (p: string) => c === p || c.startsWith(`${p}/`);
+  if (ADRESSES_INTERDITES_INFORMATIQUE.some(dans))
+    return 'Compte Informatique : les utilisateurs et les droits par rubrique ne vous sont pas ouverts. Adressez-vous au DG ou à l’administrateur.';
+  if (['GET', 'HEAD', 'OPTIONS'].includes(methode.toUpperCase())) return null;
+  if (ECRITURES_CONFIGURATION_PERMISES.some(dans)) return null;
+  return ECRITURES_CONFIGURATION.some(dans)
+    ? 'Compte Informatique : la configuration du système (paramètres, référentiels, règles, organigramme, prestations, origines, menu) se consulte seulement. Demandez la modification au DG ou à l’administrateur.'
+    : null;
+}
+
 const UUID = /^[0-9a-f-]{36}$/;
 
 function niveaux(brut: unknown): Record<string, Niveau> {
@@ -257,6 +324,13 @@ export function droitsDe(
     ...(perso && c.rolesPerso?.[perso] ? (c.roles[perso] ?? {}) : {}),
     ...(c.utilisateurs[u.id] ?? {}),
   };
+  // Informatique : la configuration se consulte, ne se modifie pas (le DG peut aussi la masquer)
+  // Les utilisateurs et les droits par rubrique lui restent masqués, quel que soit le réglage
+  if (u.role === 'INFORMATIQUE') {
+    for (const r of RUBRIQUES_CONFIGURATION)
+      if (d[r] !== 'MASQUE') d[r] = 'LECTURE';
+    for (const r of RUBRIQUES_INTERDITES_INFORMATIQUE) d[r] = 'MASQUE';
+  }
   // Un visiteur ne reçoit jamais plus que la lecture
   if (u.role === 'VISITEUR')
     for (const r of Object.keys(d))

@@ -15,6 +15,12 @@ import {
 
 export const ROLES = [
   'ADMIN',
+  /**
+   * Informaticiens du ministère (DG, 08/11/2026) : voient et font tout comme l'administrateur, sauf
+   * la configuration (comptes, droits par rubrique, paramètres, référentiels, règles et grades,
+   * organigramme, catalogue des prestations, origines des dossiers, menu), en lecture seule.
+   */
+  'INFORMATIQUE',
   'AGENT',
   'CHEF_SERVICE',
   'DIRECTEUR',

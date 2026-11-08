@@ -2,6 +2,7 @@ import {
   decider,
   deciderVisiteur,
   droitsDe,
+  refusInformatique,
   rolePersoDe,
   rubriquesDe,
   validerDroits,
@@ -183,17 +184,101 @@ describe('Droits par rubrique', () => {
 
     it('lit ce dont la page de sa rubrique a besoin, sans ouvrir l’autre rubrique', () => {
       const p = { '/personnel': 'LECTURE' as const };
-      expect(deciderVisiteur(p, '/recensement/tableau', 'GET').decision).toBe('permis');
-      expect(deciderVisiteur(p, '/recensement/modifications', 'GET').decision).toBe('refuse');
-      expect(deciderVisiteur({}, '/recensement/tableau', 'GET').decision).toBe('refuse');
+      expect(deciderVisiteur(p, '/recensement/tableau', 'GET').decision).toBe(
+        'permis',
+      );
+      expect(
+        deciderVisiteur(p, '/recensement/modifications', 'GET').decision,
+      ).toBe('refuse');
+      expect(deciderVisiteur({}, '/recensement/tableau', 'GET').decision).toBe(
+        'refuse',
+      );
     });
 
     it('ne reçoit jamais plus que la lecture', () => {
       const r = droitsDe(
-        { roles: { VISITEUR: { '/candidats': 'MODIFICATION' } }, utilisateurs: {} },
+        {
+          roles: { VISITEUR: { '/candidats': 'MODIFICATION' } },
+          utilisateurs: {},
+        },
         { id: 'x', role: 'VISITEUR' },
       );
       expect(r['/candidats']).toBe('LECTURE');
+    });
+  });
+
+  describe('Compte Informatique (08/11/2026)', () => {
+    const vide = validerDroits({});
+    it('voit la configuration en lecture seule', () => {
+      const d = droitsDe(vide, { id: 'x', role: 'INFORMATIQUE' });
+      for (const r of [
+        '/administration/parametres',
+        '/administration/regles',
+        '/administration/organigramme',
+        '/administration/referentiels',
+        '/administration/prestations',
+        '/administration/origines',
+        '/administration/menu',
+      ])
+        expect(d[r]).toBe('LECTURE');
+      // Utilisateurs et droits par rubrique : invisibles
+      expect(d['/administration']).toBe('MASQUE');
+      expect(d['/administration/droits']).toBe('MASQUE');
+      expect(d['/mutations']).toBeUndefined();
+    });
+    it('le DG peut masquer une rubrique, pas ouvrir la configuration en modification', () => {
+      const c = validerDroits({
+        roles: {
+          INFORMATIQUE: {
+            '/mutations': 'MASQUE',
+            '/administration/parametres': 'MODIFICATION',
+            '/administration/menu': 'MASQUE',
+            '/administration': 'LECTURE',
+          },
+        },
+      });
+      const d = droitsDe(c, { id: 'x', role: 'INFORMATIQUE' });
+      expect(d['/mutations']).toBe('MASQUE');
+      expect(d['/administration/parametres']).toBe('LECTURE');
+      expect(d['/administration/menu']).toBe('MASQUE');
+      // Le DG ne peut pas lui ouvrir les utilisateurs
+      expect(d['/administration']).toBe('MASQUE');
+    });
+    it('refuse les utilisateurs et les droits, même en lecture', () => {
+      for (const [chemin, m] of [
+        ['/utilisateurs', 'GET'],
+        ['/utilisateurs', 'POST'],
+        ['/utilisateurs/abc', 'PUT'],
+        ['/utilisateurs/codes', 'POST'],
+        ['/droits', 'GET'],
+        ['/droits', 'PUT'],
+      ])
+        expect(refusInformatique(chemin, m)).toMatch(
+          /ne vous sont pas ouverts/,
+        );
+    });
+    it('refuse les enregistrements de configuration, pas le travail', () => {
+      for (const [chemin, m] of [
+        ['/parametres/DG_NOM', 'PUT'],
+        ['/configuration/grades', 'POST'],
+        ['/structures/3', 'DELETE'],
+        ['/referentiels/valeurs', 'POST'],
+        ['/prestations/CONGE', 'PUT'],
+        ['/origines/2', 'PUT'],
+        ['/menu/configuration', 'PUT'],
+        ['/enrolement/configuration', 'PUT'],
+        ['/recensement/configuration', 'PUT'],
+      ])
+        expect(refusInformatique(chemin, m)).toMatch(/lecture|consulte/);
+      for (const [chemin, m] of [
+        ['/parametres', 'GET'],
+        ['/configuration/apercu', 'POST'],
+        ['/mutations', 'POST'],
+        ['/notes/12/valider', 'POST'],
+        ['/besoins-administratifs/structures/3/cadre', 'PUT'],
+        ['/sauvegarde/telecharger', 'GET'],
+      ])
+        expect(refusInformatique(chemin, m)).toBeNull();
     });
   });
 });
