@@ -52,6 +52,11 @@ export const REGLES = {
     points: 100,
     immediate: true,
   },
+  B3_PAGE_RESERVEE: {
+    libelle:
+      'Page réservée au DG appelée par un autre compte (l’interface ne la lui montre jamais)',
+    points: 70,
+  },
   B2_INTROUVABLES: {
     libelle: 'Fiches inexistantes demandées en série (parcours des numéros)',
     points: 40,

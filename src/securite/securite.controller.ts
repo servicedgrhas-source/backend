@@ -11,6 +11,7 @@ import {
 import { Roles, Utilisateur, type UtilisateurConnecte } from '../auth/auth';
 import { ParametresService } from '../core/core.service';
 import { SecuriteService } from './securite.service';
+import { TEXTES_SECURITE } from './textes';
 
 /**
  * Sécurité › Comptes signalés (08/11/2026) : réservé au DG et à l'administrateur (le compte
@@ -28,6 +29,8 @@ export class SecuriteController {
   @Get('comptes')
   async comptes() {
     return {
+      textes: TEXTES_SECURITE,
+      exemptes: this.securite.listeExemptes(),
       reglages: this.securite.reglages(),
       regles: this.securite.libelles(),
       comptes: await this.securite.comptesSignales(),

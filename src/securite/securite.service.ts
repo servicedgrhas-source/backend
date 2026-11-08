@@ -22,16 +22,19 @@ import {
   regleNavigateur,
   scoreDecru,
 } from './regles';
+import { ECRAN_SUSPENDU } from './textes';
 
 /** Message affiché au compte suspendu (à l'écran, et à chaque requête refusée). */
-export const MESSAGE_COMPTE_SIGNALE =
-  'Votre compte a été signalé par nos outils de détection. Veuillez patienter pendant qu’un humain vérifie votre compte.';
-
+/**
+ * Refus d'un compte suspendu : le texte de l'écran vient d'ici (l'interface n'en contient aucun),
+ * avec un code neutre.
+ */
 export const compteSignale = () =>
   new ForbiddenException({
     statusCode: 403,
-    code: 'COMPTE_SIGNALE',
-    message: MESSAGE_COMPTE_SIGNALE,
+    code: 'E423',
+    titre: ECRAN_SUSPENDU.titre,
+    message: ECRAN_SUSPENDU.message,
   });
 
 /** La requête en cours (pour les contrôles faits plus loin, comme celui des champs inconnus). */
@@ -59,6 +62,19 @@ const ENTETE_CONTEXTE = 'x-app-state';
 export class SecuriteService {
   private readonly log = new Logger('Sécurité');
   private readonly comptes = new Map<string, Compte>();
+  /**
+   * Comptes jamais comptés ni suspendus (tests du développeur) : la variable du serveur
+   * SECURITE_COMPTES_EXEMPTES, et toujours le compte administrateur de départ (ADMIN_EMAIL).
+   * Elle ne se change pas depuis l'application.
+   */
+  private readonly exemptes = new Set(
+    [
+      ...(process.env.SECURITE_COMPTES_EXEMPTES ?? '').split(/[,;\s]+/),
+      process.env.ADMIN_EMAIL ?? '',
+    ]
+      .map((e) => e.trim().toLowerCase())
+      .filter(Boolean),
+  );
   /** Comptes suspendus pendant ce démarrage (évite de relire la base à chaque refus). */
   private readonly origines: (o: string) => boolean;
 
@@ -130,6 +146,14 @@ export class SecuriteService {
     return this.comptes.has(id) ? Math.round(this.compte(id).score) : 0;
   }
 
+  exempte(u: { email?: string | null }) {
+    return !!u.email && this.exemptes.has(u.email.toLowerCase());
+  }
+
+  listeExemptes() {
+    return [...this.exemptes];
+  }
+
   /* ------------------------------ Observation ------------------------------ */
 
   private contexte(req: Request) {
@@ -165,6 +189,7 @@ export class SecuriteService {
     u: UtilisateurConnecte,
     autorises: Set<string> | null,
   ): Promise<boolean> {
+    if (this.exempte(u)) return false;
     const t = Date.now();
     const classe = classer(req.path, req.method);
     (
@@ -234,6 +259,7 @@ export class SecuriteService {
    * session : tâtonnement, ou adresse piège.
    */
   async adresseInconnue(req: Request, u: UtilisateurConnecte) {
+    if (this.exempte(u)) return;
     const t = Date.now();
     const c = this.compte(u.id, t);
     const regle: CodeRegle = estPiege(req.path)
@@ -254,12 +280,31 @@ export class SecuriteService {
     echecs: number,
     ip: string,
   ) {
+    if (this.exempte(u)) return;
     const t = Date.now();
     await this.appliquer(
       u,
       this.compte(u.id, t),
       [{ regle: 'E3_ECHECS', details: { echecs } }],
       { ip, headers: {} } as Request,
+      t,
+    );
+  }
+
+  /** La page des comptes signalés appelée par un compte qui n'y a pas accès. */
+  async pageReservee(req: Request, u: UtilisateurConnecte) {
+    if (this.exempte(u)) return false;
+    const t = Date.now();
+    return this.appliquer(
+      u,
+      this.compte(u.id, t),
+      [
+        {
+          regle: 'B3_PAGE_RESERVEE',
+          details: { adresse: req.path.slice(0, 200) },
+        },
+      ],
+      req,
       t,
     );
   }
@@ -280,7 +325,7 @@ export class SecuriteService {
     req: Request,
     t: number,
   ): Promise<boolean> {
-    if (!gains.length) return false;
+    if (!gains.length || this.exempte(u)) return false;
     const r = this.reglages();
     let immediate = false;
     for (const g of gains) {

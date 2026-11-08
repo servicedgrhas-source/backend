@@ -4,6 +4,7 @@ import {
   ExecutionContext,
   ForbiddenException,
   Injectable,
+  NotFoundException,
   SetMetadata,
   UnauthorizedException,
 } from '@nestjs/common';
@@ -219,6 +220,17 @@ export class AuthGuard implements CanActivate {
       )
     )
       throw compteSignale();
+    // La page des comptes signalés n'existe pas pour les autres comptes : « introuvable » ordinaire,
+    // et des points (l'interface ne la leur montre jamais)
+    if (
+      /^\/api\/securite(\/|$)/.test(req.path) &&
+      req.user.role !== 'DG' &&
+      req.user.role !== 'ADMIN'
+    ) {
+      if (await this.securite.pageReservee(req, req.user))
+        throw compteSignale();
+      throw new NotFoundException(`Cannot ${req.method} ${req.originalUrl}`);
+    }
     const config = this.config();
     const droits = droitsDe(config, req.user);
     req.user.droits = droits;
