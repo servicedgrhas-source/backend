@@ -224,6 +224,9 @@ describe('Droits par rubrique', () => {
       // Utilisateurs et droits par rubrique : invisibles
       expect(d['/administration']).toBe('MASQUE');
       expect(d['/administration/droits']).toBe('MASQUE');
+      // Ni la sauvegarde de la base, ni le journal des actions
+      expect(d['/administration/sauvegarde']).toBe('MASQUE');
+      expect(d['/journal']).toBe('MASQUE');
       expect(d['/mutations']).toBeUndefined();
     });
     it('le DG peut masquer une rubrique, pas ouvrir la configuration en modification', () => {
@@ -252,6 +255,10 @@ describe('Droits par rubrique', () => {
         ['/utilisateurs/codes', 'POST'],
         ['/droits', 'GET'],
         ['/droits', 'PUT'],
+        ['/sauvegarde/apercu', 'GET'],
+        ['/sauvegarde/telecharger', 'GET'],
+        ['/sauvegarde/cloudinary', 'POST'],
+        ['/journal', 'GET'],
       ])
         expect(refusInformatique(chemin, m)).toMatch(
           /ne vous sont pas ouverts/,
@@ -276,7 +283,6 @@ describe('Droits par rubrique', () => {
         ['/mutations', 'POST'],
         ['/notes/12/valider', 'POST'],
         ['/besoins-administratifs/structures/3/cadre', 'PUT'],
-        ['/sauvegarde/telecharger', 'GET'],
       ])
         expect(refusInformatique(chemin, m)).toBeNull();
     });

@@ -179,14 +179,22 @@ export const RUBRIQUES_CONFIGURATION = [
   '/personnel/configuration',
 ];
 /**
- * Comptes et droits par rubrique (DG, 08/11/2026) : le rôle Informatique ne les voit pas du tout
- * (rubriques masquées, adresses refusées même en lecture), et le DG ne peut pas les lui ouvrir.
+ * Comptes, droits par rubrique, sauvegarde de la base et journal des actions (DG, 08/11/2026) : le
+ * rôle Informatique ne les voit pas du tout (rubriques masquées, adresses refusées même en lecture),
+ * et le DG ne peut pas les lui ouvrir.
  */
 export const RUBRIQUES_INTERDITES_INFORMATIQUE = [
   '/administration',
   '/administration/droits',
+  '/administration/sauvegarde',
+  '/journal',
 ];
-const ADRESSES_INTERDITES_INFORMATIQUE = ['utilisateurs', 'droits'];
+const ADRESSES_INTERDITES_INFORMATIQUE = [
+  'utilisateurs',
+  'droits',
+  'sauvegarde',
+  'journal',
+];
 const ECRITURES_CONFIGURATION = [
   'parametres',
   'configuration',
@@ -221,7 +229,7 @@ export function refusInformatique(
   const c = chemin.replace(/^\/+/, '');
   const dans = (p: string) => c === p || c.startsWith(`${p}/`);
   if (ADRESSES_INTERDITES_INFORMATIQUE.some(dans))
-    return 'Compte Informatique : les utilisateurs et les droits par rubrique ne vous sont pas ouverts. Adressez-vous au DG ou à l’administrateur.';
+    return 'Compte Informatique : les utilisateurs, les droits par rubrique, la sauvegarde de la base et le journal des actions ne vous sont pas ouverts. Adressez-vous au DG ou à l’administrateur.';
   if (['GET', 'HEAD', 'OPTIONS'].includes(methode.toUpperCase())) return null;
   if (ECRITURES_CONFIGURATION_PERMISES.some(dans)) return null;
   return ECRITURES_CONFIGURATION.some(dans)
