@@ -1,12 +1,14 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
 import { InjectDataSource } from '@nestjs/typeorm';
 import ExcelJS from 'exceljs';
+// JSZip vient avec exceljs (il lit et écrit les .xlsx) : pas de dépendance en plus
+import JSZip from 'jszip';
 import { DataSource } from 'typeorm';
 import { motsDuNom, ressemblance } from '../common/ressemblance';
 import { type Personne, RapprochementService } from './rapprochement.service';
 
 /**
- * Rapprochement et détection des doublons (DG, 08/11/2026) : jusqu'à 4 fichiers Excel comparés
+ * Rapprochement et détection des doublons (DG, 08/11/2026) : jusqu'à 5 fichiers Excel comparés
  * entre eux (doublons d'un même fichier, d'un fichier à l'autre) et avec toutes les bases du
  * système, SAUF la base des enrôlés. Les cas sûrs sont écartés d'office ; les cas douteux sont
  * montrés à l'agent, qui décide « même personne » ou « pas la même personne ». On télécharge
@@ -91,10 +93,10 @@ export class DetectionDoublonsService {
   ) {
     if (!fichiers.length)
       throw new BadRequestException(
-        'Choisissez au moins un fichier Excel (jusqu’à 4).',
+        'Choisissez au moins un fichier Excel (jusqu’à 5).',
       );
-    if (fichiers.length > 4)
-      throw new BadRequestException('Quatre fichiers au plus à la fois.');
+    if (fichiers.length > 5)
+      throw new BadRequestException('Cinq fichiers au plus à la fois.');
     const tous: Lu[] = [];
     const lus: {
       nom: string;
@@ -495,10 +497,15 @@ export class DetectionDoublonsService {
         if (x !== y) parent.set(x, y);
       }
     }
-    // Groupes finals
+    // Groupes finals : seulement ceux qui touchent les fichiers (les dizaines de milliers de
+    // personnes des bases qui ne ressemblent à personne n'y entrent pas : mémoire du serveur)
+    const utiles = new Set<number>();
+    for (const [r, ids] of membresDe)
+      if (ids.some((i) => tous[i].fichier >= 0)) utiles.add(chef(r));
     const groupes = new Map<number, Lu[]>();
     for (const [r, ids] of membresDe) {
       const c = chef(r);
+      if (!utiles.has(c)) continue;
       const l = groupes.get(c) ?? [];
       l.push(...ids.map((i) => tous[i]));
       groupes.set(c, l);
@@ -840,22 +847,24 @@ export class DetectionDoublonsService {
     fichiers: { nom: string; contenu: Buffer }[],
     options: Options,
     brut?: string,
+    planBrut?: string,
   ) {
-    const { a, t } = await this.preparer(fichiers, options, brut);
-    const ecartees = new Map<string, Set<number>>();
-    for (const e of t.ecartes) {
-      const k = `${e.p.fichier}|${e.p.feuille}`;
-      const s = ecartees.get(k) ?? new Set<number>();
-      s.add(e.p.ligne!);
-      ecartees.set(k, s);
-    }
+    // Le plan (feuilles lues, lignes écartées) vient d'un appel précédent : l'analyse et la
+    // recopie ne se font pas dans la même requête (08/11/2026 : le serveur en ligne manquait de
+    // mémoire). Sans plan, l'analyse est refaite ici.
+    const { feuilles, ecartees } = planBrut
+      ? this.planLu(planBrut, fichiers.length)
+      : await this.planNettoye(fichiers, options, brut);
     const sortie = new ExcelJS.Workbook();
     sortie.creator = 'SIGRHAS-MEPPSA';
     const noms = new Set<string>();
     for (const [n, f] of fichiers.entries()) {
       const source = new ExcelJS.Workbook();
-      await source.xlsx.load(f.contenu as unknown as ArrayBuffer);
-      for (const feuille of a.lus[n].feuilles) {
+      // Les feuilles non cochées sont vidées avant l'ouverture : seules les feuilles lues pèsent
+      await source.xlsx.load(
+        (await this.alleger(f.contenu, feuilles[n])) as unknown as ArrayBuffer,
+      );
+      for (const feuille of feuilles[n].map((nom) => ({ nom }))) {
         const ws = source.getWorksheet(feuille.nom);
         if (!ws) continue;
         let nom = `F${n + 1} ${feuille.nom}`.replace(/[\\/?*[\]:]/g, ' ');
@@ -870,6 +879,139 @@ export class DetectionDoublonsService {
       }
     }
     return Buffer.from(await sortie.xlsx.writeBuffer());
+  }
+
+  /** Le plan du fichier nettoyé, à renvoyer tel quel pour le télécharger (petit : des numéros de ligne). */
+  async plan(
+    fichiers: { nom: string; contenu: Buffer }[],
+    options: Options,
+    brut?: string,
+  ) {
+    const { feuilles, ecartees } = await this.planNettoye(
+      fichiers,
+      options,
+      brut,
+    );
+    return {
+      feuilles,
+      ecartees: Object.fromEntries(
+        [...ecartees].map(([k, v]) => [k, [...v].sort((x, y) => x - y)]),
+      ),
+    };
+  }
+
+  /** Plan reçu du navigateur : vérifié (des noms de feuilles et des numéros de ligne seulement). */
+  private planLu(brut: string, nbFichiers: number) {
+    const refus = () =>
+      new BadRequestException(
+        'Plan du fichier nettoyé illisible : relancez la recherche.',
+      );
+    let v: unknown;
+    try {
+      v = JSON.parse(brut);
+    } catch {
+      throw refus();
+    }
+    const p = v as { feuilles?: unknown; ecartees?: unknown };
+    if (
+      !Array.isArray(p.feuilles) ||
+      p.feuilles.length !== nbFichiers ||
+      !p.feuilles.every(
+        (l) =>
+          Array.isArray(l) &&
+          l.length <= 50 &&
+          l.every((x) => typeof x === 'string' && x.length <= 100),
+      ) ||
+      !p.ecartees ||
+      typeof p.ecartees !== 'object' ||
+      Array.isArray(p.ecartees)
+    )
+      throw refus();
+    const ecartees = new Map<string, Set<number>>();
+    for (const [k, l] of Object.entries(
+      p.ecartees as Record<string, unknown>,
+    )) {
+      if (
+        !Array.isArray(l) ||
+        l.length > 200000 ||
+        !l.every((x) => Number.isInteger(x) && (x as number) > 0)
+      )
+        throw refus();
+      ecartees.set(k, new Set(l as number[]));
+    }
+    return { feuilles: p.feuilles as string[][], ecartees };
+  }
+
+  /** Les feuilles lues de chaque fichier et les lignes écartées : de quoi faire le fichier nettoyé. */
+  private async planNettoye(
+    fichiers: { nom: string; contenu: Buffer }[],
+    options: Options,
+    brut?: string,
+  ) {
+    const { a, t } = await this.preparer(fichiers, options, brut);
+    const ecartees = new Map<string, Set<number>>();
+    for (const e of t.ecartes) {
+      const k = `${e.p.fichier}|${e.p.feuille}`;
+      const s = ecartees.get(k) ?? new Set<number>();
+      s.add(e.p.ligne!);
+      ecartees.set(k, s);
+    }
+    return {
+      feuilles: a.lus.map((l) => l.feuilles.map((x) => x.nom)),
+      ecartees,
+    };
+  }
+
+  /**
+   * Le classeur sans le contenu des feuilles qu'on ne garde pas (remplacées par des feuilles
+   * vides) : ouvrir un classeur entier avec ses feuilles masquées de milliers de lignes coûte des
+   * centaines de Mo.
+   */
+  private async alleger(contenu: Buffer, garder: string[]) {
+    try {
+      const zip = await JSZip.loadAsync(contenu);
+      const wb = await zip.file('xl/workbook.xml')?.async('string');
+      const rels = await zip
+        .file('xl/_rels/workbook.xml.rels')
+        ?.async('string');
+      if (!wb || !rels) return contenu;
+      const cible = new Map<string, string>();
+      for (const m of rels.matchAll(/<Relationship\b[^>]*>/g)) {
+        const id = /\bId="([^"]+)"/.exec(m[0])?.[1];
+        const t = /\bTarget="([^"]+)"/.exec(m[0])?.[1];
+        if (id && t)
+          cible.set(
+            id,
+            t.startsWith('/') ? t.slice(1) : `xl/${t.replace(/^\.\//, '')}`,
+          );
+      }
+      const xml = (v: string) =>
+        v.replace(
+          /&(amp|lt|gt|quot|apos);/g,
+          (_t, e: string) =>
+            ({ amp: '&', lt: '<', gt: '>', quot: '"', apos: "'" })[e] ?? '',
+        );
+      const VIDE =
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData/></worksheet>';
+      let videes = 0;
+      for (const m of wb.matchAll(/<sheet\b[^>]*>/g)) {
+        const nom = /\bname="([^"]*)"/.exec(m[0])?.[1];
+        const rid = /\br:id="([^"]+)"/.exec(m[0])?.[1];
+        const chemin = rid ? cible.get(rid) : undefined;
+        if (nom === undefined || !chemin || garder.includes(xml(nom))) continue;
+        if (!zip.file(chemin)) continue;
+        zip.file(chemin, VIDE);
+        videes++;
+      }
+      if (!videes) return contenu;
+      return await zip.generateAsync({
+        type: 'nodebuffer',
+        compression: 'STORE',
+      });
+    } catch {
+      // Classeur inhabituel : il est ouvert tel quel
+      return contenu;
+    }
   }
 
   /** Recopie une feuille sans certaines lignes (valeurs, styles, largeurs, fusions), N° renuméroté. */
@@ -916,7 +1058,8 @@ export class DetectionDoublonsService {
           v && typeof v === 'object' && ('formula' in v || 'sharedFormula' in v)
             ? ((v as { result?: ExcelJS.CellValue }).result ?? null)
             : v;
-        d.style = JSON.parse(JSON.stringify(c.style ?? {})) as ExcelJS.Style;
+        // Le style est partagé (pas recopié) : la recopie coûtait de la mémoire pour rien
+        d.style = c.style;
       });
       if (
         titres &&

@@ -103,7 +103,7 @@ export class DossiersController {
   @Roles(...ROLES_TRAITEMENT)
   @Post('rapprochement/feuilles')
   @UseInterceptors(
-    FilesInterceptor('fichiers', 4, { limits: { fileSize: 40 * 1024 * 1024 } }),
+    FilesInterceptor('fichiers', 5, { limits: { fileSize: 40 * 1024 * 1024 } }),
   )
   feuillesRapprochement(
     @UploadedFiles() fichiers: Express.Multer.File[],
@@ -176,7 +176,7 @@ export class DossiersController {
   @Roles(...ROLES_TRAITEMENT)
   @Post('rapprochement/doublons')
   @UseInterceptors(
-    FilesInterceptor('fichiers', 4, { limits: { fileSize: 40 * 1024 * 1024 } }),
+    FilesInterceptor('fichiers', 5, { limits: { fileSize: 40 * 1024 * 1024 } }),
   )
   detecterDoublons(
     @UploadedFiles() fichiers: Express.Multer.File[],
@@ -189,11 +189,38 @@ export class DossiersController {
     });
   }
 
+  /** Plan du fichier nettoyé (feuilles lues, lignes écartées) : demandé avant de le télécharger. */
+  @Roles(...ROLES_TRAITEMENT)
+  @Post('rapprochement/doublons/plan')
+  @UseInterceptors(
+    FilesInterceptor('fichiers', 5, { limits: { fileSize: 40 * 1024 * 1024 } }),
+  )
+  planDoublons(
+    @UploadedFiles() fichiers: Express.Multer.File[],
+    @Body()
+    body: {
+      avecBase?: string;
+      masquees?: string;
+      feuilles?: string;
+      decisions?: string;
+    },
+  ) {
+    return this.detection.plan(
+      this.fichiersRapprochement(fichiers),
+      {
+        avecBase: body.avecBase === '1',
+        masquees: body.masquees === '1',
+        feuilles: this.feuillesChoisies(body.feuilles),
+      },
+      body.decisions,
+    );
+  }
+
   /** « doublons » : les lignes écartées et leur raison ; « nettoye » : chaque personne une seule fois. */
   @Roles(...ROLES_TRAITEMENT)
   @Post('rapprochement/doublons/:quoi')
   @UseInterceptors(
-    FilesInterceptor('fichiers', 4, { limits: { fileSize: 40 * 1024 * 1024 } }),
+    FilesInterceptor('fichiers', 5, { limits: { fileSize: 40 * 1024 * 1024 } }),
   )
   async fichierDoublons(
     @Param('quoi') quoi: string,
@@ -204,6 +231,7 @@ export class DossiersController {
       masquees?: string;
       feuilles?: string;
       decisions?: string;
+      plan?: string;
     },
     @Res() res: Response,
   ) {
@@ -218,7 +246,12 @@ export class DossiersController {
     const contenu =
       quoi === 'doublons'
         ? await this.detection.excelDoublons(lus, options, body.decisions)
-        : await this.detection.excelNettoye(lus, options, body.decisions);
+        : await this.detection.excelNettoye(
+            lus,
+            options,
+            body.decisions,
+            body.plan,
+          );
     const le = new Date().toLocaleDateString('fr-FR').replaceAll('/', '-');
     const nom =
       quoi === 'doublons'
