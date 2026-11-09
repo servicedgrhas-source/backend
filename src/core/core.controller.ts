@@ -13,7 +13,9 @@ import {
   Put,
   Query,
   Res,
+  UseInterceptors,
 } from '@nestjs/common';
+import { NoFilesInterceptor } from '@nestjs/platform-express';
 import { InjectRepository } from '@nestjs/typeorm';
 import * as bcrypt from 'bcryptjs';
 import {
@@ -62,7 +64,8 @@ import {
   type Role,
   Utilisateur,
 } from '../entities';
-import { JournalService, ParametresService } from './core.service';
+import { excelListe, wordListe } from '../common/export-liste';
+import { ecarts, JournalService, ParametresService } from './core.service';
 
 /** Longueurs maximales : un envoi démesuré est refusé avant tout calcul. */
 class ConnexionDto {
@@ -465,6 +468,16 @@ export class CoreController {
       actif,
       finAcces: maj.finAcces,
       ...(nouveauMotDePasse ? { motDePasse: 'changé' } : {}),
+      changements: ecarts(u as unknown as Record<string, unknown>, maj, {
+        nom: 'nom',
+        email: 'adresse e-mail',
+        initiales: 'initiales',
+        role: 'rôle',
+        departementId: 'département',
+        structureId: 'structure',
+        finAcces: 'fin de l’accès',
+        actif: 'compte actif',
+      }),
     });
     return this.users.findOne({ where: { id } });
   }
@@ -591,8 +604,11 @@ export class CoreController {
   ) {
     if (typeof body?.valeur !== 'string')
       throw new BadRequestException('valeur requise');
+    // La valeur d'avant, pour le journal (« avant → après »)
+    const ancienneValeur = this.params.get(cle) ?? '';
     await this.params.definir(cle, body.valeur.trim());
     await this.journal.log(moi, 'MODIFICATION_PARAMETRE', 'parametre', cle, {
+      avant: ancienneValeur,
       valeur: body.valeur,
     });
     return { ok: true };
@@ -607,5 +623,86 @@ export class CoreController {
     @Query('entiteId') entiteId?: string,
   ) {
     return this.journal.liste(300, entite, entiteId);
+  }
+
+  /** Journal filtré : période, personne, sans les connexions, page après page (DG, 08/11/2026). */
+  @Roles('ADMIN', 'DG', 'DIRECTEUR')
+  @Get('journal/recherche')
+  journalRecherche(@Query() q: Record<string, string | undefined>) {
+    return this.journal.recherche({
+      du: q.du,
+      au: q.au,
+      utilisateurId: q.utilisateur || undefined,
+      sansConnexions: q.sansConnexions === '1',
+      avant: q.avant && /^\d+$/.test(q.avant) ? Number(q.avant) : undefined,
+      limite: q.limite && /^\d+$/.test(q.limite) ? Number(q.limite) : undefined,
+    });
+  }
+
+  @Roles('ADMIN', 'DG', 'DIRECTEUR')
+  @Get('journal/personnes')
+  journalPersonnes() {
+    return this.journal.personnes();
+  }
+
+  /**
+   * Le journal affiché, en Excel ou en Word (DG, 08/11/2026) : les lignes telles que la page les
+   * décrit (date, personne, action, objet, détails), avec les filtres rappelés.
+   */
+  @Roles('ADMIN', 'DG', 'DIRECTEUR')
+  @Post('journal/export/:format')
+  // Envoyé comme un formulaire (champ « donnees » en JSON), comme les autres téléchargements
+  @UseInterceptors(NoFilesInterceptor())
+  async journalExport(
+    @Param('format') format: string,
+    @Body() brut: { donnees?: string },
+    @Res() res: Response,
+  ) {
+    if (format !== 'excel' && format !== 'word')
+      throw new NotFoundException('Format inconnu');
+    let body: { sousTitre?: unknown; lignes?: unknown } = {};
+    try {
+      body = JSON.parse(brut?.donnees ?? '{}') as typeof body;
+    } catch {
+      throw new BadRequestException('Lignes du journal illisibles.');
+    }
+    const lignes = body?.lignes;
+    if (
+      !Array.isArray(lignes) ||
+      lignes.length > 20000 ||
+      !lignes.every(
+        (l) =>
+          Array.isArray(l) &&
+          l.length === 5 &&
+          l.every((x) => typeof x === 'string' && x.length <= 4000),
+      )
+    )
+      throw new BadRequestException('Lignes du journal illisibles.');
+    const liste = {
+      titre: 'JOURNAL DES ACTIONS',
+      sousTitre:
+        typeof body.sousTitre === 'string'
+          ? body.sousTitre.slice(0, 300)
+          : undefined,
+      nomFeuille: 'Journal',
+      entetes: ['N°', 'Date', 'Par', 'Action', 'Concerne', 'Détails'],
+      largeurs: [6, 18, 24, 40, 30, 60],
+      nombres: [0],
+      lignes: (lignes as string[][]).map((l, i) => [i + 1, ...l]),
+    };
+    const contenu =
+      format === 'excel' ? await excelListe(liste) : await wordListe(liste);
+    const nom = `Journal des actions ${new Date().toLocaleDateString('fr-FR').replaceAll('/', '-')}.${format === 'excel' ? 'xlsx' : 'docx'}`;
+    res.setHeader(
+      'Content-Type',
+      format === 'excel'
+        ? 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+        : 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    );
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename*=UTF-8''${encodeURIComponent(nom)}`,
+    );
+    res.send(contenu);
   }
 }

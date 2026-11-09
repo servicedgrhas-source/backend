@@ -13,7 +13,7 @@ import type { UtilisateurConnecte } from '../auth/auth';
 import { TYPES_STRUCTURE } from '../circuit/catalogue';
 import { codeDepartement } from '../common/referentiels';
 import { cleCompacte, normaliser, TYPES_DIRECTIONS } from '../common/texte';
-import { JournalService } from '../core/core.service';
+import { ecarts, JournalService } from '../core/core.service';
 import { RecensementService } from '../recensement/recensement.service';
 import { Departement, Referentiel, Structure } from '../entities';
 
@@ -673,17 +673,49 @@ export class ReferentielsService implements OnApplicationBootstrap {
       ordre: Number.isFinite(dto.ordre) ? Number(dto.ordre) : 0,
     };
     let r: Referentiel;
+    let avant: Record<string, unknown> | null = null;
     if (id) {
       const ex = await this.refs.findOne({ where: { id } });
       if (!ex) throw new NotFoundException('Valeur introuvable');
+      avant = { ...ex.donnees, ...ex };
       r = await this.refs.save({ ...ex, ...valeurs });
     } else r = await this.refs.save({ ...valeurs, source: 'SAISIE' });
+    // Ce qui a changé (DG, 08/11/2026) : la valeur et ses données propres (indice, abréviation…)
+    const clesDonnees = [
+      ...new Set([
+        ...Object.keys(valeurs.donnees),
+        ...Object.keys(
+          (avant?.donnees as Record<string, unknown> | undefined) ?? {},
+        ),
+      ]),
+    ];
     await this.journal.log(
       u,
       id ? 'REFERENTIEL_MODIFIE' : 'REFERENTIEL_AJOUTE',
       'referentiel',
       String(r.id),
-      { type: r.type, libelle: r.libelle },
+      {
+        type: r.type,
+        referentiel: TYPES_REFERENTIEL[r.type]?.libelle ?? r.type,
+        libelle: r.libelle,
+        ...(avant
+          ? {
+              changements: ecarts(
+                avant,
+                { ...valeurs.donnees, ...r },
+                {
+                  libelle: 'libellé',
+                  code: 'code',
+                  parent: 'rattaché à',
+                  departementId: 'département',
+                  actif: 'en service',
+                  ordre: 'ordre',
+                  ...Object.fromEntries(clesDonnees.map((k) => [k, k])),
+                },
+              ),
+            }
+          : {}),
+      },
     );
     return r;
   }

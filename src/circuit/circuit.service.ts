@@ -12,7 +12,7 @@ import type { UtilisateurConnecte } from '../auth/auth';
 import * as bcrypt from 'bcryptjs';
 import { randomBytes } from 'node:crypto';
 import { chiffrerCode, nouveauCode } from '../common/code-personnel';
-import { JournalService } from '../core/core.service';
+import { ecarts, JournalService } from '../core/core.service';
 import {
   Alerte,
   AlerteLue,
@@ -594,12 +594,41 @@ export class CircuitService implements OnModuleInit {
               0,
             ) + 1,
         });
+    // Ce qui a changé (DG, 08/11/2026), la structure supérieure par son sigle
+    const sigleDe = async (pid: number | null | undefined) =>
+      pid
+        ? ((await this.structures.findOne({ where: { id: pid } }))?.sigle ??
+          String(pid))
+        : '';
     await this.journal.log(
       u,
       id ? 'STRUCTURE_MODIFIEE' : 'STRUCTURE_AJOUTEE',
       'structure',
       String(s.id),
-      { type: s.type, sigle: s.sigle },
+      {
+        type: s.type,
+        sigle: s.sigle,
+        nom: s.nom,
+        ...(ancienne
+          ? {
+              changements: ecarts(
+                { ...ancienne, parent: await sigleDe(ancienne.parentId) },
+                { ...s, parent: await sigleDe(s.parentId) },
+                {
+                  nom: 'nom',
+                  sigle: 'sigle',
+                  type: 'niveau',
+                  parent: 'structure supérieure',
+                  departementId: 'département',
+                  cycle: 'cycle',
+                  typeLocalite: 'type de localité',
+                  localite: 'localité',
+                  actif: 'active',
+                },
+              ),
+            }
+          : {}),
+      },
     );
     return s;
   }

@@ -231,6 +231,34 @@ export const PARAMETRES_DEFAUT: Record<string, [string, string]> = {
   ],
 };
 
+/**
+ * Ce qui a changé entre deux états d'un objet, pour le journal (DG, 08/11/2026) : la liste des
+ * champs modifiés, chacun avec son nom lisible, sa valeur avant et sa valeur après.
+ */
+export function ecarts(
+  avant: Record<string, unknown> | null | undefined,
+  apres: Record<string, unknown>,
+  champs: Record<string, string>,
+) {
+  const texte = (v: unknown): string =>
+    v === null || v === undefined
+      ? ''
+      : v instanceof Date
+        ? v.toISOString().slice(0, 10)
+        : typeof v === 'string'
+          ? v
+          : typeof v === 'number' || typeof v === 'boolean'
+            ? String(v)
+            : JSON.stringify(v);
+  return Object.entries(champs)
+    .filter(([k]) => texte(avant?.[k]) !== texte(apres[k]))
+    .map(([k, champ]) => ({
+      champ,
+      avant: texte(avant?.[k]),
+      apres: texte(apres[k]),
+    }));
+}
+
 @Injectable()
 export class JournalService {
   constructor(
@@ -272,6 +300,63 @@ export class JournalService {
     }));
   }
 
+  /**
+   * Journal filtré (DG, 08/11/2026) : période, personne, sans les connexions ; page après page
+   * (« avant » : les actions plus anciennes que celle-ci).
+   */
+  async recherche(f: {
+    du?: string;
+    au?: string;
+    utilisateurId?: string;
+    sansConnexions?: boolean;
+    avant?: number;
+    limite?: number;
+  }) {
+    const limite = Math.min(2000, Math.max(50, f.limite ?? 500));
+    const conds: string[] = [];
+    const params: unknown[] = [];
+    const ajouter = (sql: string, v: unknown) => {
+      params.push(v);
+      conds.push(sql.replace('$X', `$${params.length}`));
+    };
+    const jour = /^\d{4}-\d{2}-\d{2}$/;
+    // Les jours sont ceux de Brazzaville (UTC+1)
+    if (f.du && jour.test(f.du))
+      ajouter(`j.date >= ($X::date)::timestamp - interval '1 hour'`, f.du);
+    if (f.au && jour.test(f.au))
+      ajouter(`j.date < ($X::date + 1)::timestamp - interval '1 hour'`, f.au);
+    if (f.utilisateurId)
+      ajouter('j."utilisateurId"::text = $X', f.utilisateurId);
+    if (f.sansConnexions) conds.push(`j.action <> 'CONNEXION'`);
+    if (f.avant) ajouter('j.id < $X', f.avant);
+    const lignes = await this.repo.query<Journal[]>(
+      `SELECT j.* FROM journal j ${conds.length ? `WHERE ${conds.join(' AND ')}` : ''}
+        ORDER BY j.id DESC LIMIT ${limite + 1}`,
+      params,
+    );
+    const plus = lignes.length > limite;
+    const page = lignes.slice(0, limite);
+    const objets = await this.libellesObjets(page);
+    return {
+      plus,
+      lignes: page.map((l) => ({
+        ...l,
+        objet:
+          (l.entite && l.entiteId && objets.get(`${l.entite}|${l.entiteId}`)) ??
+          null,
+      })),
+    };
+  }
+
+  /** Les personnes qui apparaissent dans le journal (filtre « Personne »). */
+  async personnes() {
+    return this.repo.query<{ id: string; nom: string; actions: number }[]>(
+      `SELECT "utilisateurId"::text AS id, max("utilisateurNom") AS nom, count(*)::int AS actions
+         FROM journal WHERE "utilisateurId" IS NOT NULL
+        GROUP BY "utilisateurId" ORDER BY max("utilisateurNom")`,
+    );
+  }
+
   /** Nom lisible de la personne, du lot ou de la note concernée par chaque action. */
   private async libellesObjets(lignes: Journal[]) {
     const ids = (entite: string) => [
@@ -310,6 +395,29 @@ export class JournalService {
       'lot_publication',
       `SELECT id::text, ${sqlLibelleLot('lot_publication')} AS libelle FROM lot_publication WHERE id = ANY($1::int[])`,
       true,
+    );
+    // Structures, personnel, enrôlés, volontaires, nominations (DG, 09/11/2026 : « Concerne » vide)
+    await charger(
+      'structure',
+      `SELECT id::text, sigle || CASE WHEN nom <> sigle THEN ' · ' || nom ELSE '' END AS libelle FROM structure WHERE id = ANY($1::int[])`,
+      true,
+    );
+    await charger(
+      'agent_recense',
+      `SELECT id::text, "nomComplet" AS libelle FROM agent_recense WHERE id = ANY($1::int[])`,
+      true,
+    );
+    await charger(
+      'enrole',
+      `SELECT id::text, "nomComplet" AS libelle FROM enrole WHERE id::text = ANY($1::text[])`,
+    );
+    await charger(
+      'volontaire',
+      `SELECT id::text, "nomComplet" AS libelle FROM volontaire WHERE id::text = ANY($1::text[])`,
+    );
+    await charger(
+      'nomination',
+      `SELECT id::text, "nomComplet" AS libelle FROM nomination WHERE id::text = ANY($1::text[])`,
     );
     await charger(
       'utilisateur',

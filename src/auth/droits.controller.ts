@@ -40,6 +40,111 @@ export class DroitsController {
     }
   }
 
+  /**
+   * Ce qui a changé dans les droits : pour chaque rôle ou personne, chaque rubrique dont le niveau
+   * a changé (« Chef de service · /mutations : comme d'origine → lecture seule »).
+   */
+  private async changementsDroits(avant: ConfigDroits, apres: ConfigDroits) {
+    const NIVEAU: Record<string, string> = {
+      MASQUE: 'masquée',
+      LECTURE: 'lecture seule',
+      MODIFICATION: 'ouverte',
+    };
+    const ROLE: Record<string, string> = {
+      AGENT: 'Chef de bureau',
+      CHEF_SERVICE: 'Chef de service',
+      DIRECTEUR: 'Directeur',
+      BUREAU_ETUDES: 'Bureau d’études',
+      DG: 'DG',
+      DDEPPSA: 'DDEPPSA',
+      CABINET: 'Cabinet',
+      SECRETARIAT: 'Secrétariat',
+      STRUCTURE: 'Structure',
+      VISITEUR: 'Visiteur',
+      INFORMATIQUE: 'Informatique',
+    };
+    const ids = [
+      ...new Set([
+        ...Object.keys(avant.utilisateurs ?? {}),
+        ...Object.keys(apres.utilisateurs ?? {}),
+        ...Object.keys(avant.attributions ?? {}),
+        ...Object.keys(apres.attributions ?? {}),
+      ]),
+    ];
+    const noms = new Map(
+      ids.length
+        ? (
+            await this.db.query<{ id: string; nom: string }[]>(
+              `SELECT id::text, nom FROM utilisateur WHERE id::text = ANY($1)`,
+              [ids],
+            )
+          ).map((x) => [x.id, x.nom])
+        : [],
+    );
+    const libelleRole = (k: string) =>
+      apres.rolesPerso?.[k]?.libelle ??
+      avant.rolesPerso?.[k]?.libelle ??
+      ROLE[k] ??
+      k;
+    const res: { champ: string; avant: string; apres: string }[] = [];
+    const comparer = (
+      qui: string,
+      a: Record<string, string> = {},
+      b: Record<string, string> = {},
+    ) => {
+      for (const rub of [...new Set([...Object.keys(a), ...Object.keys(b)])])
+        if (a[rub] !== b[rub])
+          res.push({
+            champ: `${qui} · ${rub}`,
+            avant: a[rub] ? (NIVEAU[a[rub]] ?? a[rub]) : 'comme d’origine',
+            apres: b[rub] ? (NIVEAU[b[rub]] ?? b[rub]) : 'comme d’origine',
+          });
+    };
+    for (const k of new Set([
+      ...Object.keys(avant.roles ?? {}),
+      ...Object.keys(apres.roles ?? {}),
+    ]))
+      comparer(
+        `Rôle ${libelleRole(k)}`,
+        (avant.roles as Record<string, Record<string, string>>)[k],
+        (apres.roles as Record<string, Record<string, string>>)[k],
+      );
+    for (const k of new Set([
+      ...Object.keys(avant.utilisateurs ?? {}),
+      ...Object.keys(apres.utilisateurs ?? {}),
+    ]))
+      comparer(
+        noms.get(k) ?? k,
+        avant.utilisateurs?.[k],
+        apres.utilisateurs?.[k],
+      );
+    for (const k of new Set([
+      ...Object.keys(avant.rolesPerso ?? {}),
+      ...Object.keys(apres.rolesPerso ?? {}),
+    ]))
+      if (!avant.rolesPerso?.[k] || !apres.rolesPerso?.[k])
+        res.push({
+          champ: 'Rôle personnalisé',
+          avant: avant.rolesPerso?.[k]?.libelle ?? '',
+          apres: apres.rolesPerso?.[k]?.libelle ?? '',
+        });
+    for (const k of new Set([
+      ...Object.keys(avant.attributions ?? {}),
+      ...Object.keys(apres.attributions ?? {}),
+    ]))
+      if (avant.attributions?.[k] !== apres.attributions?.[k])
+        res.push({
+          champ: `Rôle personnalisé de ${noms.get(k) ?? k}`,
+          avant: avant.attributions?.[k]
+            ? libelleRole(avant.attributions[k])
+            : '',
+          apres: apres.attributions?.[k]
+            ? libelleRole(apres.attributions[k])
+            : '',
+        });
+    return res.slice(0, 200);
+  }
+
   @Roles('ADMIN', 'DG')
   @Get()
   configuration() {
@@ -58,6 +163,8 @@ export class DroitsController {
     @Body() body: unknown,
   ) {
     const c = validerDroits(body);
+    // L'état d'avant, pour dire dans le journal ce qui a changé (DG, 09/11/2026)
+    const avant = this.lire();
     // Rôle personnalisé donné à un compte : le compte prend son rôle de départ (ses actions)
     const attribues = Object.entries(c.attributions ?? {});
     if (attribues.length) {
@@ -94,6 +201,7 @@ export class DroitsController {
       personnes: Object.keys(c.utilisateurs).length,
       rolesPerso: Object.keys(c.rolesPerso ?? {}).length,
       attributions: Object.keys(c.attributions ?? {}).length,
+      changements: await this.changementsDroits(avant, c),
     });
     return this.configuration();
   }
