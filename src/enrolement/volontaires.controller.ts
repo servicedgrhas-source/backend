@@ -344,6 +344,48 @@ export class VolontairesController {
     return this.volontaires.analyser(this.classeur(fichier));
   }
 
+  /**
+   * Nouvelle liste des communautaires d'un département (DG, 12/11/2026) : ceux de la liste restent
+   * ou entrent, les autres de ce département sortent. `essai=1` : le rapport, sans rien enregistrer.
+   */
+  @Roles('CHEF_SERVICE', 'DG')
+  @Post('volontaires/remplacer-departement')
+  @UseInterceptors(
+    FileInterceptor('fichier', { limits: { fileSize: 40 * 1024 * 1024 } }),
+  )
+  remplacerDepartement(
+    @Utilisateur() u: UtilisateurConnecte,
+    @Query('departementId') departementId: string,
+    @Query('premierMois') premierMois: string,
+    @Query('dateSortie') dateSortie: string,
+    @Query('essai') essai: string,
+    @Body() body: { memes?: string },
+    @UploadedFile() fichier?: Express.Multer.File,
+  ) {
+    let memes: string[] = [];
+    try {
+      const v = JSON.parse(body?.memes || '[]') as unknown;
+      if (Array.isArray(v))
+        memes = v
+          .filter((x): x is string => typeof x === 'string')
+          .slice(0, 5000);
+    } catch {
+      throw new BadRequestException('Confirmations illisibles.');
+    }
+    return this.volontaires.remplacerDepartement(
+      u,
+      this.classeur(fichier),
+      fichier!.originalname,
+      {
+        departementId: Number(departementId) || 0,
+        premierMois,
+        dateSortie,
+        memes,
+        essai: essai === '1',
+      },
+    );
+  }
+
   @Roles('CHEF_SERVICE', 'DG')
   @Post('volontaires/import')
   @UseInterceptors(
@@ -577,6 +619,25 @@ export class VolontairesController {
     res.setHeader(
       'Content-Disposition',
       `attachment; filename="${nom}"; filename*=UTF-8''${encodeURIComponent(nom)}`,
+    );
+    res.send(contenu);
+  }
+
+  /** Fiche de prise en charge : département × cycle, montants mensuel, trimestriel, annuel. */
+  @Roles(...ROLES_TRAITEMENT)
+  @Get('bourse/:id/prise-en-charge')
+  async priseEnCharge(
+    @Param('id', ParseIntPipe) id: number,
+    @Res() res: Response,
+  ) {
+    const { nom, contenu } = await this.bourse.priseEnChargeExcel(id);
+    res.setHeader(
+      'Content-Type',
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    );
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename*=UTF-8''${encodeURIComponent(nom)}`,
     );
     res.send(contenu);
   }

@@ -109,6 +109,74 @@ const TRANSPORT_DEFAUT: Record<string, TransportDepartement> = {
   SANGHA: { billet: null, bagages: null },
 };
 
+/**
+ * Alphabétisation des communautaires (DG, 12/11/2026) : Alpha/Resco/ORA payée comme le primaire,
+ * post-alphabétisation comme le collège. « Post-alpha » passe avant « Alpha » (mot le plus tôt).
+ */
+const CATEGORIES_ALPHA_COMMUNAUTAIRES: CategorieBourse[] = [
+  {
+    code: 'COM_ALPHABETISATION',
+    libelle: 'Alphabétisation (Alpha, Resco, ORA)',
+    bourse: 50000,
+    equipement: 0,
+    motsCles: ['ALPH', 'RESCO', 'ORA'],
+    actif: true,
+  },
+  {
+    code: 'COM_POST_ALPHA',
+    libelle: 'Post-alphabétisation',
+    bourse: 60000,
+    equipement: 0,
+    motsCles: ['POSTALPH', 'POTSALPH'],
+    actif: true,
+  },
+];
+
+/** Barèmes des communautaires quand ils n'ont jamais été réglés (tous à 0). */
+const BAREMES_COMMUNAUTAIRES: Record<string, number> = {
+  COM_PRESCOLAIRE: 50000,
+  COM_PRIMAIRE: 50000,
+  COM_ALPHABETISATION: 50000,
+  COM_POST_ALPHA: 60000,
+  COM_COLLEGE: 60000,
+  COM_LYCEE: 75000,
+  COM_ADMINISTRATION: 50000,
+};
+
+/**
+ * Configuration enregistrée avant le 12/11/2026 : on y ajoute l'alphabétisation et le post-alpha,
+ * « ALPH » ne range plus au primaire, et des barèmes jamais réglés (tous à 0) prennent ceux de la
+ * fiche de prise en charge. Un barème déjà réglé par le DG n'est jamais changé.
+ */
+export function monterCommunautaires(
+  liste: CategorieBourse[] | undefined,
+): CategorieBourse[] | undefined {
+  if (!liste) return liste;
+  let l = liste.map((c) =>
+    c.code === 'COM_PRIMAIRE'
+      ? {
+          ...c,
+          motsCles: c.motsCles.filter(
+            (m) => !/^ALPH/.test(normaliser(m).replace(/[^A-Z]/g, '')),
+          ),
+        }
+      : c,
+  );
+  const i = l.findIndex((c) => c.code === 'COM_PRIMAIRE');
+  const manquantes = CATEGORIES_ALPHA_COMMUNAUTAIRES.filter(
+    (n) => !l.some((c) => c.code === n.code),
+  );
+  if (manquantes.length)
+    l = [
+      ...l.slice(0, i + 1),
+      ...manquantes.map((x) => ({ ...x })),
+      ...l.slice(i + 1),
+    ];
+  if (l.every((c) => !c.bourse))
+    l = l.map((c) => ({ ...c, bourse: BAREMES_COMMUNAUTAIRES[c.code] ?? 0 }));
+  return l;
+}
+
 const MOTIFS_DEFAUT: MotifSortie[] = [
   m('RECRUTE_FP', 'Recruté à la Fonction Publique (salarié)', true, false),
   m('DESERTEUR', 'Déserteur (a quitté son poste)', true, true),
@@ -199,21 +267,20 @@ export class ConfigEnrolementService {
         ]),
         cat('LYCEE', 'Lycée', ancien('BOURSE_LYCEE', 75000), 75000, ['LYC']),
       ],
+      // Barèmes de la fiche de prise en charge des communautaires (août 2026) : 50 000 au
+      // préscolaire, au primaire et à l'alphabétisation, 60 000 au collège et au post-alpha,
+      // 75 000 au lycée (DG, 12/11/2026 : l'alphabétisation était comptée avec le primaire)
       categoriesCommunautaires: [
-        cat('COM_PRESCOLAIRE', 'Préscolaire', 0, 0, [
+        cat('COM_PRESCOLAIRE', 'Préscolaire', 50000, 0, [
           'PRESCO',
           'PERESCO',
           'MATERNEL',
         ]),
-        cat('COM_PRIMAIRE', 'Primaire', 0, 0, [
-          'PRIMAIRE',
-          'PRIM',
-          'ALPH',
-          'EPP',
-        ]),
-        cat('COM_COLLEGE', 'Collège', 0, 0, ['COLL', 'CEG']),
-        cat('COM_LYCEE', 'Lycée', 0, 0, ['LYC']),
-        cat('COM_ADMINISTRATION', 'Administration scolaire', 0, 0, [
+        cat('COM_PRIMAIRE', 'Primaire', 50000, 0, ['PRIMAIRE', 'PRIM', 'EPP']),
+        ...CATEGORIES_ALPHA_COMMUNAUTAIRES,
+        cat('COM_COLLEGE', 'Collège', 60000, 0, ['COLL', 'CEG']),
+        cat('COM_LYCEE', 'Lycée', 75000, 0, ['LYC']),
+        cat('COM_ADMINISTRATION', 'Administration scolaire', 50000, 0, [
           'ADM',
           'GESTION',
         ]),
@@ -249,6 +316,9 @@ export class ConfigEnrolementService {
     this.cache = {
       ...defaut,
       ...enregistree,
+      categoriesCommunautaires:
+        monterCommunautaires(enregistree.categoriesCommunautaires) ??
+        defaut.categoriesCommunautaires,
       transport: { ...defaut.transport, ...(enregistree.transport ?? {}) },
       version: 1,
     };
@@ -523,4 +593,26 @@ export function valider(brut: unknown): ConfigEnrolement {
       120,
     ),
   };
+}
+
+/**
+ * Catégorie d'un communautaire d'après la colonne Cycle, et sa spécialité pour l'alphabétisation :
+ * « Post-Alphabétisation » range au post-alpha même quand le cycle dit « 3-Alpha/Resco/ORA ».
+ */
+export function categorieCommunautaire(
+  config: ConfigEnrolementService,
+  cycleBrut: string | null,
+  specialite: string | null,
+  population: string,
+): CategorieBourse | null {
+  const cat = cycleBrut
+    ? config.categorieDepuisTexte(cycleBrut, population)
+    : null;
+  if (
+    population === 'COMMUNAUTAIRE' &&
+    specialite &&
+    /PO(ST|TS)\W*ALPH/.test(normaliser(specialite))
+  )
+    return config.categorieDepuisTexte('POST-ALPHA', population) ?? cat;
+  return cat;
 }

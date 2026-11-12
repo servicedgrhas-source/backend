@@ -13,7 +13,7 @@ import { lireClasseur, lireFeuilleBrute, type Ligne } from '../common/excel';
 import { IndexNoms } from '../common/index-noms';
 import { MOIS_RE } from '../common/mois';
 import { codeDepartement } from '../common/referentiels';
-import { motsDuNom } from '../common/ressemblance';
+import { motsCommuns, motsDuNom, ressemblance } from '../common/ressemblance';
 import {
   ageRevolu,
   cleCompacte,
@@ -26,7 +26,10 @@ import { JournalService } from '../core/core.service';
 import { Departement, MouvementVolontaire, Volontaire } from '../entities';
 import { BourseService, LISTES, populationDe } from './bourse.service';
 import { LiaisonVolontairesService } from '../recensement/liaison-volontaires.service';
-import { ConfigEnrolementService } from './configuration';
+import {
+  categorieCommunautaire,
+  ConfigEnrolementService,
+} from './configuration';
 
 export interface FiltresVolontaires {
   population?: string;
@@ -718,6 +721,439 @@ export class VolontairesService implements OnModuleInit {
     );
   }
 
+  /* ------------------ Remplacer les communautaires d'un département ------------------ */
+
+  /**
+   * Nouvelle liste des communautaires d'un département (DG, 12/11/2026 : la Likouala envoie la
+   * note de service du 30/10/2026, une feuille par cycle) :
+   * - une personne déjà en poste dans ce département garde sa fiche (catégorie, poste, observation
+   *   mis à jour) ; une personne sortie de ce département est réintégrée ;
+   * - une personne nouvelle est ajoutée en poste, payée à partir de `premierMois` ;
+   * - une personne en poste dans ce département mais absente de la liste sort, motif « Retiré par
+   *   la DDEPPSA » (réintégrable si c'est une erreur).
+   * Le cycle de chaque feuille vient de son nom (« Collège (1er degré) » → Collège). On signale,
+   * sans rien décider, les doublons de la liste et les personnes déjà fonctionnaires, contractuelles
+   * ou volontaires. `essai` : le rapport, sans rien enregistrer.
+   */
+  async remplacerDepartement(
+    u: UtilisateurConnecte,
+    contenu: Buffer,
+    nomFichier: string,
+    o: {
+      departementId: number;
+      premierMois: string;
+      dateSortie: string;
+      /** Paires « fiche~nom de la liste » confirmées « même personne » par l'agent. */
+      memes?: string[];
+      essai: boolean;
+    },
+  ) {
+    const dep = await this.deps.findOne({ where: { id: o.departementId } });
+    if (!dep) throw new BadRequestException('Choisissez le département.');
+    if (!MOIS_RE.test(o.premierMois ?? ''))
+      throw new BadRequestException(
+        'Indiquez le premier mois payé des nouveaux (ex. 2026-11).',
+      );
+    if (!DATE_RE.test(o.dateSortie ?? ''))
+      throw new BadRequestException(
+        'Indiquez la date de sortie de ceux qui ne sont plus sur la liste.',
+      );
+    const motif = this.config.motif('RETIRE_DDEPPSA');
+    if (!motif)
+      throw new BadRequestException(
+        'Motif « Retiré par la DDEPPSA » introuvable dans la configuration.',
+      );
+    const feuilles = await lireClasseur(
+      contenu,
+      ['NOMSETPRENOMS|NOMETPRENOMS|NOMSPRENOMS'],
+      { inclureMasquees: false },
+    );
+    const cle = (nom: string) => motsDuNom(nom).sort().join(' ');
+    // Les personnes de la liste, feuille par feuille (le cycle vient du nom de la feuille)
+    const liste: {
+      nom: string;
+      cle: string;
+      categorie: string;
+      libelle: string;
+      feuille: string;
+      ligne: number;
+      genre: 'F' | 'M' | null;
+      specialite: string | null;
+      etablissement: string | null;
+      circonscription: string | null;
+      observation: string | null;
+    }[] = [];
+    const parFeuille: { nom: string; categorie: string; personnes: number }[] =
+      [];
+    const feuillesInconnues: string[] = [];
+    for (const f of feuilles) {
+      const cat = this.config.categorieDepuisTexte(f.nom, 'COMMUNAUTAIRE');
+      if (!cat) {
+        feuillesInconnues.push(f.nom);
+        continue;
+      }
+      let n = 0;
+      for (const l of f.lignes) {
+        const nom = nettoyer(
+          this.valeur(l, ['NOMSETPRENOMS', 'NOMETPRENOMS', 'NOMSPRENOMS']),
+        );
+        if (
+          !nom ||
+          motsDuNom(nom).length < 2 ||
+          /^(TOTAL|NOMS?\s+(ET\s+)?PR)/i.test(normaliser(nom))
+        )
+          continue;
+        const sexe = normaliser(enTexte(this.valeur(l, ['GENRE', 'SEXE'])));
+        n++;
+        liste.push({
+          nom,
+          cle: cle(nom),
+          categorie: cat.code,
+          libelle: cat.libelle,
+          feuille: f.nom,
+          ligne: l._ligne,
+          genre: sexe.startsWith('F')
+            ? 'F'
+            : sexe.startsWith('M') || sexe.startsWith('H')
+              ? 'M'
+              : null,
+          specialite: nettoyer(this.valeur(l, ['DISCIPLINE', 'SPECIALITE'])),
+          etablissement: nettoyer(
+            this.valeur(l, ['NOUVEAUPOSTE', 'ETABLISSEMENT', 'ANCIENPOSTE']),
+          ),
+          circonscription: nettoyer(
+            this.valeur(l, ['CIRCONSCRIPTION', 'LOCALITE']),
+          ),
+          observation: nettoyer(this.valeur(l, ['OBSERVATION', 'OBS'])),
+        });
+      }
+      parFeuille.push({ nom: f.nom, categorie: cat.libelle, personnes: n });
+    }
+    if (!liste.length)
+      throw new BadRequestException(
+        'Aucune feuille de la liste n’a été reconnue : chaque feuille doit porter le nom d’un cycle (Préscolaire, Primaire, Collège, Lycée, Alphabétisation…) et une colonne « Noms et prénoms ».',
+      );
+    // Doublons de la liste : la première ligne compte, les autres sont signalées
+    const vus = new Map<string, (typeof liste)[number]>();
+    const doublons: string[] = [];
+    const uniques: typeof liste = [];
+    for (const p of liste) {
+      const d = vus.get(p.cle);
+      if (d) {
+        doublons.push(
+          `${p.nom} : ${p.feuille} ligne ${p.ligne} (déjà ${d.feuille} ligne ${d.ligne})`,
+        );
+        continue;
+      }
+      vus.set(p.cle, p);
+      uniques.push(p);
+    }
+    // Les communautaires de ce département dans le registre
+    const fiches = await this.volontaires.find({
+      where: { population: 'COMMUNAUTAIRE', departementId: dep.id },
+    });
+    const parCle = new Map<string, Volontaire[]>();
+    // Le nom de la fiche, et celui de la liste déjà rapproché une fois (« NOM_LISTE ») : relancer la
+    // même liste ne redemande pas les mêmes confirmations
+    for (const v of fiches) {
+      const noms = new Set([cle(v.nomComplet)]);
+      const alias = (
+        v.verifications as Record<string, { note?: string }> | null
+      )?.NOM_LISTE?.note;
+      if (alias) noms.add(cle(alias));
+      for (const k of noms) parCle.set(k, [...(parCle.get(k) ?? []), v]);
+    }
+    const gardes: { v: Volontaire; p: (typeof liste)[number] }[] = [];
+    const reintegres: { v: Volontaire; p: (typeof liste)[number] }[] = [];
+    const nouveaux: (typeof liste)[number][] = [];
+    const plusieursFiches: string[] = [];
+    const retrouves = new Set<string>();
+    for (const p of uniques) {
+      const candidats = parCle.get(p.cle) ?? [];
+      const enPoste = candidats.filter((x) => x.statut === 'EN_POSTE');
+      const choisi = enPoste[0] ?? candidats[0];
+      if (candidats.length > 1)
+        plusieursFiches.push(
+          `${p.nom} : ${candidats.length} fiches dans le registre (${enPoste.length} en poste)`,
+        );
+      if (!choisi) nouveaux.push(p);
+      else if (choisi.statut === 'EN_POSTE') gardes.push({ v: choisi, p });
+      else reintegres.push({ v: choisi, p });
+      for (const x of candidats) retrouves.add(x.id);
+    }
+    // Noms écrits autrement (ordre, faute de frappe, prénom en plus) : une seule fiche en poste qui
+    // ressemble, et réciproquement → la même personne, signalée pour vérification. Plusieurs
+    // possibilités : rien n'est décidé, la ligne est signalée (DG, 12/11/2026 : presque la même liste)
+    const rapproches: string[] = [];
+    const ambigus: string[] = [];
+    const libres = () =>
+      fiches.filter((v) => v.statut === 'EN_POSTE' && !retrouves.has(v.id));
+    const proches = (p: (typeof liste)[number], dispo: Volontaire[]) =>
+      dispo.filter(
+        (v) =>
+          ressemblance(
+            motsDuNom(p.nom),
+            null,
+            motsDuNom(v.nomComplet),
+            null,
+          ) === 'PROBABLE',
+      );
+    const restants = [...nouveaux];
+    nouveaux.length = 0;
+    for (const p of restants) {
+      const dispo = libres();
+      const c = proches(p, dispo);
+      const reciproque =
+        c.length === 1
+          ? restants.filter((q) => q !== p && proches(q, [c[0]]).length === 1)
+              .length === 0
+          : false;
+      if (c.length === 1 && reciproque) {
+        gardes.push({ v: c[0], p });
+        retrouves.add(c[0].id);
+        rapproches.push(`${p.nom} (liste) = ${c[0].nomComplet} (registre)`);
+      } else {
+        if (c.length > 1)
+          ambigus.push(
+            `${p.nom} : ${c.length} fiches proches (${c
+              .slice(0, 3)
+              .map((v) => v.nomComplet)
+              .join(', ')}) — ajouté(e) comme nouveau, à vérifier`,
+          );
+        nouveaux.push(p);
+      }
+    }
+    // Un seul nom différent (2 mots communs ou plus) : probablement la même personne, mais pas sûr.
+    // L'agent confirme chaque paire (« même personne ») ; sans confirmation, rien n'est rapproché.
+    const possibles: {
+      paire: string;
+      liste: string;
+      registre: string;
+      feuille: string;
+      ligne: number;
+    }[] = [];
+    const confirmes = new Set(o.memes ?? []);
+    const encore = [...nouveaux];
+    nouveaux.length = 0;
+    for (const p of encore) {
+      const dispo = libres();
+      const mots = motsDuNom(p.nom);
+      const c = dispo.filter(
+        (v) => motsCommuns(mots, motsDuNom(v.nomComplet)) >= 2,
+      );
+      const unique =
+        c.length === 1 &&
+        encore.filter(
+          (q) =>
+            q !== p &&
+            motsCommuns(motsDuNom(q.nom), motsDuNom(c[0].nomComplet)) >= 2,
+        ).length === 0;
+      if (!unique) {
+        nouveaux.push(p);
+        continue;
+      }
+      const paire = `${c[0].id}~${p.cle}`;
+      possibles.push({
+        paire,
+        liste: p.nom,
+        registre: c[0].nomComplet,
+        feuille: p.feuille,
+        ligne: p.ligne,
+      });
+      if (confirmes.has(paire)) {
+        gardes.push({ v: c[0], p });
+        retrouves.add(c[0].id);
+        rapproches.push(
+          `${p.nom} (liste) = ${c[0].nomComplet} (registre, confirmé)`,
+        );
+      } else nouveaux.push(p);
+    }
+    // En poste dans ce département mais absents de la liste : ils sortent
+    const sortants = fiches.filter(
+      (v) => v.statut === 'EN_POSTE' && !retrouves.has(v.id),
+    );
+    // Nettoyage : déjà fonctionnaires, contractuels ou volontaires (signalé, rien n'est décidé)
+    const cles = new Set(uniques.map((p) => p.cle));
+    const ailleurs = new Map<string, string[]>();
+    const noter = (k: string, quoi: string) =>
+      ailleurs.set(k, [...(ailleurs.get(k) ?? []), quoi]);
+    for (const a of await this.volontaires.query<
+      { nom: string; statut: string; matricule: string | null }[]
+    >(
+      `SELECT "nomComplet" AS nom, statut, matricule FROM agent_recense
+        WHERE statut IN ('FONCTIONNAIRE', 'CONTRACTUEL')`,
+    )) {
+      const k = cle(a.nom);
+      if (cles.has(k))
+        noter(
+          k,
+          `${a.statut === 'FONCTIONNAIRE' ? 'fonctionnaire' : 'contractuel(le)'} dans le personnel${a.matricule ? ` (matricule ${a.matricule})` : ''}`,
+        );
+    }
+    for (const v of await this.volontaires.find({
+      where: { population: 'VOLONTAIRE', statut: 'EN_POSTE' },
+      select: { nomComplet: true, departementBrut: true },
+    })) {
+      const k = cle(v.nomComplet);
+      if (cles.has(k)) noter(k, 'volontaire en poste (bourse)');
+    }
+    const dejaAilleurs = uniques
+      .filter((p) => ailleurs.has(p.cle))
+      .map((p) => `${p.nom} : ${ailleurs.get(p.cle)!.join(' ; ')}`);
+    // Avant / après, par cycle (comme la synthèse de la liste)
+    const parCat = new Map<
+      string,
+      { libelle: string; avant: number; apres: number }
+    >();
+    for (const c of this.config.categoriesDe('COMMUNAUTAIRE'))
+      parCat.set(c.code, { libelle: c.libelle, avant: 0, apres: 0 });
+    for (const v of fiches)
+      if (v.statut === 'EN_POSTE' && v.categorie && parCat.has(v.categorie))
+        parCat.get(v.categorie)!.avant++;
+    for (const p of uniques) parCat.get(p.categorie)!.apres++;
+    const montant = (n: 'avant' | 'apres') =>
+      [...parCat.entries()].reduce(
+        (t, [code, x]) =>
+          t +
+          x[n] * (this.config.categorie(code, 'COMMUNAUTAIRE')?.bourse ?? 0),
+        0,
+      );
+    const ici = `${nomFichier} (liste du département ${dep.nom})`;
+    if (!o.essai) {
+      for (const { v, p } of [...gardes, ...reintegres]) {
+        // Nom écrit autrement dans la liste : il est gardé sur la fiche (rapprochement mémorisé)
+        const autreNom = cle(v.nomComplet) !== p.cle;
+        const champs: Partial<Volontaire> = {
+          ...(autreNom
+            ? {
+                verifications: {
+                  ...(v.verifications ?? {}),
+                  NOM_LISTE: {
+                    par: u.nom,
+                    le: new Date().toISOString(),
+                    note: p.nom,
+                  },
+                },
+              }
+            : {}),
+          categorie: p.categorie,
+          cycleBrut: p.feuille,
+          ...(p.etablissement ? { etablissement: p.etablissement } : {}),
+          ...(p.circonscription ? { circonscription: p.circonscription } : {}),
+          ...(p.observation ? { observation: p.observation } : {}),
+          ...(!v.genre && p.genre ? { genre: p.genre } : {}),
+          ...(!v.specialite && p.specialite
+            ? { specialite: p.specialite }
+            : {}),
+        };
+        if (v.statut === 'SORTI')
+          Object.assign(champs, {
+            statut: 'EN_POSTE',
+            motifSortie: null,
+            dateSortie: null,
+            premierMois: o.premierMois,
+          });
+        await this.volontaires.update(v.id, champs);
+        await this.mouvement(
+          u,
+          v.id,
+          v.statut === 'SORTI' ? 'REINTEGRATION' : 'MODIFICATION',
+          v.statut === 'SORTI' ? `${o.premierMois}-01` : null,
+          'LISTE_DEPARTEMENT',
+          { source: `${ici} · ${p.feuille} · ligne ${p.ligne}` },
+        );
+      }
+      for (const v of sortants) {
+        await this.volontaires.update(v.id, {
+          statut: 'SORTI',
+          motifSortie: motif.code,
+          dateSortie: o.dateSortie,
+        });
+        await this.mouvement(u, v.id, 'SORTIE', o.dateSortie, motif.code, {
+          observation: `Absent(e) de la nouvelle liste du département (${nomFichier})`,
+        });
+      }
+      if (nouveaux.length) {
+        const lot = await this.volontaires.save(
+          nouveaux.map((p) => ({
+            nomComplet: p.nom,
+            nomNormalise: normaliser(p.nom),
+            genre: p.genre,
+            specialite: p.specialite,
+            categorie: p.categorie,
+            cycleBrut: p.feuille,
+            departementId: dep.id,
+            departementBrut: dep.nom,
+            etablissement: p.etablissement,
+            circonscription: p.circonscription,
+            observation: p.observation,
+            population: 'COMMUNAUTAIRE',
+            vague: null,
+            vagueNumero: null,
+            statut: 'EN_POSTE',
+            premierMois: o.premierMois,
+            source: `${nomFichier} · ${p.feuille} · ligne ${p.ligne}`,
+            creePar: u.nom,
+            verifications: {},
+          })) as Volontaire[],
+        );
+        await this.mouvements.save(
+          lot.map((v) => ({
+            volontaireId: v.id,
+            type: 'ENTREE',
+            dateEffet: null,
+            motif: 'LISTE_DEPARTEMENT',
+            details: { source: v.source },
+            par: u.nom,
+          })),
+        );
+      }
+    }
+    const court = (t: string[]) => ({ n: t.length, exemples: t.slice(0, 40) });
+    const rapport = {
+      essai: o.essai,
+      departement: dep.nom,
+      feuilles: parFeuille,
+      feuillesIgnorees: feuillesInconnues,
+      lus: liste.length,
+      personnes: uniques.length,
+      parCategorie: [...parCat.values()].filter((x) => x.avant || x.apres),
+      montantAvant: montant('avant'),
+      montantApres: montant('apres'),
+      gardes: gardes.length,
+      reintegres: court(reintegres.map(({ p }) => p.nom)),
+      nouveaux: court(nouveaux.map((p) => `${p.nom} (${p.libelle})`)),
+      sortants: court(sortants.map((v) => v.nomComplet)),
+      doublonsDansListe: court(doublons),
+      plusieursFiches: court(plusieursFiches),
+      rapproches: court(rapproches),
+      // Toutes les paires à confirmer (l'écran les montre une à une)
+      possibles,
+      ambigus: court(ambigus),
+      dejaAilleurs: court(dejaAilleurs),
+    };
+    if (!o.essai) {
+      await this.journal.log(
+        u,
+        'COMMUNAUTAIRES_DEPARTEMENT_REMPLACES',
+        'volontaire',
+        null,
+        {
+          fichier: nomFichier,
+          departement: dep.nom,
+          personnes: uniques.length,
+          gardes: gardes.length,
+          nouveaux: nouveaux.length,
+          reintegres: reintegres.length,
+          sortis: sortants.length,
+          rapport,
+        },
+      );
+      await this.lier();
+    }
+    return rapport;
+  }
+
   /* --------------------------- Reprise (import) --------------------------- */
 
   /** Feuilles d'un classeur qui contiennent une liste de personnes (y compris les feuilles masquées). */
@@ -1292,12 +1728,13 @@ export class VolontairesService implements OnModuleInit {
   ): Partial<Volontaire> {
     const sexe = normaliser(enTexte(this.valeur(l, ['SEXE', 'GENRE'])));
     const etab = nettoyer(this.valeur(l, ['ETABLISSEMENT']));
-    const cat = x.cycleBrut
-      ? this.config.categorieDepuisTexte(
-          x.cycleBrut,
-          populationDe(x.population),
-        )
-      : null;
+    const specialite = nettoyer(this.valeur(l, ['SPECIALITE']));
+    const cat = categorieCommunautaire(
+      this.config,
+      x.cycleBrut,
+      specialite,
+      populationDe(x.population),
+    );
     const vague =
       x.population === 'COMMUNAUTAIRE'
         ? null
@@ -1314,7 +1751,7 @@ export class VolontairesService implements OnModuleInit {
           : null,
       telephone: nettoyer(this.valeur(l, ['TELEPHONE', 'TEL'])),
       diplome: x.diplome,
-      specialite: nettoyer(this.valeur(l, ['SPECIALITE'])),
+      specialite,
       cycleBrut: x.cycleBrut,
       categorie: cat?.code ?? null,
       departementId: x.departementId,
