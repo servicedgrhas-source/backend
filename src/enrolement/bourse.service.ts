@@ -7,6 +7,7 @@ import {
 import { InjectRepository } from '@nestjs/typeorm';
 import {
   AlignmentType,
+  BorderStyle,
   Document,
   HeightRule,
   Packer,
@@ -1068,7 +1069,8 @@ export class BourseService {
       },
     });
     const nbCycles = colonnes.length;
-    const cEff = 2 + nbCycles * 3; // TOTAL MENSUEL : Eff.
+    // Deux colonnes par cycle (Eff., Montant) : le taux est dans le titre du cycle
+    const cEff = 2 + nbCycles * 2; // TOTAL MENSUEL : Eff.
     const cMens = cEff + 1; // Montant
     const cTrim = cEff + 2; // TOTAL : Montant trimestriel
     const cAnn = cEff + 3; // Montant annuel
@@ -1167,10 +1169,15 @@ export class BourseService {
     titre(L1, 1, 1, 'DEPARTEMENT');
     ws.getCell(L2, 1).border = bord;
     colonnes.forEach((x, i) => {
-      titre(L1, 2 + i * 3, 4 + i * 3, x.libelle);
-      titre(L2, 2 + i * 3, 2 + i * 3, 'Eff.');
-      titre(L2, 3 + i * 3, 3 + i * 3, 'Taux');
-      titre(L2, 4 + i * 3, 4 + i * 3, 'Montant');
+      // « Préscolaire (50.000) » : le taux une fois, dans le titre
+      titre(
+        L1,
+        2 + i * 2,
+        3 + i * 2,
+        x.taux ? `${x.libelle}\n(${fcfa(x.taux)})` : x.libelle,
+      );
+      titre(L2, 2 + i * 2, 2 + i * 2, 'Eff.');
+      titre(L2, 3 + i * 2, 3 + i * 2, 'Montant');
     });
     titre(L1, cEff, cMens, 'TOTAL MENSUEL');
     titre(L1, cTrim, cAnn, 'TOTAL');
@@ -1178,6 +1185,8 @@ export class BourseService {
     titre(L2, cMens, cMens, 'Montant');
     titre(L2, cTrim, cTrim, 'Montant trimestriel');
     titre(L2, cAnn, cAnn, 'Montant annuel');
+    // Deux lignes dans le titre du cycle : le libellé, puis le taux
+    ws.getRow(L1).height = 30;
     ws.getRow(L2).height = 30;
 
     // Une ligne par département (ou regroupement), avec les formules du modèle
@@ -1206,24 +1215,24 @@ export class BourseService {
       let mont = 0;
       colonnes.forEach((x, i) => {
         const n = effectif(g.ids, x.code);
-        const ce = 2 + i * 3;
+        const ce = 2 + i * 2;
         eff += n;
         mont += n * x.taux;
         cellule(l, ce, n);
-        cellule(l, ce + 1, x.taux);
-        cellule(l, ce + 2, {
-          formula: `PRODUCT(${col(ce)}${l},${col(ce + 1)}${l})`,
+        // Le montant : effectif × taux (le taux est écrit dans la formule et dans le titre)
+        cellule(l, ce + 1, {
+          formula: `${col(ce)}${l}*${x.taux}`,
           result: n * x.taux,
         });
       });
       effTotal += eff;
       montantTotal += mont;
       cellule(l, cEff, {
-        formula: colonnes.map((_, i) => `${col(2 + i * 3)}${l}`).join('+'),
+        formula: colonnes.map((_, i) => `${col(2 + i * 2)}${l}`).join('+'),
         result: eff,
       });
       cellule(l, cMens, {
-        formula: `SUM(${colonnes.map((_, i) => `${col(4 + i * 3)}${l}`).join(',')})`,
+        formula: `SUM(${colonnes.map((_, i) => `${col(3 + i * 2)}${l}`).join(',')})`,
         result: mont,
       });
       cellule(l, cTrim, { formula: `${col(cMens)}${l}*3`, result: mont * 3 });
@@ -1244,9 +1253,8 @@ export class BourseService {
         groupes.flatMap((g) => g.ids),
         x.code,
       );
-      cellule(l, 2 + i * 3, somme(2 + i * 3, n), true);
-      cellule(l, 3 + i * 3, x.taux, true);
-      cellule(l, 4 + i * 3, somme(4 + i * 3, n * x.taux), true);
+      cellule(l, 2 + i * 2, somme(2 + i * 2, n), true);
+      cellule(l, 3 + i * 2, somme(3 + i * 2, n * x.taux), true);
     });
     cellule(l, cEff, somme(cEff, effTotal), true);
     cellule(l, cMens, somme(cMens, montantTotal), true);
@@ -1306,9 +1314,8 @@ export class BourseService {
     // Largeurs : celles du modèle (département, puis Eff. / Taux / Montant étroits)
     ws.getColumn(1).width = 22;
     colonnes.forEach((_, i) => {
-      ws.getColumn(2 + i * 3).width = 7;
-      ws.getColumn(3 + i * 3).width = 8;
-      ws.getColumn(4 + i * 3).width = 12;
+      ws.getColumn(2 + i * 2).width = 8;
+      ws.getColumn(3 + i * 2).width = 13;
     });
     ws.getColumn(cEff).width = 8;
     ws.getColumn(cMens).width = 13;
@@ -1385,6 +1392,60 @@ export class BourseService {
           }),
         ],
       });
+    // L'en-tête officiel (celui du récapitulatif mis en forme par le DG, 13/11/2026) : le ministère,
+    // le cabinet et la DGRHAS à gauche, la République à droite
+    const sansBord = { style: BorderStyle.NONE, size: 0, color: 'FFFFFF' };
+    const aucunBord = {
+      top: sansBord,
+      bottom: sansBord,
+      left: sansBord,
+      right: sansBord,
+    };
+    const blocEntete = (lignes: string[], largeur: number) =>
+      new TableCell({
+        width: { size: largeur, type: WidthType.PERCENTAGE },
+        borders: aucunBord,
+        children: lignes.map((x) =>
+          para(x, { gras: true, taille: 22, centre: true }),
+        ),
+      });
+    const entete = () =>
+      new Table({
+        width: { size: 100, type: WidthType.PERCENTAGE },
+        borders: {
+          ...aucunBord,
+          insideHorizontal: sansBord,
+          insideVertical: sansBord,
+        },
+        rows: [
+          new TableRow({
+            children: [
+              blocEntete(
+                [
+                  "MINISTERE DE L'ENSEIGNEMENT PRESCOLAIRE,",
+                  "PRIMAIRE, SECONDAIRE ET DE L'ALPHABETISATION",
+                  '-----------',
+                  'CABINET',
+                  '-----------',
+                  'DIRECTION GENERALE DES RESSOURCES HUMAINES',
+                  "ET DE L'ADMINISTRATION SCOLAIRE",
+                  '-----------',
+                ],
+                55,
+              ),
+              blocEntete([''], 15),
+              blocEntete(
+                [
+                  'REPUBLIQUE DU CONGO',
+                  'Unité - Travail - Progrès',
+                  '-----------',
+                ],
+                30,
+              ),
+            ],
+          }),
+        ],
+      });
     // Largeurs en pourcentage : la place de l'émargement et de la CNI, remplis à la main
     // La CNI s'écrit à la main : une colonne large (DG, 28/10/2026)
     const largeurs = [3, 19, 7, 7, 14, 4, 7, 14, 11, 7, 7];
@@ -1396,17 +1457,8 @@ export class BourseService {
         },
       },
       children: [
-        para('RÉPUBLIQUE DU CONGO', { gras: true, taille: 18, centre: true }),
-        para('Unité * Travail * Progrès', { taille: 16, centre: true }),
-        para(
-          'MINISTÈRE DE L’ENSEIGNEMENT PRÉSCOLAIRE, PRIMAIRE, SECONDAIRE ET DE L’ALPHABÉTISATION',
-          { gras: true, taille: 18, centre: true, avant: 120 },
-        ),
-        para(
-          'DIRECTION GÉNÉRALE DES RESSOURCES HUMAINES ET DE L’ADMINISTRATION SCOLAIRE',
-          { gras: true, taille: 16, centre: true },
-        ),
-        para(e.titre, { gras: true, taille: 24, centre: true, avant: 240 }),
+        entete(),
+        para(e.titre, { gras: true, taille: 28, centre: true, avant: 240 }),
         para(`${e.sousTitre} — ${s.titre}`, {
           gras: true,
           taille: 20,
@@ -1723,8 +1775,6 @@ export class BourseService {
     const deps = new Map((await this.deps.find()).map((d) => [d.id, d.nom]));
     const nomDep = (d: number | null) =>
       d ? (deps.get(d) ?? '') : 'Non renseigné';
-    const enClair = moisEnClair(ep.etat.mois).toUpperCase();
-    const brouillon = ep.brouillon;
     const c = this.config.get();
 
     const wb = new ExcelJS.Workbook();
@@ -1786,37 +1836,94 @@ export class BourseService {
             ? 'Liste unique'
             : 'Liste générale'
           : s.titre.replace('DÉPARTEMENT : ', ''));
+      // La liste générale en portrait sur la largeur (comme le DG l'a réglée), les départements
+      // en paysage ; chaque feuille s'imprime telle quelle depuis Excel (DG, 13/11/2026)
+      const principale = s === feuilles[0];
+      const LIGNE_TITRES = 14;
       const ws = wb.addWorksheet(
         nom.slice(0, 31).replace(/[\\/?*[\]:]/g, ' '),
         {
           pageSetup: {
-            orientation: 'landscape',
+            orientation: principale ? 'portrait' : 'landscape',
             fitToPage: true,
             fitToWidth: 1,
             fitToHeight: 0,
             paperSize: 9,
-            printTitlesRow: '8:8',
+            printTitlesRow: `${LIGNE_TITRES}:${LIGNE_TITRES}`,
+            margins: principale
+              ? {
+                  left: 0.2484375,
+                  right: 0.21,
+                  top: 0.365625,
+                  bottom: 0.75,
+                  header: 0.3,
+                  footer: 0.3,
+                }
+              : {
+                  left: 0.7,
+                  right: 0.7,
+                  top: 0.75,
+                  bottom: 0.75,
+                  header: 0.3,
+                  footer: 0.3,
+                },
           },
         },
       );
-      const centre = (t: string, gras = true, taille = 11) => {
-        const r = ws.addRow([t]);
-        ws.mergeCells(r.number, 1, r.number, nbCol);
-        r.alignment = { horizontal: 'center' };
-        r.font = { bold: gras, size: taille };
+      // L'en-tête officiel, celui du récapitulatif mis en forme par le DG : le ministère, le
+      // cabinet et la DGRHAS à gauche, la République à droite ; puis le titre et la période
+      const ecrire = (
+        l: number,
+        c1: number,
+        c2: number,
+        v: string,
+        font: Partial<ExcelJS.Font>,
+      ) => {
+        if (c2 > c1) ws.mergeCells(l, c1, l, c2);
+        const cell = ws.getCell(l, c1);
+        cell.value = v;
+        cell.font = { name: 'Calibri', ...font };
+        cell.alignment = {
+          horizontal: 'center',
+          vertical: 'middle',
+          wrapText: true,
+        };
       };
-      centre('RÉPUBLIQUE DU CONGO');
-      centre('Unité * Travail * Progrès', false, 9);
-      centre(
-        'MINISTÈRE DE L’ENSEIGNEMENT PRÉSCOLAIRE, PRIMAIRE, SECONDAIRE ET DE L’ALPHABÉTISATION',
-      );
-      centre(
-        'DIRECTION GÉNÉRALE DES RESSOURCES HUMAINES ET DE L’ADMINISTRATION SCOLAIRE',
-      );
-      centre(ep.titre, true, 13);
-      centre(`${ep.sousTitre} — ${s.titre}`, true, 11);
-      ws.addRow([]);
-      const en = ws.addRow(BourseService.COLONNES_PAIEMENT);
+      const g12 = { size: 12, bold: true };
+      const [g1, g2] = [1, 5];
+      const [d1, d2] = [9, nbCol];
+      ecrire(1, g1, g2, "MINISTERE DE L'ENSEIGNEMENT PRESCOLAIRE,", g12);
+      ecrire(1, d1, d2, 'REPUBLIQUE DU CONGO', g12);
+      ecrire(2, g1, g2, "PRIMAIRE, SECONDAIRE ET DE L'ALPHABETISATION", g12);
+      ecrire(2, d1, d2, 'Unité - Travail - Progrès', g12);
+      ecrire(3, g1, g2, '-----------', g12);
+      ecrire(3, d1, d2, '-----------', g12);
+      ecrire(4, g1, g2, 'CABINET', g12);
+      ecrire(5, g1, g2, '-----------', g12);
+      ecrire(6, g1, g2, 'DIRECTION GENERALE DES RESSOURCES HUMAINES', g12);
+      ecrire(7, g1, g2, "ET DE L'ADMINISTRATION SCOLAIRE", g12);
+      ecrire(8, g1, g2, '-----------', g12);
+      ecrire(10, 1, nbCol, ep.titre, { size: 14, bold: true });
+      ecrire(12, 1, nbCol, `${ep.sousTitre} — ${s.titre}`, g12);
+      for (const [l, h] of [
+        [1, 15.75],
+        [2, 15.75],
+        [3, 9],
+        [4, 15],
+        [5, 9],
+        [6, 15],
+        [7, 15],
+        [8, 9],
+        [9, 9],
+        [10, 18.5],
+        [11, 7.5],
+        [12, 15.75],
+        [13, 9],
+      ])
+        ws.getRow(l).height = h;
+      const en = ws.getRow(LIGNE_TITRES);
+      en.values = BourseService.COLONNES_PAIEMENT;
+      en.height = 29;
       en.font = { bold: true };
       en.eachCell((cell) => {
         cell.border = bord;
@@ -1890,81 +1997,349 @@ export class BourseService {
       x.sort((a, b) => a.nomComplet.localeCompare(b.nomComplet, 'fr')),
     );
 
-    // Récapitulatif : effectif et montant par département et par montant de bourse
-    const montants = [...new Set(lignes.map((l) => l.montant))].sort(
-      (a, b) => a - b,
-    );
-    const ws = wb.addWorksheet('RECAP');
-    const t = ws.addRow([
-      `RÉCAPITULATIF ${communautaires ? 'DU PAIEMENT DES COMMUNAUTAIRES' : 'DE LA BOURSE'} DU MOIS DE ${enClair}${brouillon ? ' (PROJET NON VALIDÉ)' : ''}`,
-    ]);
-    t.font = { bold: true, size: 12 };
-    ws.addRow([]);
-    const e = ws.addRow([
-      'N°',
-      'Département',
-      ...montants.flatMap((mt) =>
-        mt
-          ? [`Effectif à ${fcfa(mt)}`, `Montant à ${fcfa(mt)}`]
-          : ['Sans barème (à corriger)', 'Montant'],
-      ),
-      'Rappels',
-      'Effectif total',
-      'Montant total (FCFA)',
-    ]);
-    e.font = { bold: true };
-    e.eachCell((cell) => {
-      cell.border = bord;
-      cell.alignment = {
-        wrapText: true,
-        horizontal: 'center',
-        vertical: 'middle',
-      };
-      cell.fill = {
-        type: 'pattern',
-        pattern: 'solid',
-        fgColor: { argb: 'FFE5E7EB' },
-      };
+    // Récapitulatif, copié sur celui que le DG a mis en forme (« Récapitulatif Bourse Volontaire_
+    // Septembre 2026.xlsx », feuille RECAP, 13/11/2026) : en-tête du ministère à gauche et de la
+    // République à droite, titre, période, « RÉCAPITULATIF PAR DEPARTEMENT ET PAR CYCLE », un groupe
+    // de colonnes par montant de bourse (« Préscolaire-Primaire-Adm. scolaire-DEMA (50.000) »,
+    // « Collège (60.000) », « Lycée (75.000) »), le total, l'arrêté en lettres et la signature.
+    const ws = wb.addWorksheet('RECAP', {
+      pageSetup: {
+        orientation: 'landscape',
+        paperSize: 9,
+        fitToPage: false,
+        scale: 100,
+        margins: {
+          left: 0.6145833333333334,
+          right: 0.3854166666666667,
+          top: 0.3125,
+          bottom: 0.19444444444444445,
+          header: 0.3,
+          footer: 0.3,
+        },
+      },
     });
-    const totaux = new Array<number>(montants.length * 2 + 3).fill(0);
-    [...parDep.entries()].forEach(([d, liste], i) => {
-      const val = montants.flatMap((mt) => {
-        const x = liste.filter((l) => l.montant === mt);
-        return [x.length, x.reduce((s, l) => s + l.total, 0)];
-      });
-      val.push(
-        liste.filter((l) => l.mois > 1).length,
-        liste.length,
-        liste.reduce((s, l) => s + l.total, 0),
-      );
-      val.forEach((n, k) => (totaux[k] += n));
-      const r = ws.addRow([i + 1, d, ...val]);
-      r.eachCell({ includeEmpty: true }, (cell) => {
-        cell.border = bord;
-        if (typeof cell.value === 'number') cell.numFmt = fmt;
-      });
-    });
-    const rt = ws.addRow(['', 'TOTAL', ...totaux]);
-    rt.font = { bold: true };
-    rt.eachCell({ includeEmpty: true }, (cell) => {
-      cell.border = bord;
-      if (typeof cell.value === 'number') cell.numFmt = fmt;
-    });
-    ws.addRow([]);
-    ws.addRow([
-      `Arrêté le présent récapitulatif à la somme de : ${montantArrete(totaux[totaux.length - 1])}`,
-    ]).font = { italic: true };
-    ws.addRow([]);
-    ws.addRow(['', '', '', '', c.signatairePaiementTitre]);
-    ws.addRow([]);
-    ws.addRow([]);
-    ws.addRow([]);
-    ws.addRow(['', '', '', '', c.signatairePaiementNom]).font = {
-      bold: true,
+    // Vue « Mise en page », comme le DG l'a laissée
+    ws.views = [{ style: 'pageLayout' }];
+    // Les cycles regroupés par montant, avec les mots du DG
+    const COURTS: Record<string, string> = {
+      PRESCOLAIRE: 'Préscolaire',
+      PRIMAIRE: 'Primaire',
+      ADMINISTRATION: 'Adm. scolaire',
+      BEAUX_ARTS: 'DEMA',
+      COLLEGE: 'Collège',
+      LYCEE: 'Lycée',
+      COM_PRESCOLAIRE: 'Préscolaire',
+      COM_PRIMAIRE: 'Primaire',
+      COM_ALPHABETISATION: 'Alpha/Resco/ORA',
+      COM_ADMINISTRATION: 'Adm. scolaire',
+      COM_POST_ALPHA: 'Post-Alpha',
+      COM_COLLEGE: 'Collège',
+      COM_LYCEE: 'Lycée',
     };
+    const ORDRE = Object.keys(COURTS);
+    const cats = this.config.categoriesDe(ep.etat.population);
+    const tauxDe = (code: string | null) =>
+      cats.find((x) => x.code === code)?.bourse ?? 0;
+    // Le montant de bourse d'une ligne ; une ligne à 0 (complément seul) prend celui de son cycle
+    const tauxLigne = (l: LigneBourse) => l.montant || tauxDe(l.categorie);
+    const montantsGroupes = [
+      ...new Set([
+        ...cats.filter((x) => x.actif && x.bourse > 0).map((x) => x.bourse),
+        ...lignes.map(tauxLigne).filter((m) => m > 0),
+      ]),
+    ].sort((a, b) => a - b);
+    // « Sans barème » seulement s'il le faut, et en dernier
+    if (lignes.some((l) => !tauxLigne(l))) montantsGroupes.push(0);
+    const points = (n: number) =>
+      String(n).replace(/\B(?=(\d{3})+(?!\d))/g, '.');
+    const groupes = montantsGroupes.map((mt) => {
+      const noms = [
+        ...new Set(
+          cats
+            .filter(
+              (x) =>
+                x.bourse === mt &&
+                (x.actif || lignes.some((l) => l.categorie === x.code)),
+            )
+            // L'ordre du DG : Préscolaire-Primaire-Adm. scolaire-DEMA
+            .sort(
+              (a, b) =>
+                (ORDRE.indexOf(a.code) + 1 || 99) -
+                (ORDRE.indexOf(b.code) + 1 || 99),
+            )
+            .map((x) => COURTS[x.code] ?? x.libelle),
+        ),
+      ];
+      return {
+        montant: mt,
+        libelle: mt
+          ? `${noms.join('-') || 'Autres'}\n(${points(mt)})`
+          : 'Sans barème\n(compléments, à vérifier)',
+      };
+    });
+    const nbColR = 2 + groupes.length * 2 + 2;
+    const G = (n: number) => ws.getColumn(n).letter;
+    const fusion = (l: number, c1: number, c2: number) => {
+      if (c2 > c1) ws.mergeCells(l, c1, l, c2);
+    };
+    const ecrire = (
+      l: number,
+      c1: number,
+      c2: number,
+      v: string,
+      font: Partial<ExcelJS.Font>,
+      horizontal: 'center' | 'left' = 'center',
+    ) => {
+      fusion(l, c1, c2);
+      const cell = ws.getCell(l, c1);
+      cell.value = v;
+      cell.font = { name: 'Calibri', ...font };
+      cell.alignment = { horizontal, vertical: 'middle' };
+    };
+    const gauche = Math.min(5, nbColR - 2);
+    const dr1 = nbColR - 1;
+    const hauteurs: [number, number][] = [
+      [1, 15.75],
+      [2, 15.75],
+      [3, 9],
+      [4, 9],
+      [5, 9],
+      [6, 12],
+      [7, 12],
+      [8, 12],
+      [9, 12],
+      [10, 12],
+      [11, 9],
+      [12, 13.5],
+      [13, 7.5],
+      [14, 18.5],
+      [15, 13.5],
+      [16, 29.25],
+      [17, 16.5],
+    ];
+    for (const [l, h] of hauteurs) ws.getRow(l).height = h;
+    const g12 = { size: 12, bold: true };
+    ecrire(1, 1, gauche, "MINISTERE DE L'ENSEIGNEMENT PRESCOLAIRE,", g12);
+    ecrire(1, dr1, nbColR, 'REPUBLIQUE DU CONGO', g12);
+    ecrire(2, 1, gauche, "PRIMAIRE, SECONDAIRE ET DE L'ALPHABETISATION", g12);
+    ecrire(2, dr1, nbColR, 'Unité - Travail - Progrès', g12);
+    ecrire(3, 1, gauche, '-----------', g12);
+    ecrire(3, dr1, nbColR, '-----------', g12);
+    ecrire(4, 1, gauche, 'CABINET', g12);
+    ecrire(5, 1, gauche, '-----------', g12);
+    ecrire(6, 1, gauche, 'DIRECTION GENERALE DES RESSOURCES HUMAINES', g12);
+    ecrire(7, 1, gauche, "ET DE L'ADMINISTRATION SCOLAIRE", g12);
+    ecrire(8, 1, gauche, '-----------', g12);
+    ecrire(
+      10,
+      1,
+      nbColR,
+      communautaires
+        ? 'PAIEMENT DES ENSEIGNANTS COMMUNAUTAIRES'
+        : 'BOURSES DES ENSEIGNANTS VOLONTAIRES',
+      { size: 14, bold: true },
+    );
+    const avecRappels = lignes.some((l) => l.mois > 1);
+    ecrire(
+      12,
+      1,
+      nbColR,
+      `PERIODE : ${moisEnClair(ep.etat.mois)
+        .normalize('NFD')
+        .replace(/[̀-ͯ]/g, '')
+        .toUpperCase()} (1 MOIS${avecRappels ? ' ET RAPPELS' : ''})`,
+      g12,
+    );
+    ecrire(14, 1, nbColR, 'RÉCAPITULATIF PAR DEPARTEMENT ET PAR CYCLE', {
+      size: 14,
+      bold: true,
+    });
+    // Les titres du tableau (lignes 16 et 17)
+    const fin: Partial<ExcelJS.Border> = { style: 'thin' };
+    const titre = (
+      l: number,
+      c1: number,
+      c2: number,
+      v: string,
+      font: Partial<ExcelJS.Font>,
+      haut = true,
+    ) => {
+      if (l === 16 && !haut) ws.mergeCells(16, c1, 17, c1);
+      else fusion(l, c1, c2);
+      for (let k = c1; k <= c2; k++) {
+        const cell = ws.getCell(l, k);
+        cell.value = v;
+        cell.font = { name: 'Calibri', size: 11, ...font };
+        cell.alignment = {
+          horizontal: 'center',
+          vertical: 'middle',
+          wrapText: true,
+        };
+        cell.border = { top: fin, bottom: fin, left: fin, right: fin };
+      }
+      if (l === 16 && !haut) {
+        const bas = ws.getCell(17, c1);
+        bas.border = { top: fin, bottom: fin, left: fin, right: fin };
+      }
+    };
+    titre(16, 1, 1, 'N°', {}, false);
+    titre(16, 2, 2, 'Département', {}, false);
+    groupes.forEach((g, i) => {
+      const c = 3 + i * 2;
+      titre(16, c, c + 1, g.libelle, { bold: true });
+      titre(17, c, c, 'Effectif', {
+        name: 'Gill Sans MT Condensed',
+        bold: true,
+      });
+      titre(17, c + 1, c + 1, 'Montant', {
+        name: 'Gill Sans MT Condensed',
+        bold: true,
+      });
+    });
+    const cT = nbColR - 1;
+    titre(16, cT, nbColR, 'Total', { bold: true });
+    titre(17, cT, cT, 'Effectif', {
+      name: 'Gill Sans MT Condensed',
+      bold: true,
+    });
+    titre(17, nbColR, nbColR, 'Montant', {
+      name: 'Gill Sans MT Condensed',
+      bold: true,
+    });
+    // Une ligne par département (formules : la feuille se corrige dans Excel)
+    const compta = '_-* #,##0_-;-* #,##0_-;_-* "-"??_-;_-@_-';
+    const premiere = 18;
+    const deps2 = [...parDep.entries()];
+    const ecrireCellule = (
+      l: number,
+      c: number,
+      v: ExcelJS.CellValue,
+      o: {
+        gras?: boolean;
+        centre?: boolean;
+        fmt?: string;
+        taille?: number;
+      } = {},
+    ) => {
+      const cell = ws.getCell(l, c);
+      cell.value = v;
+      cell.font = { name: 'Calibri', size: o.taille ?? 11, bold: o.gras };
+      if (o.centre) cell.alignment = { horizontal: 'center' };
+      if (o.fmt) cell.numFmt = o.fmt;
+      cell.border = { top: fin, bottom: fin, left: fin, right: fin };
+    };
+    const totaux = groupes.map(() => ({ eff: 0, mont: 0 }));
+    deps2.forEach(([d, liste], i) => {
+      const l = premiere + i;
+      ws.getRow(l).height = 12.75;
+      ecrireCellule(l, 1, i + 1, { centre: true, fmt: '#,##0' });
+      ecrireCellule(l, 2, d);
+      let eff = 0;
+      let mont = 0;
+      groupes.forEach((g, k) => {
+        const x = liste.filter(
+          (y) => (y.montant || tauxDe(y.categorie)) === g.montant,
+        );
+        const e = x.length;
+        const m = x.reduce((s, y) => s + y.total, 0);
+        totaux[k].eff += e;
+        totaux[k].mont += m;
+        eff += e;
+        mont += m;
+        const c = 3 + k * 2;
+        ecrireCellule(l, c, e, { centre: true, fmt: '#,##0' });
+        // Le DG a mis le premier montant en petit (9) : on garde sa mise en forme
+        ecrireCellule(l, c + 1, m, {
+          centre: k < 2,
+          fmt: compta,
+          taille: k === 0 ? 9 : 11,
+        });
+      });
+      ecrireCellule(
+        l,
+        cT,
+        {
+          formula: groupes.map((_, k) => `${G(3 + k * 2)}${l}`).join('+'),
+          result: eff,
+        },
+        { centre: true, fmt: '#,##0' },
+      );
+      ecrireCellule(
+        l,
+        nbColR,
+        {
+          formula: groupes.map((_, k) => `${G(4 + k * 2)}${l}`).join('+'),
+          result: mont,
+        },
+        { fmt: compta },
+      );
+    });
+    const lt = premiere + deps2.length;
+    const derniere = lt - 1;
+    ws.getRow(lt).height = 12.75;
+    ecrireCellule(lt, 1, null, { gras: true, centre: true });
+    ecrireCellule(lt, 2, 'TOTAL', { gras: true });
+    const somme = (c: number, r: number) => ({
+      formula: `SUM(${G(c)}${premiere}:${G(c)}${derniere})`,
+      result: r,
+    });
+    let effT = 0;
+    let montT = 0;
+    groupes.forEach((_, k) => {
+      const c = 3 + k * 2;
+      effT += totaux[k].eff;
+      montT += totaux[k].mont;
+      ecrireCellule(lt, c, somme(c, totaux[k].eff), {
+        gras: true,
+        centre: true,
+        fmt: '#,##0',
+      });
+      ecrireCellule(lt, c + 1, somme(c + 1, totaux[k].mont), {
+        gras: true,
+        centre: k < 2,
+        fmt: compta,
+        taille: k === 0 ? 9 : 11,
+      });
+    });
+    ecrireCellule(lt, cT, somme(cT, effT), {
+      gras: true,
+      centre: true,
+      fmt: '#,##0',
+    });
+    ecrireCellule(lt, nbColR, somme(nbColR, montT), {
+      gras: true,
+      fmt: compta,
+    });
+    // L'arrêté en lettres, puis la signature à droite (titre, quatre lignes, nom en gras)
+    const la = ws.getCell(lt + 2, 1);
+    la.value = `Arrêté le présent récapitulatif à la somme de : ${montantArrete(montT)}`;
+    la.font = { name: 'Calibri', size: 11, italic: true };
+    la.alignment = { horizontal: 'left' };
+    const colSig = Math.max(3, nbColR - 2);
+    const sig1 = ws.getCell(lt + 4, colSig);
+    sig1.value = c.signatairePaiementTitre;
+    sig1.font = { name: 'Calibri', size: 11 };
+    sig1.alignment = { horizontal: 'left' };
+    const sig2 = ws.getCell(lt + 9, colSig);
+    sig2.value = c.signatairePaiementNom;
+    sig2.font = { name: 'Calibri', size: 11, bold: true };
+    sig2.alignment = { horizontal: 'left' };
+    // Les largeurs du DG (5 ; 22 ; puis les groupes ; puis le total)
+    const LARGEURS_GROUPES = [
+      [10.7, 13.2],
+      [13.7, 13.7],
+      [11.2, 11.2],
+    ];
     ws.getColumn(1).width = 5;
     ws.getColumn(2).width = 22;
-    for (let k = 3; k <= totaux.length + 2; k++) ws.getColumn(k).width = 15;
+    groupes.forEach((_, k) => {
+      const [we, wm] = LARGEURS_GROUPES[k] ?? [11.2, 12.5];
+      ws.getColumn(3 + k * 2).width = we;
+      ws.getColumn(4 + k * 2).width = wm;
+    });
+    ws.getColumn(cT).width = 13;
+    ws.getColumn(nbColR).width = 13;
+    wb.calcProperties.fullCalcOnLoad = true;
 
     const contenu = Buffer.from(await wb.xlsx.writeBuffer());
     return { nom: `${ep.nomFichier}.xlsx`, contenu };
