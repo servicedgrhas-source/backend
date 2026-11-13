@@ -49,6 +49,31 @@ import {
 } from './configuration';
 
 /** 50000 → « 50.000 » (comme dans les états signés). */
+/**
+ * Police des documents de la bourse (13/11/2026) : la police actuelle (celle des modèles du DG)
+ * ou « Gill Sans MT », au choix de l'utilisateur au moment de télécharger ou d'imprimer.
+ */
+export type PoliceDocument = 'actuelle' | 'gill';
+export const policeDocument = (v: unknown): PoliceDocument =>
+  v === 'gill' ? 'gill' : 'actuelle';
+const GILL = 'Gill Sans MT';
+/** Passe tout le classeur en Gill Sans MT (le « Gill Sans MT Condensed » du DG reste tel quel). */
+const appliquerPolice = (wb: ExcelJS.Workbook, police: PoliceDocument) => {
+  if (police !== 'gill') return;
+  for (const ws of wb.worksheets)
+    ws.eachRow({ includeEmpty: true }, (row) =>
+      row.eachCell({ includeEmpty: true }, (cell) => {
+        if (cell.font?.name?.startsWith(GILL)) return;
+        cell.font = { ...(cell.font ?? {}), name: GILL };
+      }),
+    );
+};
+
+/** « Septembre 2026 » : le mois avec sa majuscule, comme dans les noms des fichiers du DG. */
+const moisMajuscule = (mois: string) => {
+  const s = moisEnClair(mois);
+  return s.charAt(0).toUpperCase() + s.slice(1);
+};
 const fcfa = (n: number) => String(n).replace(/\B(?=(\d{3})+(?!\d))/g, '.');
 
 export type Gravite = 'BLOQUANT' | 'SIGNALE';
@@ -915,7 +940,9 @@ export class BourseService {
         titre: c.signatairePaiementTitre,
         nom: c.signatairePaiementNom,
       },
-      nomFichier: `${communautaires ? 'Communautaires' : 'Bourse'} ${etat.mois}${brouillon ? ' (projet)' : ''}`,
+      // Les noms des fichiers du DG (dossier « new », 13/11/2026) : « Fiche de répartition Bourse
+      // Volontaire_Septembre 2026 », « ETATS DE PAIEMENT DES ENSEIGNANTS COMMUNAUTAIRES SEPTEMBRE 2026 »
+      nomFichier: `${communautaires ? `ETATS DE PAIEMENT DES ENSEIGNANTS COMMUNAUTAIRES ${moisEnClair(etat.mois).toUpperCase()}` : `Fiche de répartition Bourse Volontaire_${moisMajuscule(etat.mois)}`}${brouillon ? ' (projet)' : ''}`,
     };
   }
 
@@ -932,6 +959,7 @@ export class BourseService {
    */
   async priseEnChargeExcel(
     id: number,
+    police: PoliceDocument = 'actuelle',
   ): Promise<{ nom: string; contenu: Buffer }> {
     const etat = await this.etats.findOne({ where: { id } });
     if (!etat) throw new NotFoundException('État de bourse introuvable');
@@ -1058,8 +1086,9 @@ export class BourseService {
         fitToPage: true,
         fitToWidth: 1,
         fitToHeight: 0,
+        // Les marges du modèle du DG (« Fiche de prise en charge Communautaires Septembre 2026 »)
         margins: {
-          left: 0.3,
+          left: 0.39,
           right: 0.3,
           top: 0.4,
           bottom: 0.4,
@@ -1093,68 +1122,76 @@ export class BourseService {
       cell.font = { name: 'Times New Roman', ...font };
       cell.alignment = { horizontal, vertical: 'middle', wrapText: true };
     };
-    const gauche = Math.min(6, nbCol - 3);
-    const droite = Math.max(gauche + 1, nbCol - 3);
-    // En-tête : le ministère à gauche, la République à droite (comme le modèle)
-    texte(1, 1, gauche, "MINISTERE DE L'ENSEIGNEMENT PRESCOLAIRE, PRIMAIRE,", {
-      bold: true,
-      size: 10,
-    });
-    texte(1, droite, nbCol, 'REPUBLIQUE DU CONGO', { bold: true, size: 10 });
-    texte(2, 1, gauche, "SECONDAIRE ET DE L'ALPHABETISATION", {
-      bold: true,
-      size: 10,
-    });
-    texte(2, droite, nbCol, 'Unité-Travail-Progrès', {
-      italic: true,
-      size: 10,
-    });
-    texte(3, 1, gauche, 'CABINET', { bold: true, size: 10 });
-    texte(4, 1, gauche, 'DIRECTION GENERALE DES RESSOURCES HUMAINES', {
-      bold: true,
-      size: 10,
-    });
-    texte(5, 1, gauche, "ET DE L'ADMINISTRATION SCOLAIRE", {
-      bold: true,
-      size: 10,
-    });
+    // En-tête officiel, celui du modèle du DG (« Fiche de prise en charge Communautaires
+    // Septembre 2026 », 13/11/2026) : le ministère, le cabinet et la DGRHAS sur les cinq premières
+    // colonnes, la République sur les deux dernières, en Calibri 12 gras
+    const gauche = Math.min(5, nbCol - 2);
+    const droite = nbCol - 1;
+    const officiel = (l: number, c1: number, c2: number, v: string) => {
+      texte(l, c1, c2, v, { bold: true, size: 12 });
+      ws.getCell(l, c1).font = { name: 'Calibri', bold: true, size: 12 };
+    };
+    officiel(1, 1, gauche, "MINISTERE DE L'ENSEIGNEMENT PRESCOLAIRE,");
+    officiel(1, droite, nbCol, 'REPUBLIQUE DU CONGO');
+    officiel(2, 1, gauche, "PRIMAIRE, SECONDAIRE ET DE L'ALPHABETISATION");
+    officiel(2, droite, nbCol, 'Unité - Travail - Progrès');
+    officiel(3, 1, gauche, '-----------');
+    officiel(3, droite, nbCol, '-----------');
+    officiel(4, 1, gauche, 'CABINET');
+    officiel(5, 1, gauche, '-----------');
+    officiel(6, 1, gauche, 'DIRECTION GENERALE DES RESSOURCES HUMAINES');
+    officiel(7, 1, gauche, "ET DE L'ADMINISTRATION SCOLAIRE");
+    officiel(8, 1, gauche, '-----------');
+    for (const [l, h] of [
+      [1, 15.75],
+      [2, 15.75],
+      [3, 9],
+      [4, 9],
+      [5, 9],
+      [6, 12],
+      [7, 12],
+      [8, 12],
+      [9, 18.75],
+      [10, 12],
+    ])
+      ws.getRow(l).height = h;
     texte(
-      6,
+      9,
       1,
       nbCol,
       `FICHE DE PRISE EN CHARGE DES ENSEIGNANTS ${communautaires ? 'COMMUNAUTAIRES' : 'VOLONTAIRES'}`,
       { bold: true, size: 14 },
     );
     if (communautaires && c.ficheMentionCommunautaires)
-      texte(7, 1, nbCol, c.ficheMentionCommunautaires, {
+      texte(11, 1, nbCol, c.ficheMentionCommunautaires, {
         bold: true,
         size: 11,
       });
     // Année scolaire : de septembre à août (août 2026 → 2025-2026)
     const [an, m] = etat.mois.split('-').map(Number);
     const debutAnnee = m >= 9 ? an : an - 1;
-    texte(9, 1, nbCol, `ANNEE SCOLAIRE ${debutAnnee}-${debutAnnee + 1}`, {
+    texte(13, 1, nbCol, `ANNEE SCOLAIRE ${debutAnnee}-${debutAnnee + 1}`, {
       bold: true,
       size: 11,
     });
     const sansAccents = (s: string) => s.normalize('NFD').replace(/[̀-ͯ]/g, '');
     texte(
-      11,
+      15,
       1,
       nbCol,
       `PERIODE : ${sansAccents(moisEnClair(etat.mois)).toUpperCase()}`,
       { bold: true, size: 11 },
     );
     if (etat.statut !== 'VALIDE')
-      texte(12, 1, nbCol, 'Projet : état de paiement pas encore validé', {
+      texte(16, 1, nbCol, 'Projet : état de paiement pas encore validé', {
         italic: true,
         size: 9,
         color: { argb: 'FFB91C1C' },
       });
 
-    // Les titres du tableau (lignes 13 et 14)
-    const L1 = 13;
-    const L2 = 14;
+    // Les titres du tableau (lignes 17 et 18)
+    const L1 = 17;
+    const L2 = 18;
     const bord = {
       top: { style: 'thin' as const },
       bottom: { style: 'thin' as const },
@@ -1186,7 +1223,7 @@ export class BourseService {
     titre(L2, cTrim, cTrim, 'Montant trimestriel');
     titre(L2, cAnn, cAnn, 'Montant annuel');
     // Deux lignes dans le titre du cycle : le libellé, puis le taux
-    ws.getRow(L1).height = 30;
+    ws.getRow(L1).height = 24.75;
     ws.getRow(L2).height = 30;
 
     // Une ligne par département (ou regroupement), avec les formules du modèle
@@ -1221,7 +1258,7 @@ export class BourseService {
         cellule(l, ce, n);
         // Le montant : effectif × taux (le taux est écrit dans la formule et dans le titre)
         cellule(l, ce + 1, {
-          formula: `${col(ce)}${l}*${x.taux}`,
+          formula: `PRODUCT(${col(ce)}${l},${x.taux})`,
           result: n * x.taux,
         });
       });
@@ -1292,7 +1329,8 @@ export class BourseService {
     );
     ws.getRow(lt).height = 18;
     ws.getRow(lt + 1).height = 30;
-    const sig = Math.max(1, nbCol - 6);
+    // La signature sur les six dernières colonnes, comme le modèle du DG
+    const sig = Math.max(1, nbCol - 5);
     texte(lt + 2, sig, nbCol, 'Fait à Brazzaville, le', { size: 11 }, 'left');
     texte(
       lt + 4,
@@ -1311,19 +1349,22 @@ export class BourseService {
       'left',
     );
 
-    // Largeurs : celles du modèle (département, puis Eff. / Taux / Montant étroits)
+    // Largeurs : celles du modèle du DG (département, puis Eff. étroit et Montant)
     ws.getColumn(1).width = 22;
     colonnes.forEach((_, i) => {
-      ws.getColumn(2 + i * 2).width = 8;
-      ws.getColumn(3 + i * 2).width = 13;
+      ws.getColumn(2 + i * 2).width = 6;
+      ws.getColumn(3 + i * 2).width = 12;
     });
-    ws.getColumn(cEff).width = 8;
+    ws.getColumn(cEff).width = 7.3;
     ws.getColumn(cMens).width = 13;
-    ws.getColumn(cTrim).width = 14;
-    ws.getColumn(cAnn).width = 15;
-    ws.views = [{ state: 'frozen', xSplit: 1, ySplit: L2 }];
+    ws.getColumn(cTrim).width = 13.3;
+    ws.getColumn(cAnn).width = 12.9;
+    // Pas de volets figés : vue « Mise en page », comme le DG laisse la fiche (13/11/2026)
+    ws.views = [{ style: 'pageLayout' }];
+    appliquerPolice(wb, police);
     return {
-      nom: `Fiche de prise en charge ${communautaires ? 'communautaires' : 'volontaires'} ${etat.mois}${etat.statut === 'VALIDE' ? '' : ' (projet)'}.xlsx`,
+      // « Fiche de prise en charge Communautaires Septembre 2026 » (le nom du DG, 13/11/2026)
+      nom: `Fiche de prise en charge ${communautaires ? 'Communautaires' : 'Volontaires'} ${moisMajuscule(etat.mois)}${etat.statut === 'VALIDE' ? '' : ' (projet)'}.xlsx`,
       contenu: Buffer.from(await wb.xlsx.writeBuffer()),
     };
   }
@@ -1344,9 +1385,13 @@ export class BourseService {
   ];
 
   /** État de paiement en Word (paysage) : chaque liste sur ses pages, signée. */
-  async word(id: number): Promise<{ nom: string; contenu: Buffer }> {
+  async word(
+    id: number,
+    choix: PoliceDocument = 'actuelle',
+  ): Promise<{ nom: string; contenu: Buffer }> {
     const e = await this.etatPaiement(id);
-    const police = 'Times New Roman';
+    // Times New Roman (la police actuelle) ou Gill Sans MT, au choix (13/11/2026)
+    const police = choix === 'gill' ? GILL : 'Times New Roman';
     const texte = (
       t: string,
       o: { gras?: boolean; taille?: number; souligne?: boolean } = {},
@@ -1520,7 +1565,8 @@ export class BourseService {
             avant: 240,
           },
         ),
-        para(e.signature.titre, { taille: 22, droite: true, avant: 120 }),
+        // Une ligne entre « Fait à… » et le titre, comme dans l'Excel (13/11/2026)
+        para(e.signature.titre, { taille: 22, droite: true, avant: 300 }),
         // Au moins deux lignes pour la signature (DG, 27/10/2026)
         para('', { taille: 22 }),
         para('', { taille: 22 }),
@@ -1540,7 +1586,13 @@ export class BourseService {
           : []),
       ],
     }));
-    const doc = new Document({ sections });
+    // La police choisie vaut aussi pour les passages qui ne fixent pas la leur (tableaux…)
+    const doc = new Document({
+      sections,
+      ...(choix === 'gill'
+        ? { styles: { default: { document: { run: { font: GILL } } } } }
+        : {}),
+    });
     return {
       nom: `${e.nomFichier}.docx`,
       contenu: await Packer.toBuffer(doc),
@@ -1690,6 +1742,7 @@ export class BourseService {
 
   async payesDeuxFoisExcel(
     id: number,
+    police: PoliceDocument = 'actuelle',
   ): Promise<{ nom: string; contenu: Buffer }> {
     const r = await this.payesDeuxFois(id);
     const wb = new ExcelJS.Workbook();
@@ -1762,13 +1815,17 @@ export class BourseService {
       (width) => ({ width }),
     );
     ws.views = [{ state: 'frozen', ySplit: t.number }];
+    appliquerPolice(wb, police);
     return {
       nom: `Payés deux fois - ${moisEnClair(r.etat.mois)}.xlsx`,
       contenu: Buffer.from(await wb.xlsx.writeBuffer()),
     };
   }
 
-  async excel(id: number): Promise<{ nom: string; contenu: Buffer }> {
+  async excel(
+    id: number,
+    police: PoliceDocument = 'actuelle',
+  ): Promise<{ nom: string; contenu: Buffer }> {
     const ep = await this.etatPaiement(id);
     const lignes = await this.lignes.find({ where: { etatId: id } });
     const communautaires = ep.etat.population === 'COMMUNAUTAIRE';
@@ -1971,7 +2028,9 @@ export class BourseService {
         ...Array<string>(7).fill(''),
         `Fait à Brazzaville, le ${new Date().toLocaleDateString('fr-FR')}`,
       ]);
-      // Le titre sans gras, au moins deux lignes, puis le nom en gras (DG, 27/10/2026)
+      // Une ligne entre « Fait à… » et le titre (13/11/2026) ; le titre sans gras, au moins
+      // deux lignes, puis le nom en gras (DG, 27/10/2026)
+      ws.addRow([]);
       ws.addRow([...Array<string>(7).fill(''), ep.signature.titre]);
       ws.addRow([]);
       ws.addRow([]);
@@ -1982,7 +2041,9 @@ export class BourseService {
       [5, 32, 13, 12, 28, 7, 13, 26, 18, 14, 24].forEach(
         (w, i) => (ws.getColumn(i + 1).width = w),
       );
-      ws.views = [{ state: 'frozen', ySplit: en.number }];
+      // Pas de volets figés : la feuille défile librement ; les titres des colonnes se répètent
+      // à l'impression (printTitlesRow) (13/11/2026)
+      ws.views = [{ state: 'normal' }];
     }
     lignes.sort((a, b) =>
       nomDep(a.departementId).localeCompare(nomDep(b.departementId), 'fr'),
@@ -2011,8 +2072,8 @@ export class BourseService {
         margins: {
           left: 0.6145833333333334,
           right: 0.3854166666666667,
-          top: 0.3125,
-          bottom: 0.19444444444444445,
+          top: 0.375,
+          bottom: 0.2708333333333333,
           header: 0.3,
           footer: 0.3,
         },
@@ -2111,11 +2172,11 @@ export class BourseService {
       [10, 12],
       [11, 9],
       [12, 13.5],
-      [13, 7.5],
-      [14, 18.5],
+      [13, 13.5],
+      [14, 18.75],
       [15, 13.5],
-      [16, 29.25],
-      [17, 16.5],
+      [17, 29.25],
+      [18, 16.5],
     ];
     for (const [l, h] of hauteurs) ws.getRow(l).height = h;
     const g12 = { size: 12, bold: true };
@@ -2150,11 +2211,13 @@ export class BourseService {
         .toUpperCase()} (1 MOIS${avecRappels ? ' ET RAPPELS' : ''})`,
       g12,
     );
-    ecrire(14, 1, nbColR, 'RÉCAPITULATIF PAR DEPARTEMENT ET PAR CYCLE', {
+    // Le titre et la ligne vide de plus du modèle « Fiche de répartition » (DG, 13/11/2026)
+    ecrire(14, 1, nbColR, 'FICHE DE REPARTITION PAR DEPARTEMENT ET PAR CYCLE', {
       size: 14,
       bold: true,
     });
-    // Les titres du tableau (lignes 16 et 17)
+    // Les titres du tableau (lignes 17 et 18)
+    const T = 17;
     const fin: Partial<ExcelJS.Border> = { style: 'thin' };
     const titre = (
       l: number,
@@ -2164,7 +2227,7 @@ export class BourseService {
       font: Partial<ExcelJS.Font>,
       haut = true,
     ) => {
-      if (l === 16 && !haut) ws.mergeCells(16, c1, 17, c1);
+      if (l === T && !haut) ws.mergeCells(T, c1, T + 1, c1);
       else fusion(l, c1, c2);
       for (let k = c1; k <= c2; k++) {
         const cell = ws.getCell(l, k);
@@ -2177,38 +2240,38 @@ export class BourseService {
         };
         cell.border = { top: fin, bottom: fin, left: fin, right: fin };
       }
-      if (l === 16 && !haut) {
-        const bas = ws.getCell(17, c1);
+      if (l === T && !haut) {
+        const bas = ws.getCell(T + 1, c1);
         bas.border = { top: fin, bottom: fin, left: fin, right: fin };
       }
     };
-    titre(16, 1, 1, 'N°', {}, false);
-    titre(16, 2, 2, 'Département', {}, false);
+    titre(T, 1, 1, 'N°', {}, false);
+    titre(T, 2, 2, 'Département', {}, false);
     groupes.forEach((g, i) => {
       const c = 3 + i * 2;
-      titre(16, c, c + 1, g.libelle, { bold: true });
-      titre(17, c, c, 'Effectif', {
+      titre(T, c, c + 1, g.libelle, { bold: true });
+      titre(T + 1, c, c, 'Effectif', {
         name: 'Gill Sans MT Condensed',
         bold: true,
       });
-      titre(17, c + 1, c + 1, 'Montant', {
+      titre(T + 1, c + 1, c + 1, 'Montant', {
         name: 'Gill Sans MT Condensed',
         bold: true,
       });
     });
     const cT = nbColR - 1;
-    titre(16, cT, nbColR, 'Total', { bold: true });
-    titre(17, cT, cT, 'Effectif', {
+    titre(T, cT, nbColR, 'Total', { bold: true });
+    titre(T + 1, cT, cT, 'Effectif', {
       name: 'Gill Sans MT Condensed',
       bold: true,
     });
-    titre(17, nbColR, nbColR, 'Montant', {
+    titre(T + 1, nbColR, nbColR, 'Montant', {
       name: 'Gill Sans MT Condensed',
       bold: true,
     });
     // Une ligne par département (formules : la feuille se corrige dans Excel)
     const compta = '_-* #,##0_-;-* #,##0_-;_-* "-"??_-;_-@_-';
-    const premiere = 18;
+    const premiere = T + 2;
     const deps2 = [...parDep.entries()];
     const ecrireCellule = (
       l: number,
@@ -2341,6 +2404,7 @@ export class BourseService {
     ws.getColumn(nbColR).width = 13;
     wb.calcProperties.fullCalcOnLoad = true;
 
+    appliquerPolice(wb, police);
     const contenu = Buffer.from(await wb.xlsx.writeBuffer());
     return { nom: `${ep.nomFichier}.xlsx`, contenu };
   }

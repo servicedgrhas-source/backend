@@ -25,7 +25,7 @@ import {
 } from '../auth/auth';
 import { DEPARTEMENTS } from '../common/referentiels';
 import { BottinService } from './bottin.service';
-import { BourseService, CONTROLES } from './bourse.service';
+import { BourseService, CONTROLES, policeDocument } from './bourse.service';
 import { ConfigEnrolementService, LIBELLES_DEBUT } from './configuration';
 import { CYCLES_ENROLEMENT } from './enrolement.service';
 import { EcartsVolontairesService } from '../recensement/ecarts-volontaires.service';
@@ -784,8 +784,12 @@ export class VolontairesController {
 
   @Roles(...ROLES_TRAITEMENT)
   @Get('bourse/:id/word')
-  async word(@Param('id', ParseIntPipe) id: number, @Res() res: Response) {
-    const { nom, contenu } = await this.bourse.word(id);
+  async word(
+    @Param('id', ParseIntPipe) id: number,
+    @Res() res: Response,
+    @Query('police') police?: string,
+  ) {
+    const { nom, contenu } = await this.bourse.word(id, policeDocument(police));
     res.setHeader(
       'Content-Type',
       'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
@@ -809,8 +813,12 @@ export class VolontairesController {
   async payesDeuxFoisExcel(
     @Param('id', ParseIntPipe) id: number,
     @Res() res: Response,
+    @Query('police') police?: string,
   ) {
-    const { nom, contenu } = await this.bourse.payesDeuxFoisExcel(id);
+    const { nom, contenu } = await this.bourse.payesDeuxFoisExcel(
+      id,
+      policeDocument(police),
+    );
     res.setHeader(
       'Content-Type',
       'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
@@ -828,8 +836,12 @@ export class VolontairesController {
   async priseEnCharge(
     @Param('id', ParseIntPipe) id: number,
     @Res() res: Response,
+    @Query('police') police?: string,
   ) {
-    const { nom, contenu } = await this.bourse.priseEnChargeExcel(id);
+    const { nom, contenu } = await this.bourse.priseEnChargeExcel(
+      id,
+      policeDocument(police),
+    );
     res.setHeader(
       'Content-Type',
       'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
@@ -843,8 +855,15 @@ export class VolontairesController {
 
   @Roles(...ROLES_TRAITEMENT)
   @Get('bourse/:id/excel')
-  async excel(@Param('id', ParseIntPipe) id: number, @Res() res: Response) {
-    const { nom, contenu } = await this.bourse.excel(id);
+  async excel(
+    @Param('id', ParseIntPipe) id: number,
+    @Res() res: Response,
+    @Query('police') police?: string,
+  ) {
+    const { nom, contenu } = await this.bourse.excel(
+      id,
+      policeDocument(police),
+    );
     res.setHeader(
       'Content-Type',
       'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
