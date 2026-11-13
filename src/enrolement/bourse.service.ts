@@ -853,10 +853,15 @@ export class BourseService {
   }
 
   /**
-   * Fiche de prise en charge (DG, 12/11/2026, modèle des communautaires d'août 2026) : pour chaque
-   * département, l'effectif, le taux et le montant de chaque cycle (alphabétisation et
-   * post-alphabétisation comprises), puis l'effectif total et les montants mensuel, trimestriel et
-   * annuel. Les montants sont effectif × taux (la prise en charge d'un mois, sans les rappels).
+   * Fiche de prise en charge, copiée sur le modèle du cabinet (« FICHE DE PRISE EN CHARGE DES
+   * ENSEIGNANTS COMMUNAUTAIRES AOUT 2026 », feuille « Version 3 F (3) ») : en-tête du ministère à
+   * gauche et de la République à droite, titre, mesure gouvernementale, année scolaire, période ;
+   * par département (les regroupements du cabinet : Cuvette/Congo-Oubangui, Plateaux/Nkéni-Alima…),
+   * l'effectif, le taux et le montant de chaque cycle (Préscolaire, Primaire, Collège, Lycée,
+   * Alph/Resco/ORA, Post-Alphabétisation), le total mensuel (effectif, montant) et le total
+   * trimestriel et annuel ; le texte « Au mois de … l'effectif … est évalué à … » ; la signature.
+   * Les montants sont des formules (effectif × taux) : la fiche se corrige dans Excel comme le
+   * modèle. Une ligne par personne payée, sans les rappels (la prise en charge d'un mois).
    */
   async priseEnChargeExcel(
     id: number,
@@ -865,7 +870,7 @@ export class BourseService {
     if (!etat) throw new NotFoundException('État de bourse introuvable');
     const c = this.config.get();
     const communautaires = etat.population === 'COMMUNAUTAIRE';
-    const deps = new Map((await this.deps.find()).map((d) => [d.id, d.nom]));
+    const depsListe = await this.deps.find();
     const lignes = await this.lignes.query<
       {
         departementId: number | null;
@@ -877,42 +882,108 @@ export class BourseService {
          FROM ligne_bourse WHERE "etatId" = $1 GROUP BY 1, 2`,
       [id],
     );
-    // Les cycles dans l'ordre de la configuration ; ceux qui ont du monde, plus les cycles actifs
-    const cats = this.config
-      .categoriesDe(etat.population)
-      .filter((x) => x.actif || lignes.some((l) => l.categorie === x.code));
-    const sansCycle = lignes.some(
-      (l) => !l.categorie || !cats.some((x) => x.code === l.categorie),
-    );
-    const colonnes = [
-      ...cats.map((x) => ({
-        code: x.code,
-        libelle: x.libelle,
-        taux: x.bourse,
-      })),
-      ...(sansCycle
-        ? [{ code: '', libelle: 'Cycle non renseigné', taux: 0 }]
-        : []),
-    ];
-    const nomDep = (d: number | null) =>
-      d ? (deps.get(d) ?? '') : 'Non renseigné';
-    const parDep = new Map<string, Map<string, number>>();
-    for (const l of lignes) {
-      const d = nomDep(l.departementId);
-      const code =
-        l.categorie && cats.some((x) => x.code === l.categorie)
-          ? l.categorie
-          : '';
-      const m = parDep.get(d) ?? new Map<string, number>();
-      m.set(code, (m.get(code) ?? 0) + l.effectif);
-      parDep.set(d, m);
-    }
-    const departements = [...parDep.keys()].sort((a, b) =>
-      a.localeCompare(b, 'fr'),
-    );
 
+    // Les colonnes : l'ordre et les mots du modèle pour les communautaires ; les autres cycles
+    // (administration scolaire…) seulement s'ils ont du monde, et « Cycle non renseigné » au besoin
+    const cats = this.config.categoriesDe(etat.population);
+    const ORDRE_COM: [string, string][] = [
+      ['COM_PRESCOLAIRE', 'Préscolaire'],
+      ['COM_PRIMAIRE', 'Primaire'],
+      ['COM_COLLEGE', 'Collège'],
+      ['COM_LYCEE', 'Lycée'],
+      ['COM_ALPHABETISATION', 'Alph/Resco/ORA'],
+      ['COM_POST_ALPHA', 'Post-Alphabétisation'],
+    ];
+    const aDuMonde = (code: string) =>
+      lignes.some((l) => l.categorie === code && l.effectif > 0);
+    const colonnes: { code: string; libelle: string; taux: number }[] =
+      communautaires
+        ? [
+            ...ORDRE_COM.filter(([code]) =>
+              cats.some((x) => x.code === code),
+            ).map(([code, libelle]) => ({
+              code,
+              libelle,
+              taux: cats.find((x) => x.code === code)!.bourse,
+            })),
+            ...cats
+              .filter(
+                (x) =>
+                  !ORDRE_COM.some(([k]) => k === x.code) && aDuMonde(x.code),
+              )
+              .map((x) => ({
+                code: x.code,
+                libelle: x.libelle,
+                taux: x.bourse,
+              })),
+          ]
+        : cats
+            .filter((x) => x.actif || aDuMonde(x.code))
+            .map((x) => ({ code: x.code, libelle: x.libelle, taux: x.bourse }));
+    if (lignes.some((l) => !colonnes.some((x) => x.code === l.categorie)))
+      colonnes.push({ code: '', libelle: 'Cycle non renseigné', taux: 0 });
+
+    // Les lignes : les regroupements du cabinet pour les communautaires (une ligne même vide) ;
+    // un département par ligne pour les volontaires
+    const GROUPES_COM: [string, string[]][] = [
+      ['Bouenza', ['BOUENZA']],
+      ['Brazzaville', ['BRAZZAVILLE']],
+      ['Cuvette/Congo-Oubangui', ['CUVETTE', 'CONGO_OUBANGUI']],
+      ['Cuv-Ouest', ['CUVETTE_OUEST']],
+      ['Djoué-Léfini', ['DJOUE_LEFINI']],
+      ['Kouilou', ['KOUILOU']],
+      ['Lékoumou', ['LEKOUMOU']],
+      ['Likouala/Congo-Oubangui', ['LIKOUALA']],
+      ['Niari', ['NIARI']],
+      ['Plateaux/Nkéni-Alima', ['PLATEAUX', 'NKENI_ALIMA']],
+      ['Pointe-Noire', ['POINTE_NOIRE']],
+      ['Pool', ['POOL']],
+      ['Sangha', ['SANGHA']],
+    ];
+    const groupes: { libelle: string; ids: (number | null)[] }[] =
+      communautaires
+        ? GROUPES_COM.map(([libelle, codes]) => ({
+            libelle,
+            ids: depsListe
+              .filter((d) => codes.includes(d.code))
+              .map((d) => d.id),
+          }))
+        : depsListe
+            .filter((d) => lignes.some((l) => l.departementId === d.id))
+            .sort((a, b) => a.nom.localeCompare(b.nom, 'fr'))
+            .map((d) => ({ libelle: d.nom, ids: [d.id] }));
+    // Département absent des regroupements (ou non renseigné) : une ligne à part, pour ne rien perdre
+    const pris = new Set(groupes.flatMap((g) => g.ids));
+    const autres = [
+      ...new Set(
+        lignes
+          .filter((l) => !pris.has(l.departementId))
+          .map((l) => l.departementId),
+      ),
+    ];
+    for (const d of autres)
+      groupes.push({
+        libelle: d
+          ? (depsListe.find((x) => x.id === d)?.nom ?? '?')
+          : 'Département non renseigné',
+        ids: [d],
+      });
+    const effectif = (ids: (number | null)[], code: string) =>
+      lignes
+        .filter(
+          (l) =>
+            ids.includes(l.departementId) &&
+            (code === ''
+              ? !colonnes.some((x) => x.code && x.code === l.categorie)
+              : l.categorie === code),
+        )
+        .reduce((t, l) => t + l.effectif, 0);
+
+    // Le classeur
     const wb = new ExcelJS.Workbook();
     wb.creator = 'SIGRHAS-MEPPSA';
+    // Les formules (montants à 0 compris) sont recalculées à l'ouverture, comme dans le modèle
+    wb.calcProperties.fullCalcOnLoad = true;
     const ws = wb.addWorksheet('Prise en charge', {
       pageSetup: {
         paperSize: 9,
@@ -920,163 +991,264 @@ export class BourseService {
         fitToPage: true,
         fitToWidth: 1,
         fitToHeight: 0,
+        margins: {
+          left: 0.3,
+          right: 0.3,
+          top: 0.4,
+          bottom: 0.4,
+          header: 0.2,
+          footer: 0.2,
+        },
       },
     });
-    const nbCol = 1 + colonnes.length * 3 + 4;
-    const ligne = (
-      texte: string,
-      font: Partial<ExcelJS.Font>,
-      centre = true,
-    ) => {
-      const row = ws.addRow([texte]);
-      ws.mergeCells(row.number, 1, row.number, nbCol);
-      row.getCell(1).font = font;
-      row.getCell(1).alignment = {
-        horizontal: centre ? 'center' : 'left',
-        wrapText: true,
-      };
-      return row;
+    const nbCycles = colonnes.length;
+    const cEff = 2 + nbCycles * 3; // TOTAL MENSUEL : Eff.
+    const cMens = cEff + 1; // Montant
+    const cTrim = cEff + 2; // TOTAL : Montant trimestriel
+    const cAnn = cEff + 3; // Montant annuel
+    const nbCol = cAnn;
+    const col = (n: number) => ws.getColumn(n).letter;
+    const fusion = (l: number, c1: number, c2: number) => {
+      if (c2 > c1) ws.mergeCells(l, c1, l, c2);
     };
-    ligne('REPUBLIQUE DU CONGO — Unité-Travail-Progrès', {
+    const texte = (
+      l: number,
+      c1: number,
+      c2: number,
+      valeur: string,
+      font: Partial<ExcelJS.Font>,
+      horizontal: 'left' | 'center' | 'right' = 'center',
+    ) => {
+      fusion(l, c1, c2);
+      const cell = ws.getCell(l, c1);
+      cell.value = valeur;
+      cell.font = { name: 'Times New Roman', ...font };
+      cell.alignment = { horizontal, vertical: 'middle', wrapText: true };
+    };
+    const gauche = Math.min(6, nbCol - 3);
+    const droite = Math.max(gauche + 1, nbCol - 3);
+    // En-tête : le ministère à gauche, la République à droite (comme le modèle)
+    texte(1, 1, gauche, "MINISTERE DE L'ENSEIGNEMENT PRESCOLAIRE, PRIMAIRE,", {
       bold: true,
       size: 10,
     });
-    for (const t of [
-      'MINISTERE DE L’ENSEIGNEMENT PRESCOLAIRE, PRIMAIRE, SECONDAIRE ET DE L’ALPHABETISATION',
-      'CABINET',
-      'DIRECTION GENERALE DES RESSOURCES HUMAINES ET DE L’ADMINISTRATION SCOLAIRE',
-    ])
-      ligne(t, { bold: true, size: 10 });
-    ws.addRow([]);
-    ligne(
+    texte(1, droite, nbCol, 'REPUBLIQUE DU CONGO', { bold: true, size: 10 });
+    texte(2, 1, gauche, "SECONDAIRE ET DE L'ALPHABETISATION", {
+      bold: true,
+      size: 10,
+    });
+    texte(2, droite, nbCol, 'Unité-Travail-Progrès', {
+      italic: true,
+      size: 10,
+    });
+    texte(3, 1, gauche, 'CABINET', { bold: true, size: 10 });
+    texte(4, 1, gauche, 'DIRECTION GENERALE DES RESSOURCES HUMAINES', {
+      bold: true,
+      size: 10,
+    });
+    texte(5, 1, gauche, "ET DE L'ADMINISTRATION SCOLAIRE", {
+      bold: true,
+      size: 10,
+    });
+    texte(
+      6,
+      1,
+      nbCol,
       `FICHE DE PRISE EN CHARGE DES ENSEIGNANTS ${communautaires ? 'COMMUNAUTAIRES' : 'VOLONTAIRES'}`,
       { bold: true, size: 14 },
     );
-    ligne(
-      `PERIODE : ${moisEnClair(etat.mois).toUpperCase()}${etat.statut !== 'VALIDE' ? ' (PROJET NON VALIDÉ)' : ''}`,
+    if (communautaires && c.ficheMentionCommunautaires)
+      texte(7, 1, nbCol, c.ficheMentionCommunautaires, {
+        bold: true,
+        size: 11,
+      });
+    // Année scolaire : de septembre à août (août 2026 → 2025-2026)
+    const [an, m] = etat.mois.split('-').map(Number);
+    const debutAnnee = m >= 9 ? an : an - 1;
+    texte(9, 1, nbCol, `ANNEE SCOLAIRE ${debutAnnee}-${debutAnnee + 1}`, {
+      bold: true,
+      size: 11,
+    });
+    const sansAccents = (s: string) => s.normalize('NFD').replace(/[̀-ͯ]/g, '');
+    texte(
+      11,
+      1,
+      nbCol,
+      `PERIODE : ${sansAccents(moisEnClair(etat.mois)).toUpperCase()}`,
       { bold: true, size: 11 },
     );
-    ws.addRow([]);
-    const VERT = 'FF0F5132';
-    const entete = (row: ExcelJS.Row) =>
-      row.eachCell((cell) => {
-        cell.font = { bold: true, color: { argb: 'FFFFFFFF' }, size: 10 };
-        cell.fill = {
-          type: 'pattern',
-          pattern: 'solid',
-          fgColor: { argb: VERT },
-        };
-        cell.alignment = {
-          horizontal: 'center',
-          vertical: 'middle',
-          wrapText: true,
-        };
-        cell.border = {
-          top: { style: 'thin' },
-          bottom: { style: 'thin' },
-          left: { style: 'thin' },
-          right: { style: 'thin' },
-        };
+    if (etat.statut !== 'VALIDE')
+      texte(12, 1, nbCol, 'Projet : état de paiement pas encore validé', {
+        italic: true,
+        size: 9,
+        color: { argb: 'FFB91C1C' },
       });
-    const h1 = ws.addRow([
-      'DEPARTEMENT',
-      ...colonnes.flatMap((x) => [x.libelle, '', '']),
-      'TOTAL',
-      '',
-      '',
-      '',
-    ]);
-    const h2 = ws.addRow([
-      'DEPARTEMENT',
-      ...colonnes.flatMap(() => ['Eff.', 'Taux', 'Montant']),
-      'Eff.',
-      'Montant mensuel',
-      'Montant trimestriel',
-      'Montant annuel',
-    ]);
-    ws.mergeCells(h1.number, 1, h2.number, 1);
-    colonnes.forEach((_, i) =>
-      ws.mergeCells(h1.number, 2 + i * 3, h1.number, 4 + i * 3),
-    );
-    ws.mergeCells(h1.number, nbCol - 3, h1.number, nbCol);
-    entete(h1);
-    entete(h2);
-    h1.height = 32;
-    const totaux = colonnes.map(() => 0);
+
+    // Les titres du tableau (lignes 13 et 14)
+    const L1 = 13;
+    const L2 = 14;
+    const bord = {
+      top: { style: 'thin' as const },
+      bottom: { style: 'thin' as const },
+      left: { style: 'thin' as const },
+      right: { style: 'thin' as const },
+    };
+    const titre = (l: number, c1: number, c2: number, v: string) => {
+      texte(l, c1, c2, v, { bold: true, size: 10 });
+      for (let k = c1; k <= c2; k++) ws.getCell(l, k).border = bord;
+    };
+    ws.mergeCells(L1, 1, L2, 1);
+    titre(L1, 1, 1, 'DEPARTEMENT');
+    ws.getCell(L2, 1).border = bord;
+    colonnes.forEach((x, i) => {
+      titre(L1, 2 + i * 3, 4 + i * 3, x.libelle);
+      titre(L2, 2 + i * 3, 2 + i * 3, 'Eff.');
+      titre(L2, 3 + i * 3, 3 + i * 3, 'Taux');
+      titre(L2, 4 + i * 3, 4 + i * 3, 'Montant');
+    });
+    titre(L1, cEff, cMens, 'TOTAL MENSUEL');
+    titre(L1, cTrim, cAnn, 'TOTAL');
+    titre(L2, cEff, cEff, 'Eff.');
+    titre(L2, cMens, cMens, 'Montant');
+    titre(L2, cTrim, cTrim, 'Montant trimestriel');
+    titre(L2, cAnn, cAnn, 'Montant annuel');
+    ws.getRow(L2).height = 30;
+
+    // Une ligne par département (ou regroupement), avec les formules du modèle
+    const premiere = L2 + 1;
+    let l = premiere;
     let effTotal = 0;
     let montantTotal = 0;
-    const bordure = (row: ExcelJS.Row) =>
-      row.eachCell({ includeEmpty: true }, (cell, col) => {
-        cell.border = {
-          top: { style: 'hair' },
-          bottom: { style: 'hair' },
-          left: { style: 'thin' },
-          right: { style: 'thin' },
-        };
-        if (col > 1) {
-          cell.numFmt = '#,##0';
-          cell.alignment = { horizontal: 'right' };
-        }
-      });
-    for (const d of departements) {
-      const m = parDep.get(d)!;
+    const cellule = (
+      ligne: number,
+      colonne: number,
+      valeur: ExcelJS.CellValue,
+      gras = false,
+    ) => {
+      const cell = ws.getCell(ligne, colonne);
+      cell.value = valeur;
+      cell.font = { name: 'Times New Roman', size: 10, bold: gras };
+      cell.border = bord;
+      if (colonne > 1) {
+        cell.numFmt = '#,##0';
+        cell.alignment = { horizontal: 'right', vertical: 'middle' };
+      } else cell.alignment = { vertical: 'middle' };
+    };
+    for (const g of groupes) {
+      cellule(l, 1, g.libelle);
       let eff = 0;
       let mont = 0;
-      const cellules = colonnes.flatMap((x, i) => {
-        const n = m.get(x.code) ?? 0;
-        totaux[i] += n;
+      colonnes.forEach((x, i) => {
+        const n = effectif(g.ids, x.code);
+        const ce = 2 + i * 3;
         eff += n;
         mont += n * x.taux;
-        return [n, x.taux, n * x.taux];
+        cellule(l, ce, n);
+        cellule(l, ce + 1, x.taux);
+        cellule(l, ce + 2, {
+          formula: `PRODUCT(${col(ce)}${l},${col(ce + 1)}${l})`,
+          result: n * x.taux,
+        });
       });
       effTotal += eff;
       montantTotal += mont;
-      bordure(ws.addRow([d, ...cellules, eff, mont, mont * 3, mont * 12]));
+      cellule(l, cEff, {
+        formula: colonnes.map((_, i) => `${col(2 + i * 3)}${l}`).join('+'),
+        result: eff,
+      });
+      cellule(l, cMens, {
+        formula: `SUM(${colonnes.map((_, i) => `${col(4 + i * 3)}${l}`).join(',')})`,
+        result: mont,
+      });
+      cellule(l, cTrim, { formula: `${col(cMens)}${l}*3`, result: mont * 3 });
+      cellule(l, cAnn, {
+        formula: `PRODUCT(${col(cMens)}${l},12)`,
+        result: mont * 12,
+      });
+      l++;
     }
-    const t = ws.addRow([
-      'TOTAL',
-      ...colonnes.flatMap((x, i) => [totaux[i], x.taux, totaux[i] * x.taux]),
-      effTotal,
-      montantTotal,
-      montantTotal * 3,
-      montantTotal * 12,
-    ]);
-    bordure(t);
-    t.eachCell((cell) => {
-      cell.font = { bold: true };
-      cell.fill = {
+    const derniere = l - 1;
+    const somme = (colonne: number, resultat: number) => ({
+      formula: `SUM(${col(colonne)}${premiere}:${col(colonne)}${derniere})`,
+      result: resultat,
+    });
+    cellule(l, 1, 'TOTAL', true);
+    colonnes.forEach((x, i) => {
+      const n = effectif(
+        groupes.flatMap((g) => g.ids),
+        x.code,
+      );
+      cellule(l, 2 + i * 3, somme(2 + i * 3, n), true);
+      cellule(l, 3 + i * 3, x.taux, true);
+      cellule(l, 4 + i * 3, somme(4 + i * 3, n * x.taux), true);
+    });
+    cellule(l, cEff, somme(cEff, effTotal), true);
+    cellule(l, cMens, somme(cMens, montantTotal), true);
+    cellule(l, cTrim, somme(cTrim, montantTotal * 3), true);
+    cellule(l, cAnn, somme(cAnn, montantTotal * 12), true);
+    for (let k = 1; k <= nbCol; k++)
+      ws.getCell(l, k).fill = {
         type: 'pattern',
         pattern: 'solid',
         fgColor: { argb: 'FFE4E4E7' },
       };
-    });
-    ws.addRow([]);
-    ligne(
-      `Arrêtée la présente fiche à ${effTotal.toLocaleString('fr-FR')} enseignant(s) ${communautaires ? 'communautaire(s)' : 'volontaire(s)'}, pour un montant mensuel de ${montantArrete(montantTotal)}.`,
-      { size: 10 },
-      false,
+
+    // Le texte du modèle, puis la signature à droite
+    const nomMois = moisEnClair(etat.mois).toLowerCase();
+    const espaces = (n: number) =>
+      n.toLocaleString('fr-FR').replace(/\s/g, ' ');
+    const points = (n: number) =>
+      String(n).replace(/\B(?=(\d{3})+(?!\d))/g, '.');
+    const lt = l + 2;
+    texte(
+      lt,
+      1,
+      nbCol,
+      `Au mois ${/^[aeiouh]/i.test(sansAccents(nomMois)) ? "d'" : 'de '}${nomMois}, l'effectif des enseignants ${communautaires ? 'communautaires' : 'volontaires'} est évalué à ${espaces(effTotal)}. Leur prise en charge nécessite un montant de ${points(montantTotal)} FCFA.`,
+      { size: 11 },
+      'left',
     );
-    ws.addRow([]);
-    const sig = (texte: string, gras = false) => {
-      const row = ws.addRow([]);
-      row.getCell(nbCol - 4).value = texte;
-      row.getCell(nbCol - 4).font = { bold: gras };
-    };
-    sig(`Fait à Brazzaville, le ${new Date().toLocaleDateString('fr-FR')}`);
-    sig(c.signatairePaiementTitre);
-    ws.addRow([]);
-    ws.addRow([]);
-    ws.addRow([]);
-    sig(c.signatairePaiementNom, true);
-    ws.columns = [
-      { width: 20 },
-      ...colonnes.flatMap(() => [{ width: 8 }, { width: 9 }, { width: 13 }]),
-      { width: 9 },
-      { width: 15 },
-      { width: 16 },
-      { width: 17 },
-    ];
-    ws.views = [{ state: 'frozen', xSplit: 1, ySplit: h2.number }];
+    texte(
+      lt + 1,
+      1,
+      nbCol,
+      "A ce montant, il faut ajouter les frais de la prise en charge de l'organisation de la paie et de l'acheminement des fonds dans les différents sites départementaux.",
+      { size: 11 },
+      'left',
+    );
+    ws.getRow(lt).height = 18;
+    ws.getRow(lt + 1).height = 30;
+    const sig = Math.max(1, nbCol - 6);
+    texte(lt + 2, sig, nbCol, 'Fait à Brazzaville, le', { size: 11 }, 'left');
+    texte(
+      lt + 4,
+      sig,
+      nbCol,
+      c.signatairePaiementTitre,
+      { bold: true, size: 11 },
+      'left',
+    );
+    texte(
+      lt + 9,
+      sig,
+      nbCol,
+      c.signatairePaiementNom,
+      { bold: true, size: 11 },
+      'left',
+    );
+
+    // Largeurs : celles du modèle (département, puis Eff. / Taux / Montant étroits)
+    ws.getColumn(1).width = 22;
+    colonnes.forEach((_, i) => {
+      ws.getColumn(2 + i * 3).width = 7;
+      ws.getColumn(3 + i * 3).width = 8;
+      ws.getColumn(4 + i * 3).width = 12;
+    });
+    ws.getColumn(cEff).width = 8;
+    ws.getColumn(cMens).width = 13;
+    ws.getColumn(cTrim).width = 14;
+    ws.getColumn(cAnn).width = 15;
+    ws.views = [{ state: 'frozen', xSplit: 1, ySplit: L2 }];
     return {
       nom: `Fiche de prise en charge ${communautaires ? 'communautaires' : 'volontaires'} ${etat.mois}${etat.statut === 'VALIDE' ? '' : ' (projet)'}.xlsx`,
       contenu: Buffer.from(await wb.xlsx.writeBuffer()),

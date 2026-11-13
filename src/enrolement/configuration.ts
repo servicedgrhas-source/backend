@@ -79,6 +79,8 @@ export interface ConfigEnrolement {
   /** Signataire des états de paiement (bourse, mise en route). */
   signatairePaiementTitre: string;
   signatairePaiementNom: string;
+  /** Fiche de prise en charge des communautaires : la ligne sous le titre (mesure gouvernementale). */
+  ficheMentionCommunautaires: string;
 }
 
 export const LIBELLES_DEBUT: Record<DebutBourse, string> = {
@@ -299,6 +301,8 @@ export class ConfigEnrolementService {
         'La Directrice de Cabinet,',
       signatairePaiementNom:
         this.params.get('SIGNATAIRE_LISTE_NOM') || 'Régine TCHICAYA-OBOA',
+      ficheMentionCommunautaires:
+        'RELATIVE A LA MISE EN ŒUVRE DE LA MESURE GOUVERNEMENTALE DU 07 OCTOBRE 2023',
     };
   }
 
@@ -592,6 +596,14 @@ export function valider(brut: unknown): ConfigEnrolement {
       'Nom du signataire',
       120,
     ),
+    ficheMentionCommunautaires:
+      b.ficheMentionCommunautaires === undefined
+        ? 'RELATIVE A LA MISE EN ŒUVRE DE LA MESURE GOUVERNEMENTALE DU 07 OCTOBRE 2023'
+        : texte(
+            b.ficheMentionCommunautaires,
+            'Mention de la fiche de prise en charge',
+            200,
+          ),
   };
 }
 
