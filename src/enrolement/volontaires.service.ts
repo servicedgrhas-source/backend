@@ -185,9 +185,9 @@ export class VolontairesService implements OnModuleInit {
       q.andWhere(
         `(v.nomNormalise LIKE :m${i} OR coalesce(v.telephone, '') LIKE :t${i} OR coalesce(v.etablissement, '') ILIKE :e${i})`,
         {
-          [`m${i}`]: `%${normaliser(mot).replace(/[\\%_]/g, '\\  async liste(f: FiltresVolontaires) {')}%`,
-          [`t${i}`]: `%${mot.replace(/[\\%_]/g, '\\  async liste(f: FiltresVolontaires) {')}%`,
-          [`e${i}`]: `%${mot.replace(/[\\%_]/g, '\\  async liste(f: FiltresVolontaires) {')}%`,
+          [`m${i}`]: `%${normaliser(mot).replace(/[\\%_]/g, '\\$&')}%`,
+          [`t${i}`]: `%${mot.replace(/[\\%_]/g, '\\$&')}%`,
+          [`e${i}`]: `%${mot.replace(/[\\%_]/g, '\\$&')}%`,
         },
       );
     q.andWhere('v.population = :p', { p: populationDe(f.population) });
@@ -722,6 +722,85 @@ export class VolontairesService implements OnModuleInit {
   }
 
   /**
+   * Mettre à jour beaucoup de fiches d'un coup (communautaires, 13/11/2026 : 12 000 fiches une par
+   * une prenaient trop de temps en ligne). Une requête par rubrique et par paquet de 2 000, dans
+   * une transaction : tout est écrit, ou rien.
+   */
+  private async majEnLot(majs: { id: string; champs: Partial<Volontaire> }[]) {
+    if (!majs.length) return;
+    const parRubrique = new Map<string, { id: string; v: unknown }[]>();
+    for (const { id, champs } of majs)
+      for (const [k, v] of Object.entries(champs))
+        parRubrique.set(k, [...(parRubrique.get(k) ?? []), { id, v }]);
+    const colonnes = new Set(
+      this.volontaires.metadata.columns.map((c) => c.propertyName),
+    );
+    await this.volontaires.manager.transaction(async (m) => {
+      for (const [k, lignes] of parRubrique) {
+        if (!colonnes.has(k))
+          throw new BadRequestException(`Rubrique inconnue : ${k}`);
+        for (let i = 0; i < lignes.length; i += 2000)
+          await m.query(
+            `UPDATE volontaire v
+                SET "${k}" = (jsonb_populate_record(NULL::volontaire, x.j))."${k}",
+                    "modifieLe" = now()
+               FROM jsonb_array_elements($1::jsonb) AS x(j)
+              WHERE v.id = (x.j->>'id')::uuid`,
+            [
+              JSON.stringify(
+                lignes.slice(i, i + 2000).map((l) => ({ id: l.id, [k]: l.v })),
+              ),
+            ],
+          );
+      }
+    });
+  }
+
+  /**
+   * Les retraits d'un fichier de paiement : le motif de chacun, lu sur toute la ligne (les blocs
+   * ajoutés en bas de la feuille n'ont pas les mêmes colonnes ; octobre 2026 : « RETIRE PAR LA
+   * DDEPPSA » à droite, hors de la colonne « Obs. »). « SALARIE », « FONCTIONNAIRE » → recruté à la
+   * Fonction publique ; sinon « Retiré par la DDEPPSA ».
+   */
+  private motifsDesRetraits(lignes: Ligne[] | null) {
+    const cle = (nom: string) => motsDuNom(nom).sort().join(' ');
+    const motif = new Map<string, string>();
+    const ligne = new Map<string, number>();
+    for (const l of lignes ? this.lignesPersonnes(lignes) : []) {
+      const nom = nettoyer(
+        this.valeur(l, ['NOMSETPRENOMS', 'NOMETPRENOMS', 'NOMSPRENOMS']),
+      );
+      if (!nom) continue;
+      const t = normaliser(
+        Object.entries(l)
+          .filter(([k]) => k !== '_ligne' && !k.startsWith('NOM'))
+          .map(([, x]) => enTexte(x))
+          .join(' '),
+      );
+      ligne.set(cle(nom), Number(l._ligne));
+      motif.set(
+        cle(nom),
+        /SALARI|SALAIRE|FONCTIONNAIRE|INTEGRE/.test(t)
+          ? 'RECRUTE_FP'
+          : /NON\s*PARTANT/.test(t)
+            ? 'NON_PARTANT'
+            : /DESERT|DERSET|ABANDON/.test(t)
+              ? 'DESERTEUR'
+              : /\bDECE(S|DE)/.test(t) // pas « DÉCEMBRE »
+                ? 'DECES'
+                : /DEMISSION/.test(t)
+                  ? 'DEMISSION'
+                  : /DOUBLON/.test(t)
+                    ? 'DOUBLON'
+                    : /ABSENT/.test(t)
+                      ? 'ABSENT'
+                      : 'RETIRE_DDEPPSA',
+      );
+    }
+    return { motif, ligne };
+  }
+
+  /**
    * Rapprochement d'une liste reçue avec des fiches du registre (DG, 12/11/2026) :
    * 1. même nom (mots dans n'importe quel ordre, ou nom de la liste déjà rapproché une fois) ;
    * 2. nom écrit autrement, une seule fiche en poste qui ressemble et réciproquement : rapproché ;
@@ -729,7 +808,16 @@ export class VolontairesService implements OnModuleInit {
    *    l'agent l'a confirmée (`memes`).
    */
   private rapprocherListe<
-    P extends { nom: string; cle: string; feuille: string; ligne: number },
+    P extends {
+      nom: string;
+      cle: string;
+      feuille: string;
+      ligne: number;
+      /** Date de naissance de la liste : départage deux homonymes (communautaires, 13/11/2026). */
+      naissance?: string | null;
+      /** Département de la ligne : départage aussi deux fiches du même nom. */
+      departementId?: number | null;
+    },
   >(uniques: P[], fiches: Volontaire[], memes: string[]) {
     const cle = (nom: string) => motsDuNom(nom).sort().join(' ');
     const parCle = new Map<string, Volontaire[]>();
@@ -748,18 +836,46 @@ export class VolontairesService implements OnModuleInit {
     const nouveaux: P[] = [];
     const plusieursFiches: string[] = [];
     const retrouves = new Set<string>();
-    for (const p of uniques) {
+    // Homonymes (même nom, dates de naissance différentes) : chaque ligne prend sa fiche, la même
+    // date d'abord, puis une fiche en poste ; une fiche ne sert qu'à une ligne
+    const prises = new Set<string>();
+    const lignesParCle = new Map<string, number>();
+    for (const q of uniques)
+      lignesParCle.set(q.cle, (lignesParCle.get(q.cle) ?? 0) + 1);
+    const avecDate = (p: P) => (lignesParCle.get(p.cle) ?? 0) > 1;
+    for (const p of [...uniques].sort(
+      (a, b) => Number(!a.naissance) - Number(!b.naissance),
+    )) {
       const candidats = parCle.get(p.cle) ?? [];
-      const enPoste = candidats.filter((x) => x.statut === 'EN_POSTE');
-      const choisi = enPoste[0] ?? candidats[0];
+      const libresCle = candidats.filter((x) => !prises.has(x.id));
+      // La fiche la plus vraisemblable, toujours la même d'un essai à l'autre : en poste (on ne
+      // réintègre pas le doublon d'un en poste), même date de naissance, même département ; une
+      // date différente prouve une autre personne (elle passe après une fiche sortie de même date)
+      const score = (x: Volontaire) => {
+        const dates = !!p.naissance && !!x.dateNaissance;
+        return (
+          (x.statut === 'EN_POSTE' ? 4 : 0) +
+          (dates && x.dateNaissance === p.naissance ? 2 : 0) -
+          (dates && x.dateNaissance !== p.naissance ? 10 : 0) +
+          (p.departementId && x.departementId === p.departementId ? 1 : 0)
+        );
+      };
+      const choisi = [...libresCle].sort(
+        (a, b) => score(b) - score(a) || a.id.localeCompare(b.id),
+      )[0];
       if (candidats.length > 1)
         plusieursFiches.push(
-          `${p.nom} : ${candidats.length} fiches dans le registre (${enPoste.length} en poste)`,
+          `${p.nom} : ${candidats.length} fiches dans le registre (${candidats.filter((x) => x.statut === 'EN_POSTE').length} en poste)`,
         );
       if (!choisi) nouveaux.push(p);
       else if (choisi.statut === 'EN_POSTE') gardes.push({ v: choisi, p });
       else reintegres.push({ v: choisi, p });
-      for (const x of candidats) retrouves.add(x.id);
+      if (choisi) prises.add(choisi.id);
+      // Un nom porté par une seule ligne : toutes ses fiches sont « retrouvées » (pas de sortie
+      // pour un doublon du registre) ; des homonymes : seulement la fiche prise
+      if (avecDate(p)) {
+        if (choisi) retrouves.add(choisi.id);
+      } else for (const x of candidats) retrouves.add(x.id);
     }
     // Noms écrits autrement (ordre, faute de frappe, prénom en plus) : une seule fiche en poste qui
     // ressemble, et réciproquement → la même personne, signalée pour vérification. Plusieurs
@@ -948,42 +1064,10 @@ export class VolontairesService implements OnModuleInit {
       vus.set(p.cle, p);
       uniques.push(p);
     }
-    // Les retraits du fichier : motif de chacun (observation, ou « SALARIE » à la place de la date)
-    const motifRetrait = new Map<string, string>();
-    const ligneRetrait = new Map<string, number>();
-    for (const l of fr ? this.lignesPersonnes(fr.lignes) : []) {
-      const nom = nettoyer(
-        this.valeur(l, ['NOMSETPRENOMS', 'NOMETPRENOMS', 'NOMSPRENOMS']),
-      );
-      if (!nom) continue;
-      // Toute la ligne : les blocs ajoutés en bas de la feuille n'ont pas les mêmes colonnes
-      // (octobre 2026 : « RETIRE PAR LA DDEPPSA » à droite, hors de la colonne « Obs. »)
-      const t = normaliser(
-        Object.entries(l)
-          .filter(([k]) => k !== '_ligne' && !k.startsWith('NOM'))
-          .map(([, x]) => enTexte(x))
-          .join(' '),
-      );
-      ligneRetrait.set(cle(nom), Number(l._ligne));
-      motifRetrait.set(
-        cle(nom),
-        /SALARI|SALAIRE/.test(t)
-          ? 'RECRUTE_FP'
-          : /NON\s*PARTANT/.test(t)
-            ? 'NON_PARTANT'
-            : /DESERT|DERSET|ABANDON/.test(t)
-              ? 'DESERTEUR'
-              : /\bDECE(S|DE)/.test(t) // pas « DÉCEMBRE »
-                ? 'DECES'
-                : /DEMISSION/.test(t)
-                  ? 'DEMISSION'
-                  : /DOUBLON/.test(t)
-                    ? 'DOUBLON'
-                    : /ABSENT/.test(t)
-                      ? 'ABSENT'
-                      : 'RETIRE_DDEPPSA',
-      );
-    }
+    // Les retraits du fichier : motif de chacun
+    const { motif: motifRetrait, ligne: ligneRetrait } = this.motifsDesRetraits(
+      fr?.lignes ?? null,
+    );
     const fiches = await this.volontaires.find({
       where: { population: 'VOLONTAIRE' },
     });
@@ -1187,6 +1271,637 @@ export class VolontairesService implements OnModuleInit {
         },
       );
       await this.lier();
+    }
+    return rapport;
+  }
+
+  /* --------------- Aligner les communautaires sur un état de paiement --------------- */
+
+  /**
+   * Le registre des communautaires suit l'état de paiement mis à jour par la DGRHAS (DG, 13/11/2026 :
+   * « l'état des communautaires mis à jour, avec des ajouts »), une feuille par département
+   * (« ETAT DE PAIEMENT BOUENZA », « … PLATEAUX-NKENI »…), lues ensemble :
+   * - sur l'état et en poste : reste (les cases vides de la fiche sont complétées, rien d'autre ne
+   *   change ; un département ou un cycle différent est seulement signalé) ;
+   * - sur l'état mais sorti au registre : réintégré, payé à partir de ce mois ;
+   * - sur l'état mais absent du registre : ajouté, payé à partir de ce mois. Chaque nouveau est
+   *   montré avec son département et son cycle ; on peut les corriger ou ne pas l'ajouter (`choix`).
+   *   Déjà fonctionnaire, contractuel ou volontaire en poste : pas ajouté sans le dire ;
+   * - en poste mais absent de l'état : sort au 1er du mois, avec le motif lu dans les RETRAITS —
+   *   seulement dans les départements présents dans le fichier (une feuille oubliée ne fait sortir
+   *   personne).
+   * Mêmes rapprochements des noms que pour les volontaires ; la date de naissance départage deux
+   * homonymes. `essai` : le rapport, sans rien enregistrer.
+   */
+  async alignerCommunautaires(
+    u: UtilisateurConnecte,
+    contenu: Buffer,
+    nomFichier: string,
+    o: {
+      mois: string;
+      feuilles: string[];
+      feuilleRetraits?: string;
+      memes?: string[];
+      choix?: Record<
+        string,
+        {
+          ajouter?: boolean;
+          departementId?: number | null;
+          categorie?: string | null;
+        }
+      >;
+      essai: boolean;
+    },
+  ) {
+    if (!MOIS_RE.test(o.mois ?? ''))
+      throw new BadRequestException(
+        'Indiquez le mois de cet état de paiement (ex. 2026-09).',
+      );
+    if (!o.feuilles?.length)
+      throw new BadRequestException(
+        'Cochez les feuilles de l’état de paiement (une par département).',
+      );
+    const lues = await lireClasseur(
+      contenu,
+      ['NOMSETPRENOMS|NOMETPRENOMS|NOMSPRENOMS'],
+      { inclureMasquees: true },
+    );
+    const feuilles = o.feuilles.map((nom) => {
+      const f = lues.find((x) => x.nom === nom);
+      if (!f)
+        throw new BadRequestException(
+          `Feuille « ${nom} » introuvable dans le fichier.`,
+        );
+      return f;
+    });
+    const fr = o.feuilleRetraits
+      ? lues.find((x) => x.nom === o.feuilleRetraits)
+      : null;
+    if (o.feuilleRetraits && !fr)
+      throw new BadRequestException('Feuille des retraits introuvable.');
+    if (fr && o.feuilles.includes(fr.nom))
+      throw new BadRequestException(
+        'La feuille des retraits ne peut pas être aussi une feuille de paiement.',
+      );
+    const cle = (nom: string) => motsDuNom(nom).sort().join(' ');
+    const compact = (s: string) => normaliser(s).replace(/[^A-Z]/g, '');
+    const deps = await this.deps.find();
+    const depDeCode = (code: string | null) =>
+      code ? (deps.find((d) => d.code === code) ?? null) : null;
+    const nomDep = (id: number | null | undefined) =>
+      id ? (deps.find((d) => d.id === id)?.nom ?? null) : null;
+    const depId = (brut: unknown) =>
+      depDeCode(codeDepartement(nettoyer(brut)?.split(/[/(]/)[0]))?.id ?? null;
+    /**
+     * Département d'une feuille d'après son nom : « ETAT DE PAIEMENT BZV (CORRIGE) » → Brazzaville,
+     * « … PN (+ALPHA) » → Pointe-Noire ; « … PLATEAUX-NKENI » : deux départements (ambigu).
+     */
+    const departementsDeFeuille = (nom: string) => {
+      const reste = normaliser(nom)
+        .replace(/^ETATS?\s+DE\s+PAIEMENT\s*/, '')
+        .replace(/\(.*?\)/g, '')
+        .trim();
+      if (/^PN$|^P\s*NOIRE$/.test(reste)) return [depDeCode('POINTE_NOIRE')!];
+      const entier = depDeCode(codeDepartement(reste));
+      if (entier && compact(entier.nom) === compact(reste)) return [entier];
+      const parties = reste
+        .split(/[-/,]|\s+ET\s+/)
+        .map((x) => depDeCode(codeDepartement(x.trim())))
+        .filter((d): d is Departement => !!d);
+      const uniquesDeps = [...new Map(parties.map((d) => [d.id, d])).values()];
+      return uniquesDeps.length ? uniquesDeps : entier ? [entier] : [];
+    };
+    const conf = this.config.get();
+    const categories = this.config.categoriesDe('COMMUNAUTAIRE');
+    const libelleCat = (code: string | null) =>
+      code ? (categories.find((c) => c.code === code)?.libelle ?? code) : null;
+
+    // Les lignes de toutes les feuilles
+    const lignes = feuilles.flatMap((f) => {
+      const depsFeuille = departementsDeFeuille(f.nom);
+      return this.lignesPersonnes(f.lignes).map((l) => {
+        const nom = nettoyer(
+          this.valeur(l, ['NOMSETPRENOMS', 'NOMETPRENOMS', 'NOMSPRENOMS']),
+        )!;
+        const naissance = lireDate(this.valeur(l, ['DATEDENAIS', 'NELE']));
+        const cycleBrut = nettoyer(this.valeur(l, ['CYCLE']));
+        const depBrutColonne = nettoyer(this.valeur(l, ['DEPART', 'DPART']));
+        const depColonne = depId(depBrutColonne);
+        const departementId =
+          depColonne ?? (depsFeuille.length === 1 ? depsFeuille[0].id : null);
+        const depBrut = depColonne
+          ? depBrutColonne
+          : departementId
+            ? nomDep(departementId)
+            : null;
+        const valeurs = this.valeursDuFichier(l, {
+          naissance,
+          cycleBrut,
+          diplome: nettoyer(this.valeur(l, ['DIPLOME'])),
+          departementId,
+          depBrut,
+          population: 'COMMUNAUTAIRE',
+        });
+        return {
+          nom,
+          cle: cle(nom),
+          feuille: f.nom,
+          ligne: Number(l._ligne),
+          naissance,
+          cycleBrut,
+          categorie: valeurs.categorie ?? null,
+          departementId,
+          depSource: depColonne
+            ? ('COLONNE' as const)
+            : departementId
+              ? ('FEUILLE' as const)
+              : null,
+          depPossibles: depsFeuille.map((d) => d.id),
+          etablissement: valeurs.etablissement ?? null,
+          valeurs,
+        };
+      });
+    });
+    if (!lignes.length)
+      throw new BadRequestException(
+        'Aucune personne lue dans ces feuilles (colonnes « N° » et « Noms et prénoms »).',
+      );
+    // Doublons de la liste : même nom, même date (ou une date absente). Même nom et dates
+    // différentes : deux homonymes, gardés tous les deux
+    const gardesCle = new Map<string, (typeof lignes)[number][]>();
+    const doublons: string[] = [];
+    const uniques: typeof lignes = [];
+    for (const p of lignes) {
+      const deja = (gardesCle.get(p.cle) ?? []).find(
+        (q) => !q.naissance || !p.naissance || q.naissance === p.naissance,
+      );
+      if (deja) {
+        doublons.push(
+          `${p.nom} : « ${p.feuille} » ligne ${p.ligne} (déjà « ${deja.feuille} » ligne ${deja.ligne})`,
+        );
+        continue;
+      }
+      gardesCle.set(p.cle, [...(gardesCle.get(p.cle) ?? []), p]);
+      uniques.push(p);
+    }
+    const { motif: motifRetrait, ligne: ligneRetrait } = this.motifsDesRetraits(
+      fr?.lignes ?? null,
+    );
+    const fiches = await this.volontaires.find({
+      where: { population: 'COMMUNAUTAIRE' },
+    });
+    const {
+      gardes,
+      reintegres,
+      nouveaux,
+      plusieursFiches,
+      retrouves,
+      rapproches,
+      ambigus,
+      possibles,
+    } = this.rapprocherListe(uniques, fiches, o.memes ?? []);
+
+    // Départements présents dans le fichier : seuls leurs absents sortent
+    const couverts = new Set<number>();
+    for (const { v } of [...gardes, ...reintegres])
+      if (v.departementId) couverts.add(v.departementId);
+    for (const p of uniques) if (p.departementId) couverts.add(p.departementId);
+    const payable = (v: Volontaire) => {
+      const debut = BourseService.premierMois(v, conf);
+      return !debut || debut <= o.mois;
+    };
+    const absents = fiches.filter(
+      (v) => v.statut === 'EN_POSTE' && !retrouves.has(v.id) && payable(v),
+    );
+    const sortants = absents.filter(
+      (v) => v.departementId && couverts.has(v.departementId),
+    );
+    const nonTouches = absents.filter(
+      (v) => !v.departementId || !couverts.has(v.departementId),
+    );
+    // Pas sur l'état mais payés seulement plus tard (premier mois après ce mois) : pas touchés
+    const plusTard = fiches.filter(
+      (v) => v.statut === 'EN_POSTE' && !retrouves.has(v.id) && !payable(v),
+    );
+    // Plus de fiches en poste que de lignes sur l'état pour un même nom : risque de double
+    // paiement (ou deux homonymes) — signalé, rien n'est décidé
+    const lignesParNom = new Map<string, number>();
+    for (const p of uniques)
+      lignesParNom.set(p.cle, (lignesParNom.get(p.cle) ?? 0) + 1);
+    // Compté sur le registre APRÈS l'alignement : en poste qui ne sortent pas, et réintégrés
+    const enPosteParNom = new Map<string, Volontaire[]>();
+    const sortiront = new Set(sortants.map((v) => v.id));
+    const reviendront = new Set(reintegres.map(({ v }) => v.id));
+    for (const v of fiches)
+      if (
+        v.statut === 'EN_POSTE' ? !sortiront.has(v.id) : reviendront.has(v.id)
+      ) {
+        const k = cle(v.nomComplet);
+        enPosteParNom.set(k, [...(enPosteParNom.get(k) ?? []), v]);
+      }
+    const fichesEnTrop = [...enPosteParNom.entries()]
+      .filter(
+        ([k, l]) => lignesParNom.has(k) && l.length > lignesParNom.get(k)!,
+      )
+      .map(
+        ([k, l]) =>
+          `${l[0].nomComplet} : ${l.length} fiches en poste (${l
+            .map(
+              (v) =>
+                `${nomDep(v.departementId) ?? '?'}, né(e) le ${v.dateNaissance ? v.dateNaissance.split('-').reverse().join('/') : '?'}`,
+            )
+            .join(' ; ')}), ${lignesParNom.get(k)} ligne(s) sur l’état`,
+      );
+    const motifDe = (v: Volontaire) =>
+      motifRetrait.get(cle(v.nomComplet)) ?? 'RETIRE_DDEPPSA';
+
+    // Les nouveaux : déjà fonctionnaires, contractuels ou volontaires en poste ?
+    const clesNouveaux = new Set(nouveaux.map((p) => p.cle));
+    const ailleurs = new Map<string, string[]>();
+    const noter = (k: string, quoi: string) =>
+      ailleurs.set(k, [...(ailleurs.get(k) ?? []), quoi]);
+    for (const a of await this.volontaires.query<
+      { nom: string; statut: string; matricule: string | null }[]
+    >(
+      `SELECT "nomComplet" AS nom, statut, matricule FROM agent_recense
+        WHERE statut IN ('FONCTIONNAIRE', 'CONTRACTUEL')`,
+    )) {
+      const k = cle(a.nom);
+      if (clesNouveaux.has(k))
+        noter(
+          k,
+          `${a.statut === 'FONCTIONNAIRE' ? 'fonctionnaire' : 'contractuel(le)'} dans le personnel${a.matricule ? ` (matricule ${a.matricule})` : ''}`,
+        );
+    }
+    for (const v of await this.volontaires.find({
+      where: { population: 'VOLONTAIRE', statut: 'EN_POSTE' },
+      select: { nomComplet: true },
+    })) {
+      const k = cle(v.nomComplet);
+      if (clesNouveaux.has(k)) noter(k, 'volontaire en poste (bourse)');
+    }
+    const procheAmbigu = new Set(
+      ambigus.map((x) => x.split(' : ')[0]).filter(Boolean),
+    );
+    const cleNouveau = (p: { feuille: string; ligne: number }) =>
+      `${p.feuille}|${p.ligne}`;
+    const nouveauxDetail = nouveaux.map((p) => {
+      const c = o.choix?.[cleNouveau(p)];
+      const dejaAilleurs = ailleurs.get(p.cle) ?? [];
+      const ajouterParDefaut = !dejaAilleurs.length;
+      const departementId =
+        c?.departementId !== undefined ? c.departementId : p.departementId;
+      const categorie = c?.categorie !== undefined ? c.categorie : p.categorie;
+      const alertes = [
+        ...dejaAilleurs.map((x) => `Déjà ${x}`),
+        ...(procheAmbigu.has(p.nom)
+          ? ['Ressemble à plusieurs fiches du registre']
+          : []),
+        ...(!p.departementId
+          ? [
+              p.depPossibles.length > 1
+                ? 'Feuille de plusieurs départements : choisissez le sien'
+                : 'Département inconnu : choisissez-le',
+            ]
+          : []),
+        ...(!p.categorie
+          ? [`Cycle « ${p.cycleBrut ?? 'vide'} » non reconnu : choisissez-le`]
+          : []),
+      ];
+      return {
+        cle: cleNouveau(p),
+        nom: p.nom,
+        naissance: p.naissance,
+        feuille: p.feuille,
+        ligne: p.ligne,
+        cycleBrut: p.cycleBrut,
+        etablissement: p.etablissement,
+        departementId,
+        departement: nomDep(departementId),
+        depSource: p.depSource,
+        depPossibles: p.depPossibles,
+        categorie,
+        categorieLibelle: libelleCat(categorie),
+        ajouterParDefaut,
+        ajouter: c?.ajouter ?? ajouterParDefaut,
+        alertes,
+      };
+    });
+    const aAjouter = nouveauxDetail.filter((n) => n.ajouter);
+    const incomplets = aAjouter.filter(
+      (n) =>
+        !n.departementId ||
+        !deps.some((d) => d.id === n.departementId) ||
+        !n.categorie ||
+        !categories.some((c) => c.code === n.categorie),
+    );
+
+    // Avant / après, par département et par cycle (barème des communautaires)
+    const parDep = new Map<string, { avant: number; apres: number }>();
+    const parCat = new Map<
+      string,
+      { libelle: string; avant: number; apres: number; taux: number }
+    >();
+    for (const c of categories)
+      parCat.set(c.code, {
+        libelle: c.libelle,
+        avant: 0,
+        apres: 0,
+        taux: c.bourse,
+      });
+    const compter = (
+      dep: number | null,
+      cat: string | null,
+      quand: 'avant' | 'apres',
+      n = 1,
+    ) => {
+      const d = nomDep(dep) ?? '(sans département)';
+      parDep.set(d, parDep.get(d) ?? { avant: 0, apres: 0 });
+      parDep.get(d)![quand] += n;
+      const k = cat && parCat.has(cat) ? cat : '(sans cycle)';
+      if (!parCat.has(k))
+        parCat.set(k, { libelle: '(sans cycle)', avant: 0, apres: 0, taux: 0 });
+      parCat.get(k)![quand] += n;
+    };
+    for (const v of fiches)
+      if (v.statut === 'EN_POSTE')
+        compter(v.departementId, v.categorie, 'avant');
+    const idsSortants = new Set(sortants.map((v) => v.id));
+    for (const v of fiches)
+      if (v.statut === 'EN_POSTE' && !idsSortants.has(v.id))
+        compter(v.departementId, v.categorie, 'apres');
+    for (const { v, p } of reintegres)
+      compter(
+        v.departementId ?? p.departementId,
+        v.categorie ?? p.categorie,
+        'apres',
+      );
+    for (const n of aAjouter) compter(n.departementId, n.categorie, 'apres');
+    const montant = (q: 'avant' | 'apres') =>
+      [...parCat.values()].reduce((t, x) => t + x[q] * x.taux, 0);
+
+    // Signalés seulement
+    const autreDepartement = gardes
+      .filter(
+        ({ v, p }) =>
+          p.depSource === 'COLONNE' &&
+          v.departementId &&
+          p.departementId &&
+          v.departementId !== p.departementId,
+      )
+      .map(
+        ({ v, p }) =>
+          `${v.nomComplet} : ${nomDep(v.departementId)} au registre, ${nomDep(p.departementId)} sur l’état`,
+      );
+    const autreCycle = gardes
+      .filter(
+        ({ v, p }) => v.categorie && p.categorie && v.categorie !== p.categorie,
+      )
+      .map(
+        ({ v, p }) =>
+          `${v.nomComplet} : ${libelleCat(v.categorie)} au registre, ${libelleCat(p.categorie)} sur l’état`,
+      );
+    const payesMaisRetires = uniques
+      .filter((p) => motifRetrait.has(p.cle))
+      .map((p) => ({
+        nom: p.nom,
+        ligne: p.ligne,
+        feuille: p.feuille,
+        departement: nomDep(p.departementId),
+        etablissement: p.etablissement,
+        cycle: p.cycleBrut,
+        montant: 0,
+        motifRetrait:
+          this.config.motif(motifRetrait.get(p.cle))?.libelle ??
+          motifRetrait.get(p.cle)!,
+        ligneRetrait: ligneRetrait.get(p.cle) ?? null,
+      }));
+    const parMotif: Record<string, number> = {};
+    for (const v of sortants)
+      parMotif[motifDe(v)] = (parMotif[motifDe(v)] ?? 0) + 1;
+    const nonTouchesParDep: Record<string, number> = {};
+    for (const v of nonTouches) {
+      const d = nomDep(v.departementId) ?? '(sans département)';
+      nonTouchesParDep[d] = (nonTouchesParDep[d] ?? 0) + 1;
+    }
+
+    // Ce que l'état apprend aux fiches retrouvées : seulement les cases vides (montré dans le
+    // rapport, champ par champ) ; réintégré : payé à partir de ce mois (pas de rappel pour le
+    // temps où il était sorti)
+    const vide = (x: unknown) =>
+      x === null || x === undefined || enTexte(x).trim() === '';
+    const COMPLETER: [keyof Volontaire, string][] = [
+      ['dateNaissance', 'Date de naissance'],
+      ['lieuNaissance', 'Lieu de naissance'],
+      ['genre', 'Sexe'],
+      ['telephone', 'Téléphone'],
+      ['diplome', 'Diplôme'],
+      ['specialite', 'Spécialité'],
+      ['etablissement', 'Établissement'],
+      ['circonscription', 'Circonscription'],
+    ];
+    const majs = [...gardes, ...reintegres].map(({ v, p }) => {
+      const reintegre = v.statut === 'SORTI';
+      const debut = BourseService.premierMois(v, conf);
+      const champs: Partial<Volontaire> = {};
+      const completees: string[] = [];
+      for (const [k, libelle] of COMPLETER)
+        if (vide(v[k]) && !vide(p.valeurs[k])) {
+          Object.assign(champs, { [k]: p.valeurs[k] });
+          completees.push(libelle);
+        }
+      if (!v.categorie && p.categorie) {
+        Object.assign(champs, {
+          categorie: p.categorie,
+          cycleBrut: p.cycleBrut,
+        });
+        completees.push('Cycle');
+      }
+      if (!v.departementId && p.departementId) {
+        Object.assign(champs, {
+          departementId: p.departementId,
+          departementBrut: nomDep(p.departementId),
+        });
+        completees.push('Département');
+      }
+      if (cle(v.nomComplet) !== p.cle)
+        champs.verifications = {
+          ...(v.verifications ?? {}),
+          NOM_LISTE: { par: u.nom, le: new Date().toISOString(), note: p.nom },
+        };
+      if (reintegre)
+        Object.assign(champs, {
+          statut: 'EN_POSTE',
+          motifSortie: null,
+          dateSortie: null,
+          premierMois: o.mois,
+        });
+      else if (debut && debut > o.mois) champs.premierMois = o.mois;
+      return { v, p, reintegre, champs, completees };
+    });
+    const parChamp: Record<string, number> = {};
+    for (const m of majs)
+      for (const c of m.completees) parChamp[c] = (parChamp[c] ?? 0) + 1;
+    if (!o.essai) {
+      if (incomplets.length)
+        throw new BadRequestException(
+          `${incomplets.length} nouveau(x) à ajouter sans département ou sans cycle : choisissez-les, ou décochez-les (${incomplets
+            .slice(0, 3)
+            .map((n) => n.nom)
+            .join(', ')}${incomplets.length > 3 ? '…' : ''}).`,
+        );
+      const dateEffet = `${o.mois}-01`;
+      const ici = `${nomFichier} (état de paiement de ${o.mois})`;
+      // Des milliers de fiches complétées : en lot (une requête par rubrique), pas une par fiche
+      await this.majEnLot(
+        majs
+          .filter((m) => Object.keys(m.champs).length)
+          .map((m) => ({ id: m.v.id, champs: m.champs })),
+      );
+      for (const { v, p } of majs.filter((m) => m.reintegre))
+        await this.mouvement(u, v.id, 'REINTEGRATION', dateEffet, 'ETAT_PAYE', {
+          source: `${ici} · « ${p.feuille} » ligne ${p.ligne}`,
+          ancienneSortie: { motif: v.motifSortie, date: v.dateSortie },
+        });
+      for (const v of sortants) {
+        const motif = motifDe(v);
+        await this.volontaires.update(v.id, {
+          statut: 'SORTI',
+          motifSortie: motif,
+          dateSortie: dateEffet,
+        });
+        await this.mouvement(u, v.id, 'SORTIE', dateEffet, motif, {
+          observation: `Pas sur l’état de paiement de ${o.mois} (${nomFichier})`,
+        });
+      }
+      if (aAjouter.length) {
+        const parCleNouveau = new Map(nouveaux.map((p) => [cleNouveau(p), p]));
+        const lot = await this.volontaires.save(
+          aAjouter.map((n) => {
+            const p = parCleNouveau.get(n.cle)!;
+            return {
+              ...p.valeurs,
+              nomComplet: p.nom,
+              nomNormalise: normaliser(p.nom),
+              categorie: n.categorie,
+              departementId: n.departementId,
+              departementBrut:
+                n.departementId === p.departementId
+                  ? (p.valeurs.departementBrut ?? nomDep(n.departementId))
+                  : nomDep(n.departementId),
+              population: 'COMMUNAUTAIRE',
+              statut: 'EN_POSTE',
+              premierMois: o.mois,
+              source: `${ici} · « ${p.feuille} » ligne ${p.ligne}`,
+              creePar: u.nom,
+              verifications: {},
+            } as Volontaire;
+          }),
+        );
+        await this.mouvements.save(
+          lot.map((v) => ({
+            volontaireId: v.id,
+            type: 'ENTREE',
+            dateEffet,
+            motif: 'ETAT_PAYE',
+            details: { source: v.source },
+            par: u.nom,
+          })),
+        );
+      }
+    }
+    const court = (t: string[]) => ({ n: t.length, exemples: t.slice(0, 40) });
+    const rapport = {
+      essai: o.essai,
+      mois: o.mois,
+      feuilles: feuilles.map((f) => ({
+        nom: f.nom,
+        departements: departementsDeFeuille(f.nom).map((d) => d.nom),
+        personnes: lignes.filter((p) => p.feuille === f.nom).length,
+      })),
+      lus: lignes.length,
+      personnes: uniques.length,
+      gardes: gardes.length,
+      reintegres: court(
+        reintegres.map(
+          ({ v, p }) =>
+            `${p.nom} (${nomDep(v.departementId) ?? '?'} ; sorti : ${this.config.motif(v.motifSortie)?.libelle ?? v.motifSortie ?? '?'})`,
+        ),
+      ),
+      nouveaux: nouveauxDetail,
+      ajoutes: aAjouter.length,
+      incomplets: incomplets.length,
+      sortants: court(
+        sortants.map(
+          (v) =>
+            `${v.nomComplet} (${nomDep(v.departementId)} ; ${this.config.motif(motifDe(v))?.libelle ?? motifDe(v)})`,
+        ),
+      ),
+      sortantsParMotif: Object.entries(parMotif).map(([code, n]) => ({
+        motif: this.config.motif(code)?.libelle ?? code,
+        n,
+      })),
+      nonTouches: {
+        n: nonTouches.length,
+        parDepartement: nonTouchesParDep,
+      },
+      plusTard: court(
+        plusTard.map(
+          (v) =>
+            `${v.nomComplet} (${nomDep(v.departementId) ?? '?'} ; payé à partir de ${BourseService.premierMois(v, conf) ?? '?'})`,
+        ),
+      ),
+      fichesEnTrop: court(fichesEnTrop),
+      parDepartement: [...parDep.entries()]
+        .map(([departement, x]) => ({ departement, ...x }))
+        .sort((a, b) => a.departement.localeCompare(b.departement, 'fr')),
+      parCycle: [...parCat.values()].filter((x) => x.avant || x.apres),
+      montantAvant: montant('avant'),
+      montantApres: montant('apres'),
+      payesMaisRetires: court(
+        payesMaisRetires.map(
+          (p) => `${p.nom} (« ${p.feuille} » ligne ${p.ligne})`,
+        ),
+      ),
+      payesMaisRetiresDetail: payesMaisRetires,
+      doublonsDansListe: court(doublons),
+      plusieursFiches: court(plusieursFiches),
+      rapproches: court(rapproches),
+      ambigus: court(ambigus),
+      possibles,
+      autreDepartement: court(autreDepartement),
+      autreCycle: court(autreCycle),
+      fichesCompletees: majs.filter((m) => m.completees.length).length,
+      // Sur l'état de ce mois alors que leur premier mois payé était plus tard : il recule à ce mois
+      premierMoisAvance: majs.filter(
+        (m) => !m.reintegre && m.champs.premierMois === o.mois,
+      ).length,
+      completees: court(
+        majs
+          .filter((m) => m.completees.length)
+          .map((m) => `${m.v.nomComplet} : ${m.completees.join(', ')}`),
+      ),
+      completeesParChamp: parChamp,
+    };
+    if (!o.essai) {
+      await this.journal.log(
+        u,
+        'COMMUNAUTAIRES_ALIGNES_ETAT',
+        'volontaire',
+        null,
+        {
+          fichier: nomFichier,
+          mois: o.mois,
+          feuilles: o.feuilles,
+          personnes: uniques.length,
+          ajoutes: aAjouter.length,
+          reintegres: reintegres.length,
+          sortis: sortants.length,
+          rapport: { ...rapport, nouveaux: undefined },
+        },
+      );
+      // La base du personnel suit en arrière-plan (une vingtaine de secondes) : la réponse n'attend pas
+      void this.lier();
     }
     return rapport;
   }

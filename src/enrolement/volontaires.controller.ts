@@ -428,6 +428,77 @@ export class VolontairesController {
     );
   }
 
+  /**
+   * Aligner le registre des communautaires sur un état de paiement mis à jour (DG, 13/11/2026), une
+   * feuille par département lues ensemble. Corps : `feuilles` (noms), `memes` (paires confirmées),
+   * `choix` (nouveaux : ajouter ou non, département, cycle). `essai=1` : le rapport seulement.
+   */
+  @Roles('CHEF_SERVICE', 'DG')
+  @Post('volontaires/aligner-communautaires')
+  @UseInterceptors(
+    FileInterceptor('fichier', { limits: { fileSize: 40 * 1024 * 1024 } }),
+  )
+  alignerCommunautaires(
+    @Utilisateur() u: UtilisateurConnecte,
+    @Query('mois') mois: string,
+    @Query('retraits') retraits: string | undefined,
+    @Query('essai') essai: string,
+    @Body() body: { feuilles?: string; memes?: string; choix?: string },
+    @UploadedFile() fichier?: Express.Multer.File,
+  ) {
+    const lire = (texte: string | undefined, quoi: string): unknown => {
+      try {
+        return JSON.parse(texte || 'null') as unknown;
+      } catch {
+        throw new BadRequestException(`${quoi} illisibles.`);
+      }
+    };
+    const chaines = (v: unknown, max: number) =>
+      Array.isArray(v)
+        ? v.filter((x): x is string => typeof x === 'string').slice(0, max)
+        : [];
+    const brut = lire(body?.choix, 'Choix des nouveaux');
+    const choix: Record<
+      string,
+      {
+        ajouter?: boolean;
+        departementId?: number | null;
+        categorie?: string | null;
+      }
+    > = {};
+    if (brut && typeof brut === 'object' && !Array.isArray(brut))
+      for (const [k, x] of Object.entries(
+        brut as Record<string, unknown>,
+      ).slice(0, 20000)) {
+        if (!x || typeof x !== 'object') continue;
+        const c = x as Record<string, unknown>;
+        choix[k] = {
+          ...(typeof c.ajouter === 'boolean' ? { ajouter: c.ajouter } : {}),
+          ...(c.departementId === null ||
+          (typeof c.departementId === 'number' &&
+            Number.isInteger(c.departementId))
+            ? { departementId: c.departementId }
+            : {}),
+          ...(c.categorie === null || typeof c.categorie === 'string'
+            ? { categorie: c.categorie }
+            : {}),
+        };
+      }
+    return this.volontaires.alignerCommunautaires(
+      u,
+      this.classeur(fichier),
+      fichier!.originalname,
+      {
+        mois,
+        feuilles: chaines(lire(body?.feuilles, 'Feuilles'), 100),
+        feuilleRetraits: retraits || undefined,
+        memes: chaines(lire(body?.memes, 'Confirmations'), 5000),
+        choix,
+        essai: essai === '1',
+      },
+    );
+  }
+
   @Roles('CHEF_SERVICE', 'DG')
   @Post('volontaires/import')
   @UseInterceptors(
