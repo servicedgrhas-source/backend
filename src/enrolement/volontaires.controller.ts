@@ -263,11 +263,31 @@ export class VolontairesController {
     return this.volontaires.integrerNotes(u);
   }
 
+  /** Chercher dans la base du personnel une personne à prendre en charge, avec sa situation. */
+  @Roles('CHEF_SERVICE', 'DIRECTEUR', 'DG')
+  @Get('volontaires/candidats-prise-en-charge')
+  candidatsPriseEnCharge(
+    @Query('q') q: string,
+    @Query('population') population: string,
+    @Query('agent') agent?: string,
+  ) {
+    return this.volontaires.candidatsPriseEnCharge(
+      String(q ?? '').slice(0, 80),
+      population,
+      agent && /^\d+$/.test(agent) ? Number(agent) : null,
+    );
+  }
+
   @Roles('CHEF_SERVICE', 'DIRECTEUR', 'DG')
   @Post('volontaires')
   creer(
     @Utilisateur() u: UtilisateurConnecte,
-    @Body() dto: VolontaireDto & { forcer?: boolean },
+    @Body()
+    dto: VolontaireDto & {
+      forcer?: boolean;
+      agentRecenseId?: number;
+      forcerFonctionnaire?: boolean;
+    },
   ) {
     return this.volontaires.creer(u, dto ?? {});
   }

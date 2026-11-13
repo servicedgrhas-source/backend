@@ -327,6 +327,247 @@ export class VolontairesService implements OnModuleInit {
     return { volontaire: v, mouvements, paiements, regularisations, personnel };
   }
 
+  /* ---------------- Prise en charge depuis la base du personnel ---------------- */
+
+  /**
+   * Chercher une personne à prendre en charge dans les bourses (DG, 13/11/2026) : on tape un nom,
+   * un téléphone ou un matricule, la base du personnel répond avec ce qu'elle sait (pour remplir la
+   * fiche du registre sans retaper), et, BIEN VISIBLE, la situation de chacun : déjà fonctionnaire
+   * ou contractuel, déjà au registre des volontaires ou des communautaires (en poste, sorti), recruté
+   * de la Fonction publique, ou volontaire/communautaire du personnel pas encore pris en charge.
+   */
+  async candidatsPriseEnCharge(
+    q: string,
+    population: string,
+    agentId?: number | null,
+  ) {
+    const texte = (q ?? '').trim();
+    const chiffres = texte.replace(/\D/g, '');
+    const mots = normaliser(texte)
+      .split(/\s+/)
+      .filter((m) => m.length >= 2 && !/^\d+$/.test(m))
+      .slice(0, 5);
+    // Assez pour chercher : 3 lettres au moins, ou 6 chiffres (téléphone, matricule)
+    const lettres = mots.join('').length;
+    if (!agentId && lettres < 3 && chiffres.length < 6) return [];
+    const pop = populationDe(population);
+    const params: unknown[] = [];
+    const conditions: string[] = [];
+    // Depuis une fiche du personnel (« Prendre en charge dans la bourse ») : cette fiche-là
+    if (agentId) {
+      params.push(agentId);
+      conditions.push(`a.id = $${params.length}`);
+    } else if (mots.length)
+      conditions.push(
+        mots
+          .map((m) => {
+            params.push(`%${m.replace(/[\\%_]/g, '\\$&')}%`);
+            return `a."nomNormalise" LIKE $${params.length}`;
+          })
+          .join(' AND '),
+      );
+    if (!agentId && chiffres.length >= 6) {
+      params.push(`%${chiffres.slice(-8)}%`);
+      conditions.push(
+        `regexp_replace(coalesce(a.telephone, ''), '\\D', '', 'g') LIKE $${params.length} OR coalesce(a.matricule, '') LIKE $${params.length}`,
+      );
+    }
+    const agents = await this.volontaires.query<
+      {
+        id: number;
+        numeroFiche: string | null;
+        statut: string;
+        nomComplet: string;
+        dateNaissance: string | null;
+        matricule: string | null;
+        telephone: string | null;
+        departementId: number | null;
+        structure: string | null;
+        volontaireId: string | null;
+        donnees: Record<string, unknown>;
+      }[]
+    >(
+      `SELECT a.id, a."numeroFiche", a.statut, a."nomComplet", to_char(a."dateNaissance", 'YYYY-MM-DD') AS "dateNaissance",
+              a.matricule, a.telephone, a."departementId", s.nom AS structure, a."volontaireId", a.donnees
+         FROM agent_recense a LEFT JOIN structure s ON s.id = a."structureId"
+        WHERE ${conditions.map((c) => `(${c})`).join(' OR ')}
+        ORDER BY a."nomNormalise" LIMIT 25`,
+      params,
+    );
+    if (!agents.length) return [];
+    const deps = new Map((await this.deps.find()).map((d) => [d.id, d]));
+    const codeDep = new Map([...deps.values()].map((d) => [d.code, d]));
+    // Le registre : les fiches reliées, et celles du même nom (pas encore reliées)
+    const motLong = (n: string) =>
+      [...motsDuNom(n)].sort((a, b) => b.length - a.length)[0] ?? '';
+    const longs = [...new Set(agents.map((a) => motLong(a.nomComplet)))].filter(
+      Boolean,
+    );
+    const registre = longs.length
+      ? await this.volontaires
+          .createQueryBuilder('v')
+          .where(
+            `(${longs.map((_, i) => `v.nomNormalise LIKE :l${i}`).join(' OR ')}) OR v.id IN (:...lies)`,
+            {
+              ...Object.fromEntries(longs.map((l, i) => [`l${i}`, `%${l}%`])),
+              lies: [
+                '00000000-0000-0000-0000-000000000000',
+                ...agents.map((a) => a.volontaireId).filter(Boolean),
+              ],
+            },
+          )
+          .getMany()
+      : [];
+    const parId = new Map(registre.map((v) => [v.id, v]));
+    const indexRegistre = new IndexNoms<Volontaire>();
+    for (const v of registre)
+      indexRegistre.ajouter(v.nomComplet, v.dateNaissance, v);
+    // Recrutés de la Fonction publique (base des recrutés)
+    const recrutes = new IndexNoms<string>();
+    if (longs.length)
+      for (const r of await this.volontaires.query<
+        {
+          nomComplet: string;
+          dateNaissance: string | null;
+          quota: number | null;
+          feuille: string;
+        }[]
+      >(
+        `SELECT "nomComplet", to_char("dateNaissance", 'YYYY-MM-DD') AS "dateNaissance", quota, feuille
+           FROM agent WHERE ${longs.map((_, i) => `"nomNormalise" LIKE $${i + 1}`).join(' OR ')} LIMIT 500`,
+        longs.map((l) => `%${l}%`),
+      ))
+        recrutes.ajouter(
+          r.nomComplet,
+          r.dateNaissance,
+          r.feuille === 'QUOTA_AUTRES'
+            ? 'quota « Autres »'
+            : `quota ${r.quota ?? '?'}`,
+        );
+    const t = (d: Record<string, unknown>, k: string) => {
+      const x = d?.[k];
+      return x === null || x === undefined || enTexte(x).trim() === ''
+        ? null
+        : enTexte(x).trim();
+    };
+    const dateFr = (d: string | null) =>
+      d ? d.slice(0, 10).split('-').reverse().join('/') : '';
+    const libelleListe = (p: string) =>
+      p === 'COMMUNAUTAIRE' ? 'communautaires' : 'volontaires (bourse)';
+    return agents.map((a) => {
+      const d = a.donnees ?? {};
+      const cycle = t(d, 'CYCLE');
+      const specialite = t(d, 'SPECIALITE');
+      const diplome = t(d, 'DIPLOME_PRO') ?? t(d, 'DIPLOME');
+      const depCode = t(d, 'DEPARTEMENT');
+      const departement =
+        (a.departementId ? deps.get(a.departementId) : undefined) ??
+        (depCode ? codeDep.get(depCode) : undefined) ??
+        null;
+      // Le cycle proposé pour chacune des deux listes
+      const categorie = (p: string) =>
+        p === 'COMMUNAUTAIRE'
+          ? (categorieCommunautaire(
+              this.config,
+              cycle,
+              specialite,
+              'COMMUNAUTAIRE',
+            )?.code ?? null)
+          : (this.config.categorieDepuisTexte(
+              `${diplome ?? ''} ${cycle ?? ''}`,
+              'VOLONTAIRE',
+            )?.code ?? null);
+      // La situation, du plus grave au plus simple
+      const situation: {
+        ton: 'rouge' | 'orange' | 'vert';
+        titre: string;
+        detail?: string;
+      }[] = [];
+      if (a.statut === 'FONCTIONNAIRE' || a.statut === 'CONTRACTUEL')
+        situation.push({
+          ton: 'rouge',
+          titre: `DÉJÀ ${a.statut === 'FONCTIONNAIRE' ? 'FONCTIONNAIRE' : 'CONTRACTUEL(LE)'}`,
+          detail: `Dans la base du personnel${a.matricule ? `, matricule ${a.matricule}` : ''} : il est payé à la solde, pas par une bourse.`,
+        });
+      const recrute = recrutes.probables(a.nomComplet, a.dateNaissance)[0];
+      if (recrute)
+        situation.push({
+          ton: 'rouge',
+          titre: 'RECRUTÉ(E) À LA FONCTION PUBLIQUE',
+          detail: `Dans la base des recrutés (${recrute}).`,
+        });
+      const lie = a.volontaireId ? parId.get(a.volontaireId) : undefined;
+      const memes = lie
+        ? [lie]
+        : indexRegistre.probables(a.nomComplet, a.dateNaissance);
+      for (const v of memes.slice(0, 2)) {
+        const sorti = v.statut === 'SORTI';
+        situation.push({
+          ton: 'orange',
+          titre: `DÉJÀ AU REGISTRE DES ${libelleListe(v.population).toUpperCase()} — ${sorti ? 'SORTI(E)' : 'EN POSTE, PAYÉ(E)'}`,
+          detail: sorti
+            ? `Sorti(e) le ${dateFr(v.dateSortie)} (${this.config.motif(v.motifSortie)?.libelle ?? v.motifSortie ?? 'motif ?'}) : pour le reprendre, ouvrez sa fiche et réintégrez-le, au lieu de créer une autre fiche.`
+            : `Déjà payé(e) sur la liste des ${libelleListe(v.population)}${lie ? '' : ' (fiche du même nom, pas encore reliée)'} : ne l’ajoutez pas une deuxième fois.`,
+        });
+      }
+      if (!situation.length)
+        situation.push({
+          ton: 'vert',
+          titre:
+            a.statut === 'COMMUNAUTAIRE'
+              ? 'COMMUNAUTAIRE DANS LE PERSONNEL — PAS PRIS EN CHARGE DANS LES BOURSES'
+              : a.statut === 'VOLONTAIRE'
+                ? 'VOLONTAIRE DANS LE PERSONNEL — PAS PRIS EN CHARGE DANS LES BOURSES'
+                : `${a.statut} DANS LE PERSONNEL — PAS PRIS EN CHARGE DANS LES BOURSES`,
+          detail:
+            'Il n’est sur aucune des deux listes payées : il peut être pris en charge.',
+        });
+      const listeConseillee =
+        a.statut === 'COMMUNAUTAIRE'
+          ? 'COMMUNAUTAIRE'
+          : a.statut === 'VOLONTAIRE'
+            ? 'VOLONTAIRE'
+            : null;
+      if (listeConseillee && listeConseillee !== pop && !memes.length)
+        situation.push({
+          ton: 'orange',
+          titre: `AU PERSONNEL COMME ${listeConseillee === 'COMMUNAUTAIRE' ? 'COMMUNAUTAIRE' : 'VOLONTAIRE'}`,
+          detail: `Vous l’ajoutez à la liste des ${libelleListe(pop)} : vérifiez que c’est bien la bonne liste.`,
+        });
+      const lieu = t(d, 'LIEU_SERVICE') ?? a.structure;
+      return {
+        agentRecenseId: a.id,
+        numeroFiche: a.numeroFiche,
+        statut: a.statut,
+        matricule: a.matricule,
+        dejaRelie: !!lie,
+        situation,
+        // Le plus grave : rouge (ne pas prendre en charge), orange (déjà quelque part), vert
+        ton: situation.some((s) => s.ton === 'rouge')
+          ? 'rouge'
+          : situation.some((s) => s.ton === 'orange')
+            ? 'orange'
+            : 'vert',
+        registreId: memes[0]?.id ?? null,
+        // Ce qui remplit la fiche du registre
+        valeurs: {
+          nomComplet: a.nomComplet,
+          dateNaissance: a.dateNaissance,
+          lieuNaissance: t(d, 'LIEU_NAISSANCE'),
+          telephone: a.telephone ?? t(d, 'TELEPHONE_1'),
+          diplome,
+          specialite,
+          categorie: categorie(pop),
+          cycleBrut: cycle,
+          departementId: departement?.id ?? null,
+          departement: departement?.nom ?? null,
+          etablissement: lieu,
+          datePriseService: t(d, 'DATE_PRISE_SERVICE')?.slice(0, 10) ?? null,
+        },
+      };
+    });
+  }
+
   /* ------------------------------ Entrées ------------------------------ */
 
   /**
@@ -335,11 +576,40 @@ export class VolontairesService implements OnModuleInit {
    */
   async creer(
     u: UtilisateurConnecte,
-    dto: VolontaireDto & { forcer?: boolean },
+    dto: VolontaireDto & {
+      forcer?: boolean;
+      /** Fiche de la base du personnel d'où vient la prise en charge (13/11/2026) : reliée tout de suite. */
+      agentRecenseId?: number;
+      /** Elle est fonctionnaire ou contractuelle et on la prend en charge quand même (confirmé). */
+      forcerFonctionnaire?: boolean;
+    },
   ) {
     const nom = (dto.nomComplet ?? '').replace(/\s+/g, ' ').trim();
     if (motsDuNom(nom).length < 2)
       throw new BadRequestException('Écrivez le nom et au moins un prénom.');
+    // La fiche du personnel choisie : un fonctionnaire ou un contractuel n'est pas pris en charge
+    // sans le dire, et une fiche déjà reliée au registre ne l'est pas deux fois
+    const agentId =
+      typeof dto.agentRecenseId === 'number' ? dto.agentRecenseId : null;
+    if (agentId) {
+      const [a] = await this.volontaires.query<
+        { statut: string; volontaireId: string | null }[]
+      >(`SELECT statut, "volontaireId" FROM agent_recense WHERE id = $1`, [
+        agentId,
+      ]);
+      if (!a) throw new BadRequestException('Fiche du personnel introuvable.');
+      if (a.volontaireId)
+        throw new BadRequestException(
+          'Cette fiche du personnel est déjà reliée à une fiche du registre : ouvrez celle-ci au lieu d’en créer une autre.',
+        );
+      if (
+        ['FONCTIONNAIRE', 'CONTRACTUEL'].includes(a.statut) &&
+        !dto.forcerFonctionnaire
+      )
+        throw new BadRequestException(
+          `Cette personne est ${a.statut === 'FONCTIONNAIRE' ? 'fonctionnaire' : 'contractuelle'} dans la base du personnel : confirmez la prise en charge si c’est voulu.`,
+        );
+    }
     if (!dto.forcer) {
       const index = new IndexNoms<Volontaire>();
       for (const v of await this.volontaires.find({
@@ -373,15 +643,35 @@ export class VolontairesService implements OnModuleInit {
       creePar: u.nom,
       verifications: {},
     } as Volontaire);
+    // Venue de la base du personnel : reliée tout de suite à SA fiche, avant tout le reste (la
+    // liaison du registre créerait sinon une deuxième fiche du personnel, ex. pour un fonctionnaire)
+    if (agentId)
+      await this.volontaires.query(
+        `UPDATE agent_recense SET "volontaireId" = $1 WHERE id = $2 AND "volontaireId" IS NULL`,
+        [v.id, agentId],
+      );
     await this.mouvement(u, v.id, 'ENTREE', null, 'SAISIE', null);
     // Les autres champs passent par les mêmes contrôles qu'une correction
-    const { nomComplet: _n, forcer: _f, population: _p, ...reste } = dto;
+    const {
+      nomComplet: _n,
+      forcer: _f,
+      population: _p,
+      agentRecenseId: _a,
+      forcerFonctionnaire: _ff,
+      ...reste
+    } = dto;
     void _n;
     void _f;
     void _p;
+    void _a;
+    void _ff;
     try {
       await this.modifier(u, v.id, reste, false);
     } catch (e) {
+      await this.volontaires.query(
+        `UPDATE agent_recense SET "volontaireId" = NULL WHERE "volontaireId" = $1`,
+        [v.id],
+      );
       await this.mouvements.delete({ volontaireId: v.id });
       await this.volontaires.delete(v.id);
       throw e;
