@@ -372,8 +372,12 @@ export class BourseService {
         );
       if (v.dateNaissance) {
         const age = ageRevolu(v.dateNaissance, `${mois}-01`);
-        if (age < c.ageMinimum || age > c.ageMaximum)
-          signaler(v, 'AGE', `${age} ans.`);
+        const [ageMin, ageMax] =
+          population === 'COMMUNAUTAIRE'
+            ? [c.ageMinimumCommunautaires, c.ageMaximumCommunautaires]
+            : [c.ageMinimum, c.ageMaximum];
+        if (age < ageMin || age > ageMax)
+          signaler(v, 'AGE', `${age} ans (limites ${ageMin}–${ageMax}).`);
       }
     }
 
@@ -1473,9 +1477,24 @@ export class BourseService {
         departement: l?.departementId
           ? (deps.get(l.departementId) ?? null)
           : null,
-        categorie: l?.categorie ?? null,
+        // Le nom du cycle, pas son code (« Collège », pas « COM_COLLEGE »)
+        categorie: (() => {
+          const code = l?.categorie ?? v?.categorie ?? null;
+          return code
+            ? (this.config.categorie(code, v?.population ?? etat.population)
+                ?.libelle ?? code)
+            : null;
+        })(),
         // Montant de cet état (null : pas payé sur cette liste ce mois-ci)
         paye: l ? l.total : null,
+        // Pour décider : quelle liste, en poste ou non, entrée quand, née quand
+        population: v?.population ?? etat.population,
+        statut: v?.statut ?? null,
+        entree: v?.creeLe
+          ? new Date(v.creeLe).toISOString().slice(0, 10)
+          : null,
+        naissance: v?.dateNaissance ?? null,
+        telephone: v?.telephone ?? null,
       };
     };
     const vues = new Set<string>();

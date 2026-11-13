@@ -324,6 +324,72 @@ export class VolontairesController {
     return this.volontaires.reintegrer(u, id, dto ?? ({} as never));
   }
 
+  /** Changer la date de sortie de plusieurs fiches (même population, département, motif, date). */
+  @Roles('CHEF_SERVICE', 'DIRECTEUR', 'DG')
+  @Post('volontaires/dates-sortie')
+  changerDatesSortie(
+    @Utilisateur() u: UtilisateurConnecte,
+    @Body()
+    b: {
+      population?: string;
+      departementId?: number | null;
+      motif?: string | null;
+      dateActuelle?: string;
+      nouvelleDate?: string;
+      essai?: boolean;
+    },
+  ) {
+    return this.volontaires.changerDatesSortie(u, {
+      population: String(b?.population ?? ''),
+      departementId:
+        typeof b?.departementId === 'number' ? b.departementId : null,
+      motif: typeof b?.motif === 'string' && b.motif ? b.motif : null,
+      dateActuelle: String(b?.dateActuelle ?? ''),
+      nouvelleDate: String(b?.nouvelleDate ?? ''),
+      essai: b?.essai !== false,
+    });
+  }
+
+  /** Décisions sur les contrôles de la bourse, une par une ou en masse (cases cochées). */
+  @Roles('CHEF_SERVICE', 'DIRECTEUR', 'DG')
+  @Post('volontaires/decisions-controles')
+  deciderControles(
+    @Utilisateur() u: UtilisateurConnecte,
+    @Body() b: { decisions?: unknown },
+  ) {
+    const actions = [
+      'SORTIR',
+      'VERIFIER',
+      'DEUX_PERSONNES',
+      'GARDER',
+      'COMPLETER',
+    ];
+    const texte = (x: unknown) => (typeof x === 'string' ? x : undefined);
+    const decisions = (Array.isArray(b?.decisions) ? b.decisions : [])
+      .filter(
+        (d): d is Record<string, unknown> =>
+          !!d &&
+          typeof d === 'object' &&
+          typeof (d as Record<string, unknown>).id === 'string' &&
+          actions.includes(String((d as Record<string, unknown>).action)),
+      )
+      .map((d) => ({
+        action: d.action as
+          'SORTIR' | 'VERIFIER' | 'DEUX_PERSONNES' | 'GARDER' | 'COMPLETER',
+        id: String(d.id),
+        autreId: texte(d.autreId),
+        controle: texte(d.controle),
+        motif: texte(d.motif),
+        date: texte(d.date),
+        note: texte(d.note)?.slice(0, 500),
+        departementId:
+          typeof d.departementId === 'number' ? d.departementId : undefined,
+        categorie: texte(d.categorie),
+        premierMois: texte(d.premierMois),
+      }));
+    return this.volontaires.deciderControles(u, { decisions });
+  }
+
   @Roles('CHEF_SERVICE', 'DIRECTEUR', 'DG')
   @Post('volontaires/:id/verification')
   verifier(

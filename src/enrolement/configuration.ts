@@ -75,6 +75,9 @@ export interface ConfigEnrolement {
   /** Contrôles des dossiers : âges improbables et téléphone partagé. */
   ageMinimum: number;
   ageMaximum: number;
+  /** Âges improbables pour les communautaires (plus âgés que les volontaires ; 13/11/2026). */
+  ageMinimumCommunautaires: number;
+  ageMaximumCommunautaires: number;
   telephonePartage: number;
   /** Signataire des états de paiement (bourse, mise en route). */
   signatairePaiementTitre: string;
@@ -295,6 +298,8 @@ export class ConfigEnrolementService {
       motifsSortie: MOTIFS_DEFAUT,
       ageMinimum: 18,
       ageMaximum: 45,
+      ageMinimumCommunautaires: 18,
+      ageMaximumCommunautaires: 60,
       telephonePartage: 3,
       signatairePaiementTitre:
         this.params.get('SIGNATAIRE_LISTE_TITRE') ||
@@ -558,6 +563,22 @@ export function valider(brut: unknown): ConfigEnrolement {
 
   const ageMinimum = entier(b.ageMinimum, 'Âge minimum', 14, 40);
   const ageMaximum = entier(b.ageMaximum, 'Âge maximum', 20, 70);
+  const ageMinimumCommunautaires = entier(
+    b.ageMinimumCommunautaires ?? 18,
+    'Âge minimum des communautaires',
+    14,
+    40,
+  );
+  const ageMaximumCommunautaires = entier(
+    b.ageMaximumCommunautaires ?? 60,
+    'Âge maximum des communautaires',
+    20,
+    75,
+  );
+  if (ageMinimumCommunautaires >= ageMaximumCommunautaires)
+    throw new BadRequestException(
+      'Communautaires : l’âge minimum doit rester inférieur à l’âge maximum.',
+    );
   if (ageMinimum >= ageMaximum)
     throw new BadRequestException(
       'L’âge minimum doit rester inférieur à l’âge maximum.',
@@ -580,6 +601,8 @@ export function valider(brut: unknown): ConfigEnrolement {
     motifsSortie: motifs,
     ageMinimum,
     ageMaximum,
+    ageMinimumCommunautaires,
+    ageMaximumCommunautaires,
     telephonePartage: entier(
       b.telephonePartage ?? 3,
       'Téléphone partagé',

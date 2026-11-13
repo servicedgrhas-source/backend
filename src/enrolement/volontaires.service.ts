@@ -6,7 +6,7 @@ import {
   type OnModuleInit,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { IsNull, Not, Repository } from 'typeorm';
+import { In, IsNull, Not, Repository } from 'typeorm';
 import type { LigneVolontaire } from './export-volontaires';
 import type { UtilisateurConnecte } from '../auth/auth';
 import { lireClasseur, lireFeuilleBrute, type Ligne } from '../common/excel';
@@ -1273,6 +1273,358 @@ export class VolontairesService implements OnModuleInit {
       await this.lier();
     }
     return rapport;
+  }
+
+  /* ------------------ Corriger des dates de sortie en série ------------------ */
+
+  /**
+   * Changer la date de sortie de plusieurs fiches d'un coup (DG, 13/11/2026 : les 158 retirés de la
+   * Likouala sortis le 13/11 au lieu du 01/10, payés en octobre à tort). On choisit les fiches par
+   * la population, le département, le motif et la date actuelle ; le dernier mois payé suit la
+   * nouvelle date. L'ancienne date reste dans l'historique de chaque fiche. `essai` : le rapport.
+   */
+  async changerDatesSortie(
+    u: UtilisateurConnecte,
+    o: {
+      population: string;
+      departementId?: number | null;
+      motif?: string | null;
+      dateActuelle: string;
+      nouvelleDate: string;
+      essai: boolean;
+    },
+  ) {
+    if (!DATE_RE.test(o.dateActuelle ?? ''))
+      throw new BadRequestException(
+        'Indiquez la date de sortie actuelle des fiches à corriger.',
+      );
+    if (!DATE_RE.test(o.nouvelleDate ?? ''))
+      throw new BadRequestException('Indiquez la nouvelle date de sortie.');
+    if (o.nouvelleDate === o.dateActuelle)
+      throw new BadRequestException(
+        'La nouvelle date est la même que l’actuelle.',
+      );
+    const population = populationDe(o.population);
+    const q = this.volontaires
+      .createQueryBuilder('v')
+      .where('v.population = :p', { p: population })
+      .andWhere("v.statut = 'SORTI'")
+      .andWhere('v.dateSortie = :d', { d: o.dateActuelle });
+    if (o.departementId)
+      q.andWhere('v.departementId = :dep', { dep: o.departementId });
+    if (o.motif) q.andWhere('v.motifSortie = :m', { m: o.motif });
+    const fiches = await q.orderBy('v.nomNormalise').getMany();
+    const conf = this.config.get();
+    const deps = new Map((await this.deps.find()).map((d) => [d.id, d.nom]));
+    const dernier = (v: Volontaire, date: string) => {
+      const x = { ...v, dateSortie: date } as Volontaire;
+      return BourseService.dernierMois(
+        x,
+        conf,
+        BourseService.premierMois(x, conf),
+      );
+    };
+    const parDep: Record<string, number> = {};
+    const parMotif: Record<string, number> = {};
+    for (const v of fiches) {
+      const d = v.departementId
+        ? (deps.get(v.departementId) ?? '?')
+        : '(sans département)';
+      parDep[d] = (parDep[d] ?? 0) + 1;
+      const m =
+        this.config.motif(v.motifSortie)?.libelle ?? v.motifSortie ?? '?';
+      parMotif[m] = (parMotif[m] ?? 0) + 1;
+    }
+    const exemple = fiches[0];
+    const rapport = {
+      essai: o.essai,
+      n: fiches.length,
+      parDepartement: parDep,
+      parMotif,
+      dernierMoisAvant: exemple ? dernier(exemple, o.dateActuelle) : null,
+      dernierMoisApres: exemple ? dernier(exemple, o.nouvelleDate) : null,
+      exemples: fiches
+        .slice(0, 40)
+        .map(
+          (v) =>
+            `${v.nomComplet} (${v.departementId ? (deps.get(v.departementId) ?? '?') : '?'})`,
+        ),
+    };
+    if (!o.essai && fiches.length) {
+      for (let i = 0; i < fiches.length; i += 1000)
+        await this.volontaires.update(
+          { id: In(fiches.slice(i, i + 1000).map((v) => v.id)) },
+          { dateSortie: o.nouvelleDate },
+        );
+      await this.mouvements.save(
+        fiches.map((v) => ({
+          volontaireId: v.id,
+          type: 'MODIFICATION',
+          dateEffet: o.nouvelleDate,
+          motif: v.motifSortie,
+          details: {
+            champ: 'dateSortie',
+            avant: o.dateActuelle,
+            apres: o.nouvelleDate,
+            observation: 'Date de sortie corrigée en série',
+          },
+          par: u.nom,
+        })),
+      );
+      await this.journal.log(u, 'DATES_SORTIE_CORRIGEES', 'volontaire', null, {
+        population,
+        departement: o.departementId ? deps.get(o.departementId) : null,
+        motif: o.motif ?? null,
+        avant: o.dateActuelle,
+        apres: o.nouvelleDate,
+        fiches: fiches.length,
+      });
+      void this.lier();
+    }
+    return rapport;
+  }
+
+  /* --------------------- Décisions sur les contrôles de la bourse --------------------- */
+
+  /**
+   * Décisions prises sur les contrôles d'un état de paiement (DG, 13/11/2026 : « des boutons
+   * adéquats, une panoplie de décisions réalistes, et toujours la possibilité de cocher pour un
+   * travail de masse »). Chaque décision vise une ou deux fiches :
+   * - SORTIR : sortie avec un motif et une date (recruté FP, doublon, déserteur…) ;
+   * - VERIFIER : le contrôle est vérifié à la main, il ne revient plus (note obligatoire) ;
+   * - DEUX_PERSONNES : deux fiches qui se ressemblent sont deux personnes (les deux sont notées) ;
+   * - GARDER : deux fiches de la même personne : on garde l'une, l'autre sort (motif « Doublon »)
+   *   et la fiche gardée reçoit ce que l'autre savait et qu'elle ignorait (cases vides) ;
+   * - COMPLETER : département, catégorie ou premier mois payé, pour les fiches qui ne l'ont pas.
+   * Une décision qui échoue n'arrête pas les autres : le rapport dit lesquelles et pourquoi.
+   */
+  async deciderControles(
+    u: UtilisateurConnecte,
+    dto: {
+      decisions: {
+        action:
+          'SORTIR' | 'VERIFIER' | 'DEUX_PERSONNES' | 'GARDER' | 'COMPLETER';
+        id: string;
+        autreId?: string;
+        controle?: string;
+        motif?: string;
+        date?: string;
+        note?: string;
+        departementId?: number;
+        categorie?: string;
+        premierMois?: string;
+      }[];
+    },
+  ) {
+    const decisions = Array.isArray(dto?.decisions) ? dto.decisions : [];
+    if (!decisions.length)
+      throw new BadRequestException('Aucune décision : cochez des lignes.');
+    if (decisions.length > 3000)
+      throw new BadRequestException('3 000 décisions au plus à la fois.');
+    const res = {
+      faites: 0,
+      erreurs: [] as string[],
+      parAction: {} as Record<string, number>,
+    };
+    const nomDe = async (id: string) =>
+      (
+        await this.volontaires.findOne({
+          where: { id },
+          select: { nomComplet: true },
+        })
+      )?.nomComplet ?? id;
+    const noter = async (id: string, controle: string, note: string) => {
+      const v = await this.volontaires.findOne({ where: { id } });
+      if (!v) throw new NotFoundException('Fiche introuvable');
+      await this.volontaires.update(id, {
+        verifications: {
+          ...(v.verifications ?? {}),
+          [controle]: { par: u.nom, le: new Date().toISOString(), note },
+        },
+      });
+      await this.mouvements.save({
+        volontaireId: id,
+        type: 'VERIFICATION',
+        dateEffet: null,
+        motif: controle,
+        details: { note },
+        par: u.nom,
+      });
+    };
+    for (const d of decisions) {
+      try {
+        const controle = String(d.controle ?? '').toUpperCase();
+        const note = (d.note ?? '').trim();
+        switch (d.action) {
+          case 'SORTIR':
+            await this.sortir(
+              u,
+              d.id,
+              {
+                motif: d.motif ?? '',
+                date: d.date ?? '',
+                observation: note || undefined,
+              },
+              false,
+            );
+            break;
+          case 'VERIFIER':
+            if (!/^[A-Z_]{3,30}$/.test(controle))
+              throw new BadRequestException('Contrôle inconnu.');
+            if (note.length < 5)
+              throw new BadRequestException(
+                'Écrivez ce qui a été vérifié (5 caractères au moins).',
+              );
+            await noter(d.id, controle, note);
+            break;
+          case 'DEUX_PERSONNES': {
+            if (!d.autreId)
+              throw new BadRequestException('Il faut les deux fiches.');
+            if (!['DOUBLON', 'AUTRE_LISTE'].includes(controle))
+              throw new BadRequestException('Contrôle inconnu.');
+            const texte = note || 'Deux personnes différentes';
+            await noter(
+              d.id,
+              controle,
+              `${texte} (≠ ${await nomDe(d.autreId)})`,
+            );
+            await noter(
+              d.autreId,
+              controle,
+              `${texte} (≠ ${await nomDe(d.id)})`,
+            );
+            break;
+          }
+          case 'GARDER': {
+            if (!d.autreId)
+              throw new BadRequestException('Il faut les deux fiches.');
+            const garde = await this.volontaires.findOne({
+              where: { id: d.id },
+            });
+            const sort = await this.volontaires.findOne({
+              where: { id: d.autreId },
+            });
+            if (!garde || !sort)
+              throw new NotFoundException('Fiche introuvable');
+            if (garde.statut !== 'EN_POSTE')
+              throw new BadRequestException(
+                `${garde.nomComplet} : la fiche gardée n’est pas en poste.`,
+              );
+            // Ce que la fiche sortie sait et que la fiche gardée ignore (cases vides seulement)
+            const COMPLETER: (keyof Volontaire)[] = [
+              'dateNaissance',
+              'lieuNaissance',
+              'genre',
+              'telephone',
+              'diplome',
+              'specialite',
+              'etablissement',
+              'circonscription',
+              'departementId',
+              'departementBrut',
+              'categorie',
+              'cycleBrut',
+            ];
+            const champs: Partial<Volontaire> = {};
+            // Une catégorie de volontaire ne veut rien dire pour un communautaire (et inversement)
+            const memeListe = garde.population === sort.population;
+            for (const k of COMPLETER) {
+              if (!memeListe && (k === 'categorie' || k === 'cycleBrut'))
+                continue;
+              const vide = (x: unknown) =>
+                x === null || x === undefined || enTexte(x).trim() === '';
+              if (vide(garde[k]) && !vide(sort[k]))
+                Object.assign(champs, { [k]: sort[k] });
+            }
+            if (Object.keys(champs).length)
+              await this.volontaires.update(garde.id, champs);
+            if (sort.statut === 'EN_POSTE')
+              await this.sortir(
+                u,
+                sort.id,
+                {
+                  motif: d.motif || 'DOUBLON',
+                  date: d.date ?? '',
+                  observation: `Doublon de ${garde.nomComplet}${note ? ` : ${note}` : ''}`,
+                },
+                false,
+              );
+            break;
+          }
+          case 'COMPLETER': {
+            const v = await this.volontaires.findOne({ where: { id: d.id } });
+            if (!v) throw new NotFoundException('Fiche introuvable');
+            const champs: Partial<Volontaire> = {};
+            if (d.departementId) {
+              const dep = await this.deps.findOne({
+                where: { id: d.departementId },
+              });
+              if (!dep) throw new BadRequestException('Département inconnu.');
+              Object.assign(champs, {
+                departementId: dep.id,
+                departementBrut: dep.nom,
+              });
+            }
+            if (d.categorie) {
+              if (!this.config.categorie(d.categorie, v.population))
+                throw new BadRequestException(
+                  'Catégorie inconnue pour cette liste.',
+                );
+              champs.categorie = d.categorie;
+            }
+            if (d.premierMois) {
+              if (!MOIS_RE.test(d.premierMois))
+                throw new BadRequestException(
+                  'Premier mois attendu (AAAA-MM).',
+                );
+              champs.premierMois = d.premierMois;
+            }
+            if (!Object.keys(champs).length)
+              throw new BadRequestException('Rien à compléter.');
+            await this.volontaires.update(v.id, champs);
+            await this.mouvements.save({
+              volontaireId: v.id,
+              type: 'MODIFICATION',
+              dateEffet: null,
+              motif: null,
+              details: {
+                champs: Object.keys(champs),
+                observation: 'Complété depuis les contrôles de la bourse',
+              },
+              par: u.nom,
+            });
+            break;
+          }
+          default:
+            throw new BadRequestException('Décision inconnue.');
+        }
+        res.faites++;
+        res.parAction[d.action] = (res.parAction[d.action] ?? 0) + 1;
+      } catch (e) {
+        res.erreurs.push(
+          `${await nomDe(d.id).catch(() => d.id)} : ${(e as Error).message}`,
+        );
+      }
+    }
+    if (res.faites) {
+      await this.journal.log(
+        u,
+        'CONTROLES_BOURSE_DECIDES',
+        'volontaire',
+        null,
+        {
+          faites: res.faites,
+          parAction: res.parAction,
+          erreurs: res.erreurs.length,
+        },
+      );
+      void this.lier();
+    }
+    return {
+      ...res,
+      erreurs: res.erreurs.slice(0, 50),
+      nbErreurs: res.erreurs.length,
+    };
   }
 
   /* --------------- Aligner les communautaires sur un état de paiement --------------- */
