@@ -961,12 +961,15 @@ export class EnrolementService implements OnApplicationBootstrap {
       naissance: string | null;
       detail: string;
       probable: boolean;
+      /** Dossier d'enrôlement trouvé : pour l'ouvrir à la bonne étape (13/11/2026). */
+      dossier?: { id: string; campagneId: number; etat: string };
     }[] = [];
     const voir = (
       source: string,
       n: string,
       d: string | null,
       detail: string,
+      dossier?: { id: string; campagneId: number; etat: string },
     ) => {
       const r = ressemblance(mots, naissance, motsDuNom(n), d);
       if (r)
@@ -976,7 +979,14 @@ export class EnrolementService implements OnApplicationBootstrap {
           naissance: d,
           detail,
           probable: r === 'PROBABLE',
+          dossier,
         });
+    };
+    const ETAPES: Record<string, string> = {
+      A_CONTROLER: 'étape 1 « À contrôler »',
+      CONTROLE: 'étape 2 « À décider par la DGRHAS »',
+      RETENU: 'étape 3 « Retenus »',
+      NON_RETENU: '« Non retenus »',
     };
     const campagnes = new Map(
       (await this.campagnes.find()).map((c) => [c.id, c.annee]),
@@ -990,7 +1000,8 @@ export class EnrolementService implements OnApplicationBootstrap {
           'Enrôlement',
           e.nomComplet,
           e.dateNaissance,
-          `campagne ${campagnes.get(e.campagneId) ?? '?'} · ${e.etat === 'RETENU' ? 'retenu' : e.etat === 'NON_RETENU' ? 'non retenu' : 'en cours'}`,
+          `campagne ${campagnes.get(e.campagneId) ?? '?'} · ${ETAPES[e.etat] ?? e.etat}`,
+          { id: e.id, campagneId: e.campagneId, etat: e.etat },
         );
     for (const a of await this.agents
       .createQueryBuilder('a')

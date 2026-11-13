@@ -10,6 +10,8 @@ export interface FeuilleLue {
   nom: string;
   lignes: Ligne[];
   entetes: string[];
+  /** Feuille masquée dans Excel (souvent une ancienne version de la liste). */
+  masquee?: boolean;
 }
 
 /** Valeur exploitable d'une cellule ExcelJS (texte riche, formule, lien…). */
@@ -53,7 +55,12 @@ export async function lireClasseur(
           : { ...f, masquee: false };
       })
       .filter((f) => options.inclureMasquees || !f.masquee)
-      .map((f) => ({ nom: f.nom, lignes: f.lignes, entetes: f.entetes }));
+      .map((f) => ({
+        nom: f.nom,
+        lignes: f.lignes,
+        entetes: f.entetes,
+        masquee: f.masquee,
+      }));
   } catch {
     // La lecture en flux échoue quand le fichier range « workbook.xml » après
     // les feuilles (fichiers produits par certains logiciels) : lecture complète.
@@ -182,7 +189,12 @@ async function lireFeuille(
     } else if (++vides > 200) break;
   }
   if (!colonnes || (masquee && !options.inclureMasquees)) return null;
-  return { nom: feuille.name, lignes, entetes: [...colonnes.values()] };
+  return {
+    nom: feuille.name,
+    lignes,
+    entetes: [...colonnes.values()],
+    masquee,
+  };
 }
 
 /** Contenu d'un fichier du classeur (archive zip), sans dépendance : répertoire central puis inflate. */

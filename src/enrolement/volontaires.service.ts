@@ -950,6 +950,7 @@ export class VolontairesService implements OnModuleInit {
     }
     // Les retraits du fichier : motif de chacun (observation, ou « SALARIE » à la place de la date)
     const motifRetrait = new Map<string, string>();
+    const ligneRetrait = new Map<string, number>();
     for (const l of fr ? this.lignesPersonnes(fr.lignes) : []) {
       const nom = nettoyer(
         this.valeur(l, ['NOMSETPRENOMS', 'NOMETPRENOMS', 'NOMSPRENOMS']),
@@ -963,6 +964,7 @@ export class VolontairesService implements OnModuleInit {
           .map(([, x]) => enTexte(x))
           .join(' '),
       );
+      ligneRetrait.set(cle(nom), Number(l._ligne));
       motifRetrait.set(
         cle(nom),
         /SALARI|SALAIRE/.test(t)
@@ -1007,9 +1009,24 @@ export class VolontairesService implements OnModuleInit {
       const debut = BourseService.premierMois(v, conf);
       return !debut || debut > o.mois;
     });
-    const payesMaisRetires = uniques
-      .filter((p) => motifRetrait.has(p.cle))
-      .map((p) => `${p.nom} (ligne ${p.ligne})`);
+    const retiresPayes = uniques.filter((p) => motifRetrait.has(p.cle));
+    const payesMaisRetires = retiresPayes.map(
+      (p) => `${p.nom} (ligne ${p.ligne})`,
+    );
+    // Le détail, pour la liste à télécharger et à vérifier avec le service de la bourse
+    const payesMaisRetiresDetail = retiresPayes.map((p) => {
+      const code = motifRetrait.get(p.cle)!;
+      return {
+        nom: p.nom,
+        ligne: p.ligne,
+        departement: p.depBrut,
+        etablissement: p.etablissement,
+        cycle: p.cycleBrut,
+        montant: p.montant,
+        motifRetrait: this.config.motif(code)?.libelle ?? code,
+        ligneRetrait: ligneRetrait.get(p.cle) ?? null,
+      };
+    });
     const sansCategorie = nouveaux
       .filter((p) => !p.categorie)
       .map((p) => `${p.nom} : cycle « ${p.cycleBrut ?? 'vide'} »`);
@@ -1142,6 +1159,7 @@ export class VolontairesService implements OnModuleInit {
         n,
       })),
       payesMaisRetires: court(payesMaisRetires),
+      payesMaisRetiresDetail,
       doublonsDansListe: court(doublons),
       plusieursFiches: court(plusieursFiches),
       rapproches: court(rapproches),
@@ -1515,6 +1533,7 @@ export class VolontairesService implements OnModuleInit {
       const cMontant = col('MONTANT');
       return {
         nom: f.nom,
+        masquee: !!f.masquee,
         personnes: lignes.length,
         colonnes: f.entetes.slice(0, 16),
         montantTotal: cMontant
