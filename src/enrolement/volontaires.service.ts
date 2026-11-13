@@ -721,6 +721,458 @@ export class VolontairesService implements OnModuleInit {
     );
   }
 
+  /**
+   * Rapprochement d'une liste reçue avec des fiches du registre (DG, 12/11/2026) :
+   * 1. même nom (mots dans n'importe quel ordre, ou nom de la liste déjà rapproché une fois) ;
+   * 2. nom écrit autrement, une seule fiche en poste qui ressemble et réciproquement : rapproché ;
+   * 3. un seul nom différent (2 mots communs ou plus) : paire proposée, rapprochée seulement si
+   *    l'agent l'a confirmée (`memes`).
+   */
+  private rapprocherListe<
+    P extends { nom: string; cle: string; feuille: string; ligne: number },
+  >(uniques: P[], fiches: Volontaire[], memes: string[]) {
+    const cle = (nom: string) => motsDuNom(nom).sort().join(' ');
+    const parCle = new Map<string, Volontaire[]>();
+    // Le nom de la fiche, et celui de la liste déjà rapproché une fois (« NOM_LISTE ») : relancer la
+    // même liste ne redemande pas les mêmes confirmations
+    for (const v of fiches) {
+      const noms = new Set([cle(v.nomComplet)]);
+      const alias = (
+        v.verifications as Record<string, { note?: string }> | null
+      )?.NOM_LISTE?.note;
+      if (alias) noms.add(cle(alias));
+      for (const k of noms) parCle.set(k, [...(parCle.get(k) ?? []), v]);
+    }
+    const gardes: { v: Volontaire; p: P }[] = [];
+    const reintegres: { v: Volontaire; p: P }[] = [];
+    const nouveaux: P[] = [];
+    const plusieursFiches: string[] = [];
+    const retrouves = new Set<string>();
+    for (const p of uniques) {
+      const candidats = parCle.get(p.cle) ?? [];
+      const enPoste = candidats.filter((x) => x.statut === 'EN_POSTE');
+      const choisi = enPoste[0] ?? candidats[0];
+      if (candidats.length > 1)
+        plusieursFiches.push(
+          `${p.nom} : ${candidats.length} fiches dans le registre (${enPoste.length} en poste)`,
+        );
+      if (!choisi) nouveaux.push(p);
+      else if (choisi.statut === 'EN_POSTE') gardes.push({ v: choisi, p });
+      else reintegres.push({ v: choisi, p });
+      for (const x of candidats) retrouves.add(x.id);
+    }
+    // Noms écrits autrement (ordre, faute de frappe, prénom en plus) : une seule fiche en poste qui
+    // ressemble, et réciproquement → la même personne, signalée pour vérification. Plusieurs
+    // possibilités : rien n'est décidé, la ligne est signalée (DG, 12/11/2026 : presque la même liste)
+    const rapproches: string[] = [];
+    const ambigus: string[] = [];
+    const libres = () =>
+      fiches.filter((v) => v.statut === 'EN_POSTE' && !retrouves.has(v.id));
+    const proches = (p: P, dispo: Volontaire[]) =>
+      dispo.filter(
+        (v) =>
+          ressemblance(
+            motsDuNom(p.nom),
+            null,
+            motsDuNom(v.nomComplet),
+            null,
+          ) === 'PROBABLE',
+      );
+    const restants = [...nouveaux];
+    nouveaux.length = 0;
+    for (const p of restants) {
+      const dispo = libres();
+      const c = proches(p, dispo);
+      const reciproque =
+        c.length === 1
+          ? restants.filter((q) => q !== p && proches(q, [c[0]]).length === 1)
+              .length === 0
+          : false;
+      if (c.length === 1 && reciproque) {
+        gardes.push({ v: c[0], p });
+        retrouves.add(c[0].id);
+        rapproches.push(`${p.nom} (liste) = ${c[0].nomComplet} (registre)`);
+      } else {
+        if (c.length > 1)
+          ambigus.push(
+            `${p.nom} : ${c.length} fiches proches (${c
+              .slice(0, 3)
+              .map((v) => v.nomComplet)
+              .join(', ')}) — ajouté(e) comme nouveau, à vérifier`,
+          );
+        nouveaux.push(p);
+      }
+    }
+    // Un seul nom différent (2 mots communs ou plus) : probablement la même personne, mais pas sûr.
+    // L'agent confirme chaque paire (« même personne ») ; sans confirmation, rien n'est rapproché.
+    const possibles: {
+      paire: string;
+      liste: string;
+      registre: string;
+      feuille: string;
+      ligne: number;
+    }[] = [];
+    const confirmes = new Set(memes);
+    const encore = [...nouveaux];
+    nouveaux.length = 0;
+    for (const p of encore) {
+      const dispo = libres();
+      const mots = motsDuNom(p.nom);
+      const c = dispo.filter(
+        (v) => motsCommuns(mots, motsDuNom(v.nomComplet)) >= 2,
+      );
+      const unique =
+        c.length === 1 &&
+        encore.filter(
+          (q) =>
+            q !== p &&
+            motsCommuns(motsDuNom(q.nom), motsDuNom(c[0].nomComplet)) >= 2,
+        ).length === 0;
+      if (!unique) {
+        nouveaux.push(p);
+        continue;
+      }
+      const paire = `${c[0].id}~${p.cle}`;
+      possibles.push({
+        paire,
+        liste: p.nom,
+        registre: c[0].nomComplet,
+        feuille: p.feuille,
+        ligne: p.ligne,
+      });
+      if (confirmes.has(paire)) {
+        gardes.push({ v: c[0], p });
+        retrouves.add(c[0].id);
+        rapproches.push(
+          `${p.nom} (liste) = ${c[0].nomComplet} (registre, confirmé)`,
+        );
+      } else nouveaux.push(p);
+    }
+    return {
+      gardes,
+      reintegres,
+      nouveaux,
+      plusieursFiches,
+      retrouves,
+      rapproches,
+      ambigus,
+      possibles,
+    };
+  }
+
+  /* ------------------ Aligner le registre sur la bourse d'un mois ------------------ */
+
+  /**
+   * Le registre des volontaires suit la bourse payée d'un mois (DG, 12/11/2026 : « traiter d'abord
+   * septembre, puis octobre ») :
+   * - payé ce mois et en poste : reste ; son premier mois payé recule à ce mois s'il était plus tard ;
+   * - payé ce mois mais sorti au registre : réintégré ;
+   * - payé ce mois mais absent du registre : ajouté, payé à partir de ce mois ;
+   * - en poste et payable ce mois mais pas payé : sort au 1er du mois (dernier mois payé : le mois
+   *   d'avant), avec le motif lu dans la feuille RETRAITS (« SALARIE » → recruté à la Fonction
+   *   Publique, « Non partant », « Déserteur »…), sinon « Retiré par la DDEPPSA » ;
+   * - payé alors qu'il est aussi dans les RETRAITS : signalé, rien n'est décidé.
+   * Mêmes rapprochements des noms que pour les communautaires. `essai` : le rapport seulement.
+   */
+  async alignerSurBourse(
+    u: UtilisateurConnecte,
+    contenu: Buffer,
+    nomFichier: string,
+    o: {
+      mois: string;
+      feuille: string;
+      feuilleRetraits?: string;
+      memes?: string[];
+      essai: boolean;
+    },
+  ) {
+    if (!MOIS_RE.test(o.mois ?? ''))
+      throw new BadRequestException(
+        'Indiquez le mois de cette bourse (ex. 2026-09).',
+      );
+    const feuilles = await lireClasseur(
+      contenu,
+      ['NOMSETPRENOMS|NOMETPRENOMS|NOMSPRENOMS'],
+      { inclureMasquees: true },
+    );
+    const f = feuilles.find((x) => x.nom === o.feuille);
+    if (!f)
+      throw new BadRequestException('Choisissez la feuille de la liste payée.');
+    const fr = o.feuilleRetraits
+      ? feuilles.find((x) => x.nom === o.feuilleRetraits)
+      : null;
+    if (o.feuilleRetraits && !fr)
+      throw new BadRequestException('Feuille des retraits introuvable.');
+    const cle = (nom: string) => motsDuNom(nom).sort().join(' ');
+    const deps = await this.deps.find();
+    const depId = (brut: unknown) => {
+      const c = codeDepartement(nettoyer(brut)?.split(/[/(]/)[0]);
+      return c ? (deps.find((d) => d.code === c)?.id ?? null) : null;
+    };
+    const conf = this.config.get();
+    // La liste payée
+    const liste = this.lignesPersonnes(f.lignes).map((l) => {
+      const nom = nettoyer(
+        this.valeur(l, ['NOMSETPRENOMS', 'NOMETPRENOMS', 'NOMSPRENOMS']),
+      )!;
+      const cycleBrut = nettoyer(this.valeur(l, ['CYCLE']));
+      const depBrut = nettoyer(this.valeur(l, ['DEPART']));
+      return {
+        nom,
+        cle: cle(nom),
+        feuille: f.nom,
+        ligne: l._ligne,
+        cycleBrut,
+        categorie: this.config.categorieDepuisTexte(cycleBrut)?.code ?? null,
+        depBrut,
+        departementId: depId(depBrut),
+        etablissement: nettoyer(this.valeur(l, ['ETABLISSEMENT'])),
+        telephone: nettoyer(this.valeur(l, ['TELEPHONE', 'TEL'])),
+        vague: vagueNormalisee(this.valeur(l, ['VAGUE', 'PROMOTION'])),
+        montant: Number(this.valeur(l, ['MONTANT'])) || 0,
+      };
+    });
+    if (!liste.length)
+      throw new BadRequestException(
+        'Aucune personne lue dans cette feuille (colonnes « N° » et « Noms et prénoms »).',
+      );
+    const vus = new Map<string, (typeof liste)[number]>();
+    const doublons: string[] = [];
+    const uniques: typeof liste = [];
+    for (const p of liste) {
+      const d = vus.get(p.cle);
+      if (d) {
+        doublons.push(`${p.nom} : ligne ${p.ligne} (déjà ligne ${d.ligne})`);
+        continue;
+      }
+      vus.set(p.cle, p);
+      uniques.push(p);
+    }
+    // Les retraits du fichier : motif de chacun (observation, ou « SALARIE » à la place de la date)
+    const motifRetrait = new Map<string, string>();
+    for (const l of fr ? this.lignesPersonnes(fr.lignes) : []) {
+      const nom = nettoyer(
+        this.valeur(l, ['NOMSETPRENOMS', 'NOMETPRENOMS', 'NOMSPRENOMS']),
+      );
+      if (!nom) continue;
+      // Toute la ligne : les blocs ajoutés en bas de la feuille n'ont pas les mêmes colonnes
+      // (octobre 2026 : « RETIRE PAR LA DDEPPSA » à droite, hors de la colonne « Obs. »)
+      const t = normaliser(
+        Object.entries(l)
+          .filter(([k]) => k !== '_ligne' && !k.startsWith('NOM'))
+          .map(([, x]) => enTexte(x))
+          .join(' '),
+      );
+      motifRetrait.set(
+        cle(nom),
+        /SALARI|SALAIRE/.test(t)
+          ? 'RECRUTE_FP'
+          : /NON\s*PARTANT/.test(t)
+            ? 'NON_PARTANT'
+            : /DESERT|DERSET|ABANDON/.test(t)
+              ? 'DESERTEUR'
+              : /\bDECE(S|DE)/.test(t) // pas « DÉCEMBRE »
+                ? 'DECES'
+                : /DEMISSION/.test(t)
+                  ? 'DEMISSION'
+                  : /DOUBLON/.test(t)
+                    ? 'DOUBLON'
+                    : /ABSENT/.test(t)
+                      ? 'ABSENT'
+                      : 'RETIRE_DDEPPSA',
+      );
+    }
+    const fiches = await this.volontaires.find({
+      where: { population: 'VOLONTAIRE' },
+    });
+    const {
+      gardes,
+      reintegres,
+      nouveaux,
+      plusieursFiches,
+      retrouves,
+      rapproches,
+      ambigus,
+      possibles,
+    } = this.rapprocherListe(uniques, fiches, o.memes ?? []);
+    // En poste, payables ce mois (premier mois payé atteint), et pas sur la liste : ils sortent
+    const payable = (v: Volontaire) => {
+      const debut = BourseService.premierMois(v, conf);
+      return !debut || debut <= o.mois;
+    };
+    const sortants = fiches.filter(
+      (v) => v.statut === 'EN_POSTE' && !retrouves.has(v.id) && payable(v),
+    );
+    const avancer = gardes.filter(({ v }) => {
+      const debut = BourseService.premierMois(v, conf);
+      return !debut || debut > o.mois;
+    });
+    const payesMaisRetires = uniques
+      .filter((p) => motifRetrait.has(p.cle))
+      .map((p) => `${p.nom} (ligne ${p.ligne})`);
+    const sansCategorie = nouveaux
+      .filter((p) => !p.categorie)
+      .map((p) => `${p.nom} : cycle « ${p.cycleBrut ?? 'vide'} »`);
+    const sansDepartement = nouveaux
+      .filter((p) => !p.departementId)
+      .map((p) => `${p.nom} : « ${p.depBrut ?? 'vide'} »`);
+    const montantsDifferents = uniques
+      .filter((p) => {
+        const c = p.categorie ? this.config.categorie(p.categorie) : null;
+        return c && p.montant && p.montant !== c.bourse;
+      })
+      .map((p) => `${p.nom} : ${p.montant} (${p.cycleBrut ?? ''})`);
+    const parMotif: Record<string, number> = {};
+    const motifDe = (v: Volontaire) =>
+      motifRetrait.get(cle(v.nomComplet)) ?? 'RETIRE_DDEPPSA';
+    for (const v of sortants)
+      parMotif[motifDe(v)] = (parMotif[motifDe(v)] ?? 0) + 1;
+    const dateSortie = `${o.mois}-01`;
+    const ici = `${nomFichier} · ${f.nom}`;
+    if (!o.essai) {
+      for (const { v, p } of [...gardes, ...reintegres]) {
+        const debut = BourseService.premierMois(v, conf);
+        const autreNom = cle(v.nomComplet) !== p.cle;
+        const champs: Partial<Volontaire> = {
+          ...(autreNom
+            ? {
+                verifications: {
+                  ...(v.verifications ?? {}),
+                  NOM_LISTE: {
+                    par: u.nom,
+                    le: new Date().toISOString(),
+                    note: p.nom,
+                  },
+                },
+              }
+            : {}),
+          ...(!debut || debut > o.mois ? { premierMois: o.mois } : {}),
+          ...(!v.categorie && p.categorie ? { categorie: p.categorie } : {}),
+          ...(!v.departementId && p.departementId
+            ? { departementId: p.departementId, departementBrut: p.depBrut }
+            : {}),
+          ...(!v.etablissement && p.etablissement
+            ? { etablissement: p.etablissement }
+            : {}),
+          ...(!v.telephone && p.telephone ? { telephone: p.telephone } : {}),
+        };
+        if (v.statut === 'SORTI')
+          Object.assign(champs, {
+            statut: 'EN_POSTE',
+            motifSortie: null,
+            dateSortie: null,
+          });
+        if (Object.keys(champs).length)
+          await this.volontaires.update(v.id, champs);
+        if (v.statut === 'SORTI')
+          await this.mouvement(
+            u,
+            v.id,
+            'REINTEGRATION',
+            dateSortie,
+            'BOURSE_PAYEE',
+            {
+              source: `${ici} · ligne ${p.ligne}`,
+            },
+          );
+      }
+      for (const v of sortants) {
+        const motif = motifDe(v);
+        await this.volontaires.update(v.id, {
+          statut: 'SORTI',
+          motifSortie: motif,
+          dateSortie,
+        });
+        await this.mouvement(u, v.id, 'SORTIE', dateSortie, motif, {
+          observation: `Pas sur la bourse payée de ${o.mois} (${nomFichier})`,
+        });
+      }
+      if (nouveaux.length) {
+        const lot = await this.volontaires.save(
+          nouveaux.map((p) => ({
+            nomComplet: p.nom,
+            nomNormalise: normaliser(p.nom),
+            categorie: p.categorie,
+            cycleBrut: p.cycleBrut,
+            departementId: p.departementId,
+            departementBrut: p.depBrut,
+            etablissement: p.etablissement,
+            telephone: p.telephone,
+            vague: p.vague,
+            vagueNumero: p.vague ? this.config.numeroVague(p.vague) : null,
+            population: 'VOLONTAIRE',
+            statut: 'EN_POSTE',
+            premierMois: o.mois,
+            source: `${ici} · ligne ${p.ligne}`,
+            creePar: u.nom,
+            verifications: {},
+          })) as Volontaire[],
+        );
+        await this.mouvements.save(
+          lot.map((v) => ({
+            volontaireId: v.id,
+            type: 'ENTREE',
+            dateEffet: null,
+            motif: 'BOURSE_PAYEE',
+            details: { source: v.source },
+            par: u.nom,
+          })),
+        );
+      }
+    }
+    const court = (t: string[]) => ({ n: t.length, exemples: t.slice(0, 40) });
+    const rapport = {
+      essai: o.essai,
+      mois: o.mois,
+      feuille: f.nom,
+      lus: liste.length,
+      personnes: uniques.length,
+      gardes: gardes.length,
+      premierMoisAvance: avancer.length,
+      reintegres: court(reintegres.map(({ p }) => p.nom)),
+      nouveaux: court(nouveaux.map((p) => p.nom)),
+      sortants: court(
+        sortants.map(
+          (v) =>
+            `${v.nomComplet} (${this.config.motif(motifDe(v))?.libelle ?? motifDe(v)})`,
+        ),
+      ),
+      sortantsParMotif: Object.entries(parMotif).map(([code, n]) => ({
+        motif: this.config.motif(code)?.libelle ?? code,
+        n,
+      })),
+      payesMaisRetires: court(payesMaisRetires),
+      doublonsDansListe: court(doublons),
+      plusieursFiches: court(plusieursFiches),
+      rapproches: court(rapproches),
+      ambigus: court(ambigus),
+      possibles,
+      sansCategorie: court(sansCategorie),
+      sansDepartement: court(sansDepartement),
+      montantsDifferents: court(montantsDifferents),
+      montantListe: uniques.reduce((t, p) => t + p.montant, 0),
+    };
+    if (!o.essai) {
+      await this.journal.log(
+        u,
+        'VOLONTAIRES_ALIGNES_BOURSE',
+        'volontaire',
+        null,
+        {
+          fichier: nomFichier,
+          mois: o.mois,
+          personnes: uniques.length,
+          nouveaux: nouveaux.length,
+          reintegres: reintegres.length,
+          sortis: sortants.length,
+          rapport,
+        },
+      );
+      await this.lier();
+    }
+    return rapport;
+  }
+
   /* ------------------ Remplacer les communautaires d'un département ------------------ */
 
   /**
@@ -852,122 +1304,16 @@ export class VolontairesService implements OnModuleInit {
     const fiches = await this.volontaires.find({
       where: { population: 'COMMUNAUTAIRE', departementId: dep.id },
     });
-    const parCle = new Map<string, Volontaire[]>();
-    // Le nom de la fiche, et celui de la liste déjà rapproché une fois (« NOM_LISTE ») : relancer la
-    // même liste ne redemande pas les mêmes confirmations
-    for (const v of fiches) {
-      const noms = new Set([cle(v.nomComplet)]);
-      const alias = (
-        v.verifications as Record<string, { note?: string }> | null
-      )?.NOM_LISTE?.note;
-      if (alias) noms.add(cle(alias));
-      for (const k of noms) parCle.set(k, [...(parCle.get(k) ?? []), v]);
-    }
-    const gardes: { v: Volontaire; p: (typeof liste)[number] }[] = [];
-    const reintegres: { v: Volontaire; p: (typeof liste)[number] }[] = [];
-    const nouveaux: (typeof liste)[number][] = [];
-    const plusieursFiches: string[] = [];
-    const retrouves = new Set<string>();
-    for (const p of uniques) {
-      const candidats = parCle.get(p.cle) ?? [];
-      const enPoste = candidats.filter((x) => x.statut === 'EN_POSTE');
-      const choisi = enPoste[0] ?? candidats[0];
-      if (candidats.length > 1)
-        plusieursFiches.push(
-          `${p.nom} : ${candidats.length} fiches dans le registre (${enPoste.length} en poste)`,
-        );
-      if (!choisi) nouveaux.push(p);
-      else if (choisi.statut === 'EN_POSTE') gardes.push({ v: choisi, p });
-      else reintegres.push({ v: choisi, p });
-      for (const x of candidats) retrouves.add(x.id);
-    }
-    // Noms écrits autrement (ordre, faute de frappe, prénom en plus) : une seule fiche en poste qui
-    // ressemble, et réciproquement → la même personne, signalée pour vérification. Plusieurs
-    // possibilités : rien n'est décidé, la ligne est signalée (DG, 12/11/2026 : presque la même liste)
-    const rapproches: string[] = [];
-    const ambigus: string[] = [];
-    const libres = () =>
-      fiches.filter((v) => v.statut === 'EN_POSTE' && !retrouves.has(v.id));
-    const proches = (p: (typeof liste)[number], dispo: Volontaire[]) =>
-      dispo.filter(
-        (v) =>
-          ressemblance(
-            motsDuNom(p.nom),
-            null,
-            motsDuNom(v.nomComplet),
-            null,
-          ) === 'PROBABLE',
-      );
-    const restants = [...nouveaux];
-    nouveaux.length = 0;
-    for (const p of restants) {
-      const dispo = libres();
-      const c = proches(p, dispo);
-      const reciproque =
-        c.length === 1
-          ? restants.filter((q) => q !== p && proches(q, [c[0]]).length === 1)
-              .length === 0
-          : false;
-      if (c.length === 1 && reciproque) {
-        gardes.push({ v: c[0], p });
-        retrouves.add(c[0].id);
-        rapproches.push(`${p.nom} (liste) = ${c[0].nomComplet} (registre)`);
-      } else {
-        if (c.length > 1)
-          ambigus.push(
-            `${p.nom} : ${c.length} fiches proches (${c
-              .slice(0, 3)
-              .map((v) => v.nomComplet)
-              .join(', ')}) — ajouté(e) comme nouveau, à vérifier`,
-          );
-        nouveaux.push(p);
-      }
-    }
-    // Un seul nom différent (2 mots communs ou plus) : probablement la même personne, mais pas sûr.
-    // L'agent confirme chaque paire (« même personne ») ; sans confirmation, rien n'est rapproché.
-    const possibles: {
-      paire: string;
-      liste: string;
-      registre: string;
-      feuille: string;
-      ligne: number;
-    }[] = [];
-    const confirmes = new Set(o.memes ?? []);
-    const encore = [...nouveaux];
-    nouveaux.length = 0;
-    for (const p of encore) {
-      const dispo = libres();
-      const mots = motsDuNom(p.nom);
-      const c = dispo.filter(
-        (v) => motsCommuns(mots, motsDuNom(v.nomComplet)) >= 2,
-      );
-      const unique =
-        c.length === 1 &&
-        encore.filter(
-          (q) =>
-            q !== p &&
-            motsCommuns(motsDuNom(q.nom), motsDuNom(c[0].nomComplet)) >= 2,
-        ).length === 0;
-      if (!unique) {
-        nouveaux.push(p);
-        continue;
-      }
-      const paire = `${c[0].id}~${p.cle}`;
-      possibles.push({
-        paire,
-        liste: p.nom,
-        registre: c[0].nomComplet,
-        feuille: p.feuille,
-        ligne: p.ligne,
-      });
-      if (confirmes.has(paire)) {
-        gardes.push({ v: c[0], p });
-        retrouves.add(c[0].id);
-        rapproches.push(
-          `${p.nom} (liste) = ${c[0].nomComplet} (registre, confirmé)`,
-        );
-      } else nouveaux.push(p);
-    }
+    const {
+      gardes,
+      reintegres,
+      nouveaux,
+      plusieursFiches,
+      retrouves,
+      rapproches,
+      ambigus,
+      possibles,
+    } = this.rapprocherListe(uniques, fiches, o.memes ?? []);
     // En poste dans ce département mais absents de la liste : ils sortent
     const sortants = fiches.filter(
       (v) => v.statut === 'EN_POSTE' && !retrouves.has(v.id),

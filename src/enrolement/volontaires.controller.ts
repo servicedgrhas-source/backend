@@ -386,6 +386,48 @@ export class VolontairesController {
     );
   }
 
+  /**
+   * Aligner le registre des volontaires sur la bourse payée d'un mois (DG, 12/11/2026 : septembre,
+   * puis octobre). `essai=1` : le rapport, sans rien enregistrer.
+   */
+  @Roles('CHEF_SERVICE', 'DG')
+  @Post('volontaires/aligner-bourse')
+  @UseInterceptors(
+    FileInterceptor('fichier', { limits: { fileSize: 40 * 1024 * 1024 } }),
+  )
+  alignerSurBourse(
+    @Utilisateur() u: UtilisateurConnecte,
+    @Query('mois') mois: string,
+    @Query('feuille') feuille: string,
+    @Query('retraits') retraits: string | undefined,
+    @Query('essai') essai: string,
+    @Body() body: { memes?: string },
+    @UploadedFile() fichier?: Express.Multer.File,
+  ) {
+    let memes: string[] = [];
+    try {
+      const v = JSON.parse(body?.memes || '[]') as unknown;
+      if (Array.isArray(v))
+        memes = v
+          .filter((x): x is string => typeof x === 'string')
+          .slice(0, 5000);
+    } catch {
+      throw new BadRequestException('Confirmations illisibles.');
+    }
+    return this.volontaires.alignerSurBourse(
+      u,
+      this.classeur(fichier),
+      fichier!.originalname,
+      {
+        mois,
+        feuille,
+        feuilleRetraits: retraits || undefined,
+        memes,
+        essai: essai === '1',
+      },
+    );
+  }
+
   @Roles('CHEF_SERVICE', 'DG')
   @Post('volontaires/import')
   @UseInterceptors(
