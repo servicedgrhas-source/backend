@@ -1466,6 +1466,52 @@ export class BourseService {
       ).map((v) => [v.id, v]),
     );
     const deps = new Map((await this.deps.find()).map((d) => [d.id, d.nom]));
+    // L'autre liste du même mois (volontaires ↔ communautaires) : y est-il payé, et combien ?
+    const [autreEtat] = await this.etats.query<
+      { id: number; statut: string }[]
+    >(
+      `SELECT id, statut FROM etat_bourse WHERE mois = $1 AND population <> $2 LIMIT 1`,
+      [etat.mois, etat.population],
+    );
+    const ailleurs = new Map<string, number>(
+      autreEtat && ids.length
+        ? (
+            await this.lignes.query<{ v: string; total: number }[]>(
+              `SELECT "volontaireId" AS v, total FROM ligne_bourse WHERE "etatId" = $1 AND "volontaireId" = ANY($2)`,
+              [autreEtat.id, ids],
+            )
+          ).map((x) => [x.v, Number(x.total)])
+        : [],
+    );
+    const fcfa = (n: number) =>
+      `${n.toLocaleString('fr-FR').replace(/\s/g, ' ')} FCFA`;
+    const mois = moisEnClair(etat.mois);
+    // « d'octobre 2026 », « de septembre 2026 »
+    const deMois = /^[aeiou]/i.test(mois.normalize('NFD').replace(/[̀-ͯ]/g, ''))
+      ? `d’${mois}`
+      : `de ${mois}`;
+    /** Où et combien la fiche est payée ce mois, en clair (DG, 13/11/2026). */
+    const paiementDe = (v: Volontaire | undefined, paye: number | null) => {
+      const listeV = LISTES[populationDe(v?.population ?? etat.population)];
+      const qui =
+        v?.population === 'COMMUNAUTAIRE' ? 'communautaire' : 'volontaire';
+      if (paye !== null)
+        return `payé(e) ${fcfa(paye)} dans cet état (${listeV})`;
+      if (!v) return 'fiche introuvable';
+      if (v.population === etat.population)
+        return v.statut === 'SORTI'
+          ? `sorti(e) des ${listeV} : pas payé(e) dans cet état`
+          : `${qui} en poste, mais pas payé(e) dans cet état (pas encore payable ce mois)`;
+      // Fiche de l'autre liste
+      const total = ailleurs.get(v.id);
+      if (total !== undefined)
+        return `payé(e) ${fcfa(total)} sur la liste des ${listeV} ${deMois} (état ${autreEtat.statut === 'VALIDE' ? 'validé' : 'en projet'})`;
+      if (v.statut === 'SORTI')
+        return `sorti(e) des ${listeV} : pas payé(e) de ce côté`;
+      return autreEtat
+        ? `${qui} en poste, mais pas dans l'état ${deMois} des ${listeV}`
+        : `${qui} en poste : sera payé(e) sur la liste des ${listeV} quand l'état ${deMois} sera préparé`;
+    };
     const personne = (vid: string) => {
       const l = lignes.get(vid);
       const v = fiches.get(vid);
@@ -1487,6 +1533,8 @@ export class BourseService {
         })(),
         // Montant de cet état (null : pas payé sur cette liste ce mois-ci)
         paye: l ? l.total : null,
+        // Où et combien elle est payée ce mois (cette liste, l'autre liste, ou pas du tout)
+        paiement: paiementDe(v, l ? l.total : null),
         // Pour décider : quelle liste, en poste ou non, entrée quand, née quand
         population: v?.population ?? etat.population,
         statut: v?.statut ?? null,
@@ -1555,13 +1603,13 @@ export class BourseService {
       'Établissement',
       'Département',
       'Catégorie',
-      'Payé ce mois',
+      'Paiement ce mois',
       'Même personne probable',
       'Liste',
       'Établissement',
       'Département',
       'Catégorie',
-      'Payé ce mois',
+      'Paiement ce mois',
     ]);
     t.font = { bold: true };
     t.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true };
@@ -1586,7 +1634,7 @@ export class BourseService {
             p.etablissement ?? '',
             p.departement ?? '',
             p.categorie ?? '',
-            p.paye ?? 'non',
+            p.paiement,
           ]
         : ['', '', '', '', '', ''];
     r.paires.forEach((x, i) => {
