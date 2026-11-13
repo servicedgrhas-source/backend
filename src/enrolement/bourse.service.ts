@@ -492,14 +492,31 @@ export class BourseService {
       }
       index.ajouter(x.v.nomComplet, x.v.dateNaissance, x);
     }
-    // Sur les deux listes à la fois (volontaire et communautaire) : payé deux fois
-    const autres = new IndexNoms<Volontaire>();
+    // Sur les deux listes à la fois (volontaire et communautaire) : payé deux fois, seulement si
+    // les deux fiches couvrent un même mois. Ex. (13/11/2026) : communautaire sorti le 01/10 (payé
+    // en septembre) et volontaire payé à partir d'octobre : un passage d'une liste à l'autre, pas
+    // un double paiement. L'autre fiche peut être sortie et encore payée ce mois-là.
+    const autres = new IndexNoms<{
+      v: Volontaire;
+      du: string | null;
+      au: string | null;
+    }>();
     for (const v of await this.volontaires.find({
-      where: { statut: 'EN_POSTE', population: Not(population) },
-    }))
-      autres.ajouter(v.nomComplet, v.dateNaissance, v);
+      where: { statut: In(['EN_POSTE', 'SORTI']), population: Not(population) },
+    })) {
+      const du = BourseService.premierMois(v, c);
+      const au = BourseService.dernierMois(v, c, du);
+      if (au === '0000-01' || (du && au && au < du)) continue;
+      if (v.statut === 'SORTI' && !au) continue;
+      autres.ajouter(v.nomComplet, v.dateNaissance, { v, du, au });
+    }
     for (const x of calculs) {
-      const a = autres.probables(x.v.nomComplet, x.v.dateNaissance)[0];
+      // Les mois payés ici (le mois de l'état et les rappels)
+      const debut = x.du ?? mois;
+      const fin = x.au ?? mois;
+      const a = autres
+        .probables(x.v.nomComplet, x.v.dateNaissance)
+        .find((o) => (!o.du || o.du <= fin) && (!o.au || o.au >= debut))?.v;
       if (a)
         signaler(
           x.v,
@@ -2378,8 +2395,10 @@ export class BourseService {
       pageSetup: {
         orientation: 'landscape',
         paperSize: 9,
-        fitToPage: false,
-        scale: 100,
+        // Toujours sur la largeur d'une page, même avec les colonnes de montants élargies
+        fitToPage: true,
+        fitToWidth: 1,
+        fitToHeight: 0,
         margins: {
           left: 0.6145833333333334,
           right: 0.3854166666666667,
@@ -2637,13 +2656,20 @@ export class BourseService {
     ];
     ws.getColumn(1).width = 5;
     ws.getColumn(2).width = 22;
+    // Jamais de « ##### » (13/11/2026) : une colonne de montants est au moins aussi large que son
+    // plus grand montant (format comptable, total en gras), un peu plus en Gill Sans MT (plus large)
+    const assez = (largeur: number, plusGrand: number) =>
+      Math.max(
+        largeur,
+        (fcfa(plusGrand).length + 4) * (police === 'gill' ? 1.2 : 1.05),
+      );
     groupes.forEach((_, k) => {
       const [we, wm] = LARGEURS_GROUPES[k] ?? [11.2, 12.5];
       ws.getColumn(3 + k * 2).width = we;
-      ws.getColumn(4 + k * 2).width = wm;
+      ws.getColumn(4 + k * 2).width = assez(wm, R.totaux[k].mont);
     });
     ws.getColumn(cT).width = 13;
-    ws.getColumn(nbColR).width = 13;
+    ws.getColumn(nbColR).width = assez(13, R.montT);
     wb.calcProperties.fullCalcOnLoad = true;
 
     // Le RECAP seul (13/11/2026) : le classeur sans les listes
