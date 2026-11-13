@@ -18,6 +18,7 @@ import {
   TableRow,
   TextRun,
   VerticalAlign,
+  VerticalMergeType,
   WidthType,
 } from 'docx';
 import ExcelJS from 'exceljs';
@@ -1393,17 +1394,24 @@ export class BourseService {
     id: number,
     choix: PoliceDocument = 'actuelle',
     orientation: OrientationDocument = 'paysage',
+    seulRecap = false,
   ): Promise<{ nom: string; contenu: Buffer }> {
     const e = await this.etatPaiement(id);
     // Times New Roman (la police actuelle) ou Gill Sans MT, au choix (13/11/2026)
     const police = choix === 'gill' ? GILL : 'Times New Roman';
     const texte = (
       t: string,
-      o: { gras?: boolean; taille?: number; souligne?: boolean } = {},
+      o: {
+        gras?: boolean;
+        taille?: number;
+        souligne?: boolean;
+        italique?: boolean;
+      } = {},
     ) =>
       new TextRun({
         text: t,
         bold: o.gras,
+        italics: o.italique,
         size: o.taille ?? 16,
         font: police,
         underline: o.souligne ? {} : undefined,
@@ -1415,6 +1423,7 @@ export class BourseService {
         taille?: number;
         centre?: boolean;
         souligne?: boolean;
+        italique?: boolean;
         droite?: boolean;
         avant?: number;
       } = {},
@@ -1502,6 +1511,192 @@ export class BourseService {
           }),
         ],
       });
+    // Le RECAP seul (13/11/2026) : la « FICHE DE REPARTITION PAR DEPARTEMENT ET PAR CYCLE » de
+    // l'Excel, en Word : en-tête, titre, période, tableau par département et par montant de
+    // bourse, total, arrêté en lettres et signature
+    if (seulRecap) {
+      const lignesEtat = await this.lignes.find({ where: { etatId: id } });
+      const noms = new Map((await this.deps.find()).map((d) => [d.id, d.nom]));
+      const R = this.calculRecap(e.etat.population, lignesEtat, (d) =>
+        d ? (noms.get(d) ?? '') : 'Non renseigné',
+      );
+      const nombre = (n: number) => fcfa(n).replace(/\./g, ' ');
+      const montant = (n: number) => (n ? nombre(n) : '-');
+      const fin = { style: BorderStyle.SINGLE, size: 4, color: '000000' };
+      const tousBords = { top: fin, bottom: fin, left: fin, right: fin };
+      const cr = (
+        t: string | number,
+        o: {
+          gras?: boolean;
+          droite?: boolean;
+          gauche?: boolean;
+          span?: number;
+          fusion?: 'debut' | 'suite';
+        } = {},
+      ) =>
+        new TableCell({
+          verticalAlign: VerticalAlign.CENTER,
+          borders: tousBords,
+          columnSpan: o.span,
+          verticalMerge:
+            o.fusion === 'debut'
+              ? VerticalMergeType.RESTART
+              : o.fusion === 'suite'
+                ? VerticalMergeType.CONTINUE
+                : undefined,
+          children: String(t)
+            .split('\n')
+            .map(
+              (x) =>
+                new Paragraph({
+                  alignment: o.droite
+                    ? AlignmentType.RIGHT
+                    : o.gauche
+                      ? AlignmentType.LEFT
+                      : AlignmentType.CENTER,
+                  children: [texte(x, { gras: o.gras, taille: 20 })],
+                }),
+            ),
+        });
+      // Les largeurs du RECAP de l'Excel (N°, département, chaque groupe, total), à l'échelle
+      // de la page
+      const largeursR = [
+        5,
+        22,
+        ...R.groupes.flatMap((_, k) =>
+          k === 0 ? [10.7, 13.2] : k === 1 ? [13.7, 13.7] : [11.2, 11.2],
+        ),
+        13,
+        13,
+      ];
+      const utile = orientation === 'portrait' ? 10466 : 15398;
+      const somme = largeursR.reduce((s, x) => s + x, 0);
+      const tableau = new Table({
+        width: { size: 100, type: WidthType.PERCENTAGE },
+        columnWidths: largeursR.map((x) => Math.round((x / somme) * utile)),
+        rows: [
+          new TableRow({
+            tableHeader: true,
+            children: [
+              cr('N°', { fusion: 'debut' }),
+              cr('Département', { fusion: 'debut' }),
+              ...R.groupes.map((g) => cr(g.libelle, { gras: true, span: 2 })),
+              cr('Total', { gras: true, span: 2 }),
+            ],
+          }),
+          new TableRow({
+            tableHeader: true,
+            children: [
+              cr('', { fusion: 'suite' }),
+              cr('', { fusion: 'suite' }),
+              ...[...R.groupes, null].flatMap(() => [
+                cr('Effectif', { gras: true }),
+                cr('Montant', { gras: true }),
+              ]),
+            ],
+          }),
+          ...R.lignes.map(
+            (l, i) =>
+              new TableRow({
+                cantSplit: true,
+                children: [
+                  cr(i + 1),
+                  cr(l.departement, { gauche: true }),
+                  ...l.cellules.flatMap((x) => [
+                    cr(nombre(x.eff)),
+                    cr(montant(x.mont), { droite: true }),
+                  ]),
+                  cr(nombre(l.eff)),
+                  cr(montant(l.mont), { droite: true }),
+                ],
+              }),
+          ),
+          new TableRow({
+            cantSplit: true,
+            children: [
+              cr(''),
+              cr('TOTAL', { gras: true, gauche: true }),
+              ...R.totaux.flatMap((x) => [
+                cr(nombre(x.eff), { gras: true }),
+                cr(montant(x.mont), { gras: true, droite: true }),
+              ]),
+              cr(nombre(R.effT), { gras: true }),
+              cr(montant(R.montT), { gras: true, droite: true }),
+            ],
+          }),
+        ],
+      });
+      const communautaires = e.etat.population === 'COMMUNAUTAIRE';
+      const periode = `PERIODE : ${moisEnClair(e.etat.mois)
+        .normalize('NFD')
+        .replace(/[̀-ͯ]/g, '')
+        .toUpperCase()} (1 MOIS${R.avecRappels ? ' ET RAPPELS' : ''})`;
+      const docRecap = new Document({
+        sections: [
+          {
+            properties: {
+              page: {
+                size: {
+                  orientation:
+                    orientation === 'portrait'
+                      ? PageOrientation.PORTRAIT
+                      : PageOrientation.LANDSCAPE,
+                },
+                margin: { top: 600, bottom: 500, left: 880, right: 560 },
+              },
+            },
+            children: [
+              entete(),
+              para(
+                communautaires
+                  ? 'PAIEMENT DES ENSEIGNANTS COMMUNAUTAIRES'
+                  : 'BOURSES DES ENSEIGNANTS VOLONTAIRES',
+                { gras: true, taille: 28, centre: true, avant: 200 },
+              ),
+              para(periode, {
+                gras: true,
+                taille: 24,
+                centre: true,
+                avant: 120,
+              }),
+              para('FICHE DE REPARTITION PAR DEPARTEMENT ET PAR CYCLE', {
+                gras: true,
+                taille: 28,
+                centre: true,
+                avant: 160,
+              }),
+              new Paragraph({ children: [] }),
+              tableau,
+              para(
+                `Arrêté le présent récapitulatif à la somme de : ${montantArrete(R.montT)}`,
+                { taille: 22, avant: 240, italique: true },
+              ),
+              para(e.signature.titre, { taille: 22, droite: true, avant: 360 }),
+              para('', { taille: 22 }),
+              para('', { taille: 22 }),
+              para('', { taille: 22 }),
+              para('', { taille: 22 }),
+              para(e.signature.nom, { gras: true, taille: 22, droite: true }),
+              ...(e.brouillon
+                ? [
+                    para(
+                      'Projet non validé : à faire valider par le Directeur général avant paiement.',
+                      { taille: 16, avant: 200 },
+                    ),
+                  ]
+                : []),
+            ],
+          },
+        ],
+        ...(choix === 'gill'
+          ? { styles: { default: { document: { run: { font: GILL } } } } }
+          : {}),
+      });
+      return {
+        nom: `RECAP - ${e.nomFichier}.docx`,
+        contenu: await Packer.toBuffer(docRecap),
+      };
+    }
     // Largeurs en pourcentage : la place de l'émargement et de la CNI, remplis à la main
     // La CNI s'écrit à la main : une colonne large (DG, 28/10/2026)
     // En portrait, N°, cycle, téléphone et observation un peu plus larges (13/11/2026)
@@ -1845,9 +2040,112 @@ export class BourseService {
     };
   }
 
+  /**
+   * Les chiffres du récapitulatif (« FICHE DE REPARTITION PAR DEPARTEMENT ET PAR CYCLE »), partagés
+   * par l'Excel et le Word : un groupe de colonnes par montant de bourse, avec les mots du DG
+   * (« Préscolaire-Primaire-Adm. scolaire-DEMA (50.000) »…), une ligne par département (effectif
+   * et montant de chaque groupe, puis le total) et les totaux.
+   */
+  private calculRecap(
+    population: string,
+    lignes: LigneBourse[],
+    nomDep: (d: number | null) => string,
+  ) {
+    const COURTS: Record<string, string> = {
+      PRESCOLAIRE: 'Préscolaire',
+      PRIMAIRE: 'Primaire',
+      ADMINISTRATION: 'Adm. scolaire',
+      BEAUX_ARTS: 'DEMA',
+      COLLEGE: 'Collège',
+      LYCEE: 'Lycée',
+      COM_PRESCOLAIRE: 'Préscolaire',
+      COM_PRIMAIRE: 'Primaire',
+      COM_ALPHABETISATION: 'Alpha/Resco/ORA',
+      COM_ADMINISTRATION: 'Adm. scolaire',
+      COM_POST_ALPHA: 'Post-Alpha',
+      COM_COLLEGE: 'Collège',
+      COM_LYCEE: 'Lycée',
+    };
+    const ORDRE = Object.keys(COURTS);
+    const cats = this.config.categoriesDe(population);
+    const tauxDe = (code: string | null) =>
+      cats.find((x) => x.code === code)?.bourse ?? 0;
+    // Le montant de bourse d'une ligne ; une ligne à 0 (complément seul) prend celui de son cycle
+    const tauxLigne = (l: LigneBourse) => l.montant || tauxDe(l.categorie);
+    const montantsGroupes = [
+      ...new Set([
+        ...cats.filter((x) => x.actif && x.bourse > 0).map((x) => x.bourse),
+        ...lignes.map(tauxLigne).filter((m) => m > 0),
+      ]),
+    ].sort((a, b) => a - b);
+    // « Sans barème » seulement s'il le faut, et en dernier
+    if (lignes.some((l) => !tauxLigne(l))) montantsGroupes.push(0);
+    const groupes = montantsGroupes.map((mt) => {
+      const noms = [
+        ...new Set(
+          cats
+            .filter(
+              (x) =>
+                x.bourse === mt &&
+                (x.actif || lignes.some((l) => l.categorie === x.code)),
+            )
+            // L'ordre du DG : Préscolaire-Primaire-Adm. scolaire-DEMA
+            .sort(
+              (a, b) =>
+                (ORDRE.indexOf(a.code) + 1 || 99) -
+                (ORDRE.indexOf(b.code) + 1 || 99),
+            )
+            .map((x) => COURTS[x.code] ?? x.libelle),
+        ),
+      ];
+      return {
+        montant: mt,
+        libelle: mt
+          ? `${noms.join('-') || 'Autres'}\n(${fcfa(mt)})`
+          : 'Sans barème\n(compléments, à vérifier)',
+      };
+    });
+    // Une ligne par département, dans l'ordre alphabétique
+    const parDep = new Map<string, LigneBourse[]>();
+    for (const l of lignes) {
+      const d = nomDep(l.departementId);
+      parDep.set(d, [...(parDep.get(d) ?? []), l]);
+    }
+    const totaux = groupes.map(() => ({ eff: 0, mont: 0 }));
+    const lignesRecap = [...parDep.entries()]
+      .sort(([a], [b]) => a.localeCompare(b, 'fr'))
+      .map(([departement, liste]) => {
+        const cellules = groupes.map((g, k) => {
+          const x = liste.filter((y) => tauxLigne(y) === g.montant);
+          const c = {
+            eff: x.length,
+            mont: x.reduce((s, y) => s + y.total, 0),
+          };
+          totaux[k].eff += c.eff;
+          totaux[k].mont += c.mont;
+          return c;
+        });
+        return {
+          departement,
+          cellules,
+          eff: cellules.reduce((s, c) => s + c.eff, 0),
+          mont: cellules.reduce((s, c) => s + c.mont, 0),
+        };
+      });
+    return {
+      groupes,
+      lignes: lignesRecap,
+      totaux,
+      effT: totaux.reduce((s, x) => s + x.eff, 0),
+      montT: totaux.reduce((s, x) => s + x.mont, 0),
+      avecRappels: lignes.some((l) => l.mois > 1),
+    };
+  }
+
   async excel(
     id: number,
     police: PoliceDocument = 'actuelle',
+    seulRecap = false,
   ): Promise<{ nom: string; contenu: Buffer }> {
     const ep = await this.etatPaiement(id);
     const lignes = await this.lignes.find({ where: { etatId: id } });
@@ -1908,7 +2206,8 @@ export class BourseService {
       );
     }
 
-    for (const s of feuilles) {
+    // Le RECAP seul : pas de listes à écrire
+    for (const s of seulRecap ? [] : feuilles) {
       const nom =
         s.feuille ??
         (s.titre === 'LISTE GÉNÉRALE' || s.titre === 'LISTE UNIQUE'
@@ -2068,18 +2367,7 @@ export class BourseService {
       // à l'impression (printTitlesRow) (13/11/2026)
       ws.views = [{ state: 'normal' }];
     }
-    lignes.sort((a, b) =>
-      nomDep(a.departementId).localeCompare(nomDep(b.departementId), 'fr'),
-    );
-    const parDep = new Map<string, LigneBourse[]>();
-    for (const l of lignes)
-      parDep.set(nomDep(l.departementId), [
-        ...(parDep.get(nomDep(l.departementId)) ?? []),
-        l,
-      ]);
-    [...parDep.values()].forEach((x) =>
-      x.sort((a, b) => a.nomComplet.localeCompare(b.nomComplet, 'fr')),
-    );
+    const R = this.calculRecap(ep.etat.population, lignes, nomDep);
 
     // Récapitulatif, copié sur celui que le DG a mis en forme (« Récapitulatif Bourse Volontaire_
     // Septembre 2026.xlsx », feuille RECAP, 13/11/2026) : en-tête du ministère à gauche et de la
@@ -2104,63 +2392,7 @@ export class BourseService {
     });
     // Vue « Mise en page », comme le DG l'a laissée
     ws.views = [{ style: 'pageLayout' }];
-    // Les cycles regroupés par montant, avec les mots du DG
-    const COURTS: Record<string, string> = {
-      PRESCOLAIRE: 'Préscolaire',
-      PRIMAIRE: 'Primaire',
-      ADMINISTRATION: 'Adm. scolaire',
-      BEAUX_ARTS: 'DEMA',
-      COLLEGE: 'Collège',
-      LYCEE: 'Lycée',
-      COM_PRESCOLAIRE: 'Préscolaire',
-      COM_PRIMAIRE: 'Primaire',
-      COM_ALPHABETISATION: 'Alpha/Resco/ORA',
-      COM_ADMINISTRATION: 'Adm. scolaire',
-      COM_POST_ALPHA: 'Post-Alpha',
-      COM_COLLEGE: 'Collège',
-      COM_LYCEE: 'Lycée',
-    };
-    const ORDRE = Object.keys(COURTS);
-    const cats = this.config.categoriesDe(ep.etat.population);
-    const tauxDe = (code: string | null) =>
-      cats.find((x) => x.code === code)?.bourse ?? 0;
-    // Le montant de bourse d'une ligne ; une ligne à 0 (complément seul) prend celui de son cycle
-    const tauxLigne = (l: LigneBourse) => l.montant || tauxDe(l.categorie);
-    const montantsGroupes = [
-      ...new Set([
-        ...cats.filter((x) => x.actif && x.bourse > 0).map((x) => x.bourse),
-        ...lignes.map(tauxLigne).filter((m) => m > 0),
-      ]),
-    ].sort((a, b) => a - b);
-    // « Sans barème » seulement s'il le faut, et en dernier
-    if (lignes.some((l) => !tauxLigne(l))) montantsGroupes.push(0);
-    const points = (n: number) =>
-      String(n).replace(/\B(?=(\d{3})+(?!\d))/g, '.');
-    const groupes = montantsGroupes.map((mt) => {
-      const noms = [
-        ...new Set(
-          cats
-            .filter(
-              (x) =>
-                x.bourse === mt &&
-                (x.actif || lignes.some((l) => l.categorie === x.code)),
-            )
-            // L'ordre du DG : Préscolaire-Primaire-Adm. scolaire-DEMA
-            .sort(
-              (a, b) =>
-                (ORDRE.indexOf(a.code) + 1 || 99) -
-                (ORDRE.indexOf(b.code) + 1 || 99),
-            )
-            .map((x) => COURTS[x.code] ?? x.libelle),
-        ),
-      ];
-      return {
-        montant: mt,
-        libelle: mt
-          ? `${noms.join('-') || 'Autres'}\n(${points(mt)})`
-          : 'Sans barème\n(compléments, à vérifier)',
-      };
-    });
+    const groupes = R.groupes;
     const nbColR = 2 + groupes.length * 2 + 2;
     const G = (n: number) => ws.getColumn(n).letter;
     const fusion = (l: number, c1: number, c2: number) => {
@@ -2223,7 +2455,7 @@ export class BourseService {
         : 'BOURSES DES ENSEIGNANTS VOLONTAIRES',
       { size: 14, bold: true },
     );
-    const avecRappels = lignes.some((l) => l.mois > 1);
+    const avecRappels = R.avecRappels;
     ecrire(
       12,
       1,
@@ -2295,7 +2527,7 @@ export class BourseService {
     // Une ligne par département (formules : la feuille se corrige dans Excel)
     const compta = '_-* #,##0_-;-* #,##0_-;_-* "-"??_-;_-@_-';
     const premiere = T + 2;
-    const deps2 = [...parDep.entries()];
+    const deps2 = R.lignes;
     const ecrireCellule = (
       l: number,
       c: number,
@@ -2314,24 +2546,14 @@ export class BourseService {
       if (o.fmt) cell.numFmt = o.fmt;
       cell.border = { top: fin, bottom: fin, left: fin, right: fin };
     };
-    const totaux = groupes.map(() => ({ eff: 0, mont: 0 }));
-    deps2.forEach(([d, liste], i) => {
+    deps2.forEach((ligne, i) => {
       const l = premiere + i;
       ws.getRow(l).height = 12.75;
       ecrireCellule(l, 1, i + 1, { centre: true, fmt: '#,##0' });
-      ecrireCellule(l, 2, d);
-      let eff = 0;
-      let mont = 0;
-      groupes.forEach((g, k) => {
-        const x = liste.filter(
-          (y) => (y.montant || tauxDe(y.categorie)) === g.montant,
-        );
-        const e = x.length;
-        const m = x.reduce((s, y) => s + y.total, 0);
-        totaux[k].eff += e;
-        totaux[k].mont += m;
-        eff += e;
-        mont += m;
+      ecrireCellule(l, 2, ligne.departement);
+      const { eff, mont } = ligne;
+      groupes.forEach((_, k) => {
+        const { eff: e, mont: m } = ligne.cellules[k];
         const c = 3 + k * 2;
         ecrireCellule(l, c, e, { centre: true, fmt: '#,##0' });
         // Le DG a mis le premier montant en petit (9) : on garde sa mise en forme
@@ -2369,12 +2591,9 @@ export class BourseService {
       formula: `SUM(${G(c)}${premiere}:${G(c)}${derniere})`,
       result: r,
     });
-    let effT = 0;
-    let montT = 0;
+    const { totaux, effT, montT } = R;
     groupes.forEach((_, k) => {
       const c = 3 + k * 2;
-      effT += totaux[k].eff;
-      montT += totaux[k].mont;
       ecrireCellule(lt, c, somme(c, totaux[k].eff), {
         gras: true,
         centre: true,
@@ -2427,8 +2646,15 @@ export class BourseService {
     ws.getColumn(nbColR).width = 13;
     wb.calcProperties.fullCalcOnLoad = true;
 
+    // Le RECAP seul (13/11/2026) : le classeur sans les listes
+    if (seulRecap)
+      for (const w of wb.worksheets.filter((x) => x.name !== 'RECAP'))
+        wb.removeWorksheet(w.id);
     appliquerPolice(wb, police);
     const contenu = Buffer.from(await wb.xlsx.writeBuffer());
-    return { nom: `${ep.nomFichier}.xlsx`, contenu };
+    return {
+      nom: `${seulRecap ? 'RECAP - ' : ''}${ep.nomFichier}.xlsx`,
+      contenu,
+    };
   }
 }

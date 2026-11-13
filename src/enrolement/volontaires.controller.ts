@@ -794,11 +794,14 @@ export class VolontairesController {
     @Res() res: Response,
     @Query('police') police?: string,
     @Query('orientation') orientation?: string,
+    @Query('recap') recap?: string,
   ) {
+    // ?recap=1 : le récapitulatif seul (13/11/2026)
     const { nom, contenu } = await this.bourse.word(
       id,
       policeDocument(police),
       orientationDocument(orientation),
+      recap === '1',
     );
     res.setHeader(
       'Content-Type',
@@ -869,10 +872,13 @@ export class VolontairesController {
     @Param('id', ParseIntPipe) id: number,
     @Res() res: Response,
     @Query('police') police?: string,
+    @Query('recap') recap?: string,
   ) {
+    // ?recap=1 : le RECAP seul, sans les listes (13/11/2026)
     const { nom, contenu } = await this.bourse.excel(
       id,
       policeDocument(police),
+      recap === '1',
     );
     res.setHeader(
       'Content-Type',
