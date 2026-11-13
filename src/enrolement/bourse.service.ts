@@ -117,6 +117,67 @@ interface Calcul {
   observation: string | null;
 }
 
+/**
+ * Les feuilles par département de l'état de paiement des communautaires, comme celles du cabinet
+ * (« ETATS DE PAIEMENT DES ENSEIGNANTS COMMUNAUTAIRES SEPTEMBRE 2026 » : « ETAT DE PAIEMENT
+ * BOUENZA », « … BZV », « … CUVETTE » avec le Congo-Oubangui, « … PLATEAUX-NKENI », « … PN »…).
+ */
+const FEUILLES_COMMUNAUTAIRES: {
+  feuille: string;
+  titre: string;
+  codes: string[];
+}[] = [
+  {
+    feuille: 'BOUENZA',
+    titre: 'DÉPARTEMENT DE LA BOUENZA',
+    codes: ['BOUENZA'],
+  },
+  {
+    feuille: 'BZV',
+    titre: 'DÉPARTEMENT DE BRAZZAVILLE',
+    codes: ['BRAZZAVILLE'],
+  },
+  {
+    feuille: 'CUVETTE',
+    titre: 'DÉPARTEMENTS : CUVETTE/CONGO-OUBANGUI',
+    codes: ['CUVETTE', 'CONGO_OUBANGUI'],
+  },
+  {
+    feuille: 'CUVETTE-OUEST',
+    titre: 'DÉPARTEMENT DE LA CUVETTE-OUEST',
+    codes: ['CUVETTE_OUEST'],
+  },
+  {
+    feuille: 'DJOUE-LEFINI',
+    titre: 'DÉPARTEMENT : DJOUÉ-LÉFINI',
+    codes: ['DJOUE_LEFINI'],
+  },
+  { feuille: 'KOUILOU', titre: 'DÉPARTEMENT DU KOUILOU', codes: ['KOUILOU'] },
+  {
+    feuille: 'LEKOUMOU',
+    titre: 'DÉPARTEMENT DE LA LÉKOUMOU',
+    codes: ['LEKOUMOU'],
+  },
+  {
+    feuille: 'LIKOUALA',
+    titre: 'DÉPARTEMENTS : LIKOUALA/CONGO-OUBANGUI',
+    codes: ['LIKOUALA'],
+  },
+  { feuille: 'NIARI', titre: 'DÉPARTEMENT DU NIARI', codes: ['NIARI'] },
+  {
+    feuille: 'PLATEAUX-NKENI',
+    titre: 'DÉPARTEMENTS : PLATEAUX/NKÉNI-ALIMA',
+    codes: ['PLATEAUX', 'NKENI_ALIMA'],
+  },
+  {
+    feuille: 'PN',
+    titre: 'DÉPARTEMENT DE POINTE-NOIRE',
+    codes: ['POINTE_NOIRE'],
+  },
+  { feuille: 'POOL', titre: 'DÉPARTEMENT DU POOL', codes: ['POOL'] },
+  { feuille: 'SANGHA', titre: 'DÉPARTEMENT DE LA SANGHA', codes: ['SANGHA'] },
+];
+
 @Injectable()
 export class BourseService {
   constructor(
@@ -845,7 +906,8 @@ export class BourseService {
       titre: communautaires
         ? 'ÉTAT DE PAIEMENT DES ENSEIGNANTS COMMUNAUTAIRES'
         : 'ÉTAT DE PAIEMENT DES ENSEIGNANTS VOLONTAIRES',
-      sousTitre: `${communautaires ? 'PAIEMENT' : 'BOURSE'} DU MOIS DE ${moisEnClair(etat.mois).toUpperCase()}${brouillon ? ' (PROJET NON VALIDÉ)' : ''}`,
+      // « DU MOIS D’OCTOBRE 2026 », « DU MOIS DE SEPTEMBRE 2026 »
+      sousTitre: `${communautaires ? 'PAIEMENT' : 'BOURSE'} DU MOIS ${/^[aeiou]/i.test(moisEnClair(etat.mois).normalize('NFD')) ? 'D’' : 'DE '}${moisEnClair(etat.mois).toUpperCase()}${brouillon ? ' (PROJET NON VALIDÉ)' : ''}`,
       brouillon,
       sections,
       signature: {
@@ -1676,13 +1738,54 @@ export class BourseService {
     const fmt = '#,##0';
     const nbCol = BourseService.COLONNES_PAIEMENT.length;
 
-    for (const s of ep.sections) {
+    // Les communautaires : la liste unique, puis une feuille par département comme l'état du
+    // cabinet (DG, 13/11/2026) ; les volontaires : la liste générale et ses départements
+    type Section = (typeof ep.sections)[number] & { feuille?: string };
+    const feuilles: Section[] = [...ep.sections];
+    if (communautaires) {
+      const codes = new Map(
+        (await this.deps.find()).map((d) => [d.id, d.code]),
+      );
+      const tous = ep.sections[0]?.lignes ?? [];
+      const pris = new Set<(typeof tous)[number]>();
+      const ajouter = (feuille: string, titre: string, liste: typeof tous) => {
+        if (!liste.length) return;
+        liste.forEach((l) => pris.add(l));
+        const total = liste.reduce((t, l) => t + l.montant, 0);
+        feuilles.push({
+          titre,
+          feuille,
+          lignes: liste,
+          total,
+          arrete: montantArrete(total),
+        });
+      };
+      for (const g of FEUILLES_COMMUNAUTAIRES)
+        ajouter(
+          `ETAT DE PAIEMENT ${g.feuille}`,
+          g.titre,
+          tous.filter(
+            (l) =>
+              !!l.departementId &&
+              g.codes.includes(codes.get(l.departementId) ?? ''),
+          ),
+        );
+      // Ce qui ne rentre dans aucune feuille (département non renseigné) : une feuille à part
+      ajouter(
+        'ETAT DE PAIEMENT AUTRES',
+        'DÉPARTEMENT NON RENSEIGNÉ',
+        tous.filter((l) => !pris.has(l)),
+      );
+    }
+
+    for (const s of feuilles) {
       const nom =
-        s.titre === 'LISTE GÉNÉRALE' || s.titre === 'LISTE UNIQUE'
+        s.feuille ??
+        (s.titre === 'LISTE GÉNÉRALE' || s.titre === 'LISTE UNIQUE'
           ? s.titre === 'LISTE UNIQUE'
             ? 'Liste unique'
             : 'Liste générale'
-          : s.titre.replace('DÉPARTEMENT : ', '');
+          : s.titre.replace('DÉPARTEMENT : ', ''));
       const ws = wb.addWorksheet(
         nom.slice(0, 31).replace(/[\\/?*[\]:]/g, ' '),
         {
