@@ -56,6 +56,10 @@ import {
 export type PoliceDocument = 'actuelle' | 'gill';
 export const policeDocument = (v: unknown): PoliceDocument =>
   v === 'gill' ? 'gill' : 'actuelle';
+/** Orientation des états en Word et en PDF (13/11/2026) : paysage (habituel) ou portrait. */
+export type OrientationDocument = 'paysage' | 'portrait';
+export const orientationDocument = (v: unknown): OrientationDocument =>
+  v === 'portrait' ? 'portrait' : 'paysage';
 const GILL = 'Gill Sans MT';
 /** Passe tout le classeur en Gill Sans MT (le « Gill Sans MT Condensed » du DG reste tel quel). */
 const appliquerPolice = (wb: ExcelJS.Workbook, police: PoliceDocument) => {
@@ -1384,10 +1388,11 @@ export class BourseService {
     'Observation',
   ];
 
-  /** État de paiement en Word (paysage) : chaque liste sur ses pages, signée. */
+  /** État de paiement en Word (paysage ou portrait, au choix) : chaque liste sur ses pages, signée. */
   async word(
     id: number,
     choix: PoliceDocument = 'actuelle',
+    orientation: OrientationDocument = 'paysage',
   ): Promise<{ nom: string; contenu: Buffer }> {
     const e = await this.etatPaiement(id);
     // Times New Roman (la police actuelle) ou Gill Sans MT, au choix (13/11/2026)
@@ -1433,7 +1438,13 @@ export class BourseService {
         children: [
           new Paragraph({
             alignment: o.droite ? AlignmentType.RIGHT : AlignmentType.LEFT,
-            children: [texte(String(t), { gras: o.gras, taille: 15 })],
+            // En portrait, la page est plus étroite : le tableau un peu plus petit
+            children: [
+              texte(String(t), {
+                gras: o.gras,
+                taille: orientation === 'portrait' ? 13 : 15,
+              }),
+            ],
           }),
         ],
       });
@@ -1493,11 +1504,20 @@ export class BourseService {
       });
     // Largeurs en pourcentage : la place de l'émargement et de la CNI, remplis à la main
     // La CNI s'écrit à la main : une colonne large (DG, 28/10/2026)
-    const largeurs = [3, 19, 7, 7, 14, 4, 7, 14, 11, 7, 7];
+    // En portrait, N°, cycle, téléphone et observation un peu plus larges (13/11/2026)
+    const largeurs =
+      orientation === 'portrait'
+        ? [5, 18, 9, 7, 12, 4, 8, 11, 10, 8, 8]
+        : [3, 19, 7, 7, 14, 4, 7, 14, 11, 7, 7];
     const sections = e.sections.map((s, k) => ({
       properties: {
         page: {
-          size: { orientation: PageOrientation.LANDSCAPE },
+          size: {
+            orientation:
+              orientation === 'portrait'
+                ? PageOrientation.PORTRAIT
+                : PageOrientation.LANDSCAPE,
+          },
           margin: { top: 700, bottom: 700, left: 700, right: 700 },
         },
       },
@@ -1513,7 +1533,10 @@ export class BourseService {
         new Paragraph({ children: [] }),
         new Table({
           width: { size: 100, type: WidthType.PERCENTAGE },
-          columnWidths: largeurs.map((x) => x * 150),
+          // La largeur utile de la page (en vingtièmes de point) : A4 moins les marges
+          columnWidths: largeurs.map(
+            (x) => x * (orientation === 'portrait' ? 105 : 150),
+          ),
           rows: [
             new TableRow({
               tableHeader: true,

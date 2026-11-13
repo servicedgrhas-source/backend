@@ -25,7 +25,12 @@ import {
 } from '../auth/auth';
 import { DEPARTEMENTS } from '../common/referentiels';
 import { BottinService } from './bottin.service';
-import { BourseService, CONTROLES, policeDocument } from './bourse.service';
+import {
+  BourseService,
+  CONTROLES,
+  orientationDocument,
+  policeDocument,
+} from './bourse.service';
 import { ConfigEnrolementService, LIBELLES_DEBUT } from './configuration';
 import { CYCLES_ENROLEMENT } from './enrolement.service';
 import { EcartsVolontairesService } from '../recensement/ecarts-volontaires.service';
@@ -788,8 +793,13 @@ export class VolontairesController {
     @Param('id', ParseIntPipe) id: number,
     @Res() res: Response,
     @Query('police') police?: string,
+    @Query('orientation') orientation?: string,
   ) {
-    const { nom, contenu } = await this.bourse.word(id, policeDocument(police));
+    const { nom, contenu } = await this.bourse.word(
+      id,
+      policeDocument(police),
+      orientationDocument(orientation),
+    );
     res.setHeader(
       'Content-Type',
       'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
