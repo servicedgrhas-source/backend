@@ -30,7 +30,15 @@ export interface ListeExportee {
   /** Colonne dont le texte est en retrait selon `niveaux` (arbre des structures). */
   retrait?: { colonne: number; niveaux: number[] };
   nomFeuille?: string;
+  /** Cellules signalées en rouge : [n° de ligne, n° de colonne] (ex. un âge hors des limites). */
+  rouges?: [number, number][];
+  /** Dernière ligne sous le tableau (« Arrêtée la présente liste à … »). */
+  fin?: string;
 }
+
+/** Mention en bas des listes imprimées ou exportées (DG, 12/11/2026). */
+export const GENERE_PAR =
+  'Document généré par le Système d’Information de gestion des ressources humaines et de l’administration scolaire (SIGRHAS-MEPPSA)';
 
 const MINISTERE = [
   'MINISTERE DE L’ENSEIGNEMENT PRESCOLAIRE, PRIMAIRE, SECONDAIRE ET DE L’ALPHABETISATION',
@@ -107,6 +115,21 @@ export async function excelListe(l: ListeExportee) {
     if (l.retrait && (l.retrait.niveaux[i] ?? 0) === 0)
       r.getCell(l.retrait.colonne + 1).font = { bold: true };
   });
+  for (const [i, col] of l.rouges ?? [])
+    ws.getRow(t.number + 1 + i).getCell(col + 1).font = {
+      bold: true,
+      color: { argb: 'FFB91C1C' },
+    };
+  ws.addRow([]);
+  if (l.fin)
+    ligneFusionnee(l.fin, { size: 10 }).getCell(1).alignment = {
+      horizontal: 'left',
+    };
+  ligneFusionnee(GENERE_PAR, {
+    size: 8,
+    italic: true,
+    color: { argb: 'FF52525B' },
+  }).getCell(1).alignment = { horizontal: 'left', wrapText: true };
   ws.columns = l.largeurs.map((width) => ({ width }));
   ws.views = [{ state: 'frozen', ySplit: t.number }];
   ws.autoFilter = {
@@ -118,10 +141,20 @@ export async function excelListe(l: ListeExportee) {
 }
 
 export async function wordListe(l: ListeExportee) {
-  const run = (text: string, o: { gras?: boolean; taille?: number } = {}) =>
+  const run = (
+    text: string,
+    o: {
+      gras?: boolean;
+      taille?: number;
+      couleur?: string;
+      italique?: boolean;
+    } = {},
+  ) =>
     new TextRun({
       text,
       bold: o.gras,
+      color: o.couleur,
+      italics: o.italique,
       size: o.taille ?? 18,
       font: 'Times New Roman',
     });
@@ -174,10 +207,16 @@ export async function wordListe(l: ListeExportee) {
     ],
   });
   const total = l.largeurs.reduce((s, x) => s + x, 0);
+  const rouges = new Set((l.rouges ?? []).map(([i, c]) => `${i}|${c}`));
+  const aGauche = (text: string, o: { taille?: number; italique?: boolean }) =>
+    new Paragraph({
+      spacing: { before: 120, after: 0 },
+      children: [run(text, o)],
+    });
   const cellule = (
     t: string | number | null,
     col: number,
-    o: { gras?: boolean; fond?: string; niveau?: number } = {},
+    o: { gras?: boolean; fond?: string; niveau?: number; rouge?: boolean } = {},
   ) =>
     new TableCell({
       width: {
@@ -195,7 +234,8 @@ export async function wordListe(l: ListeExportee) {
           indent: o.niveau ? { left: o.niveau * 240 } : undefined,
           children: [
             run(t === null || t === undefined ? '' : String(t), {
-              gras: o.gras,
+              gras: o.gras || o.rouge,
+              couleur: o.rouge ? 'B91C1C' : undefined,
               taille: 16,
             }),
           ],
@@ -238,12 +278,15 @@ export async function wordListe(l: ListeExportee) {
                           l.retrait && l.retrait.colonne === col
                             ? l.retrait.niveaux[i]
                             : undefined,
+                        rouge: rouges.has(`${i}|${col}`),
                       }),
                     ),
                   }),
               ),
             ],
           }),
+          ...(l.fin ? [aGauche(l.fin, { taille: 18 })] : []),
+          aGauche(GENERE_PAR, { taille: 14, italique: true }),
         ],
       },
     ],

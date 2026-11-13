@@ -9,6 +9,9 @@ import ExcelJS from 'exceljs';
 export interface LigneEnrole {
   nom: string;
   dateNaissance: string | null;
+  /** Âge au 31 décembre de l'année de la campagne, et s'il sort des limites (12/11/2026). */
+  age: number | null;
+  horsLimite: boolean;
   lieuNaissance: string | null;
   diplome: string;
   promotion: string | null;
@@ -54,6 +57,7 @@ const COLONNES: {
     largeur: 12,
     centre: true,
   },
+  { titre: 'Âge', cle: 'age', largeur: 7, centre: true },
   { titre: 'Lieu de naissance', cle: 'lieuNaissance', largeur: 18 },
   { titre: 'Diplôme', cle: 'diplome', largeur: 22, aLaLigne: true },
   { titre: 'Promotion', cle: 'promotion', largeur: 11, centre: true },
@@ -139,6 +143,9 @@ export async function classeurEnroles(
   legende.value = nbAPlacer
     ? `Lignes en orange : ${nbAPlacer} retenu(s) sans département retenu, à placer avant la note de service (Enrôlement › Base des enrôlés).`
     : 'Tous les retenus ont leur département retenu.';
+  const horsAge = lignes.filter((l) => l.horsLimite).length;
+  if (horsAge)
+    legende.value += ` Âge (au 31 décembre de l’année de la campagne) en rouge : ${horsAge} hors des limites d’âge.`;
   legende.font = {
     size: 10,
     bold: true,
@@ -186,6 +193,9 @@ export async function classeurEnroles(
       cell.font = {
         size: 10,
         ...(c.cle === 'nom' ? { bold: true } : {}),
+        ...(c.cle === 'age' && l.horsLimite
+          ? { bold: true, color: { argb: 'FFB91C1C' } }
+          : {}),
         ...(c.cle === 'retenu' && orange
           ? { bold: true, italic: true, color: { argb: ORANGE_FONCE } }
           : {}),

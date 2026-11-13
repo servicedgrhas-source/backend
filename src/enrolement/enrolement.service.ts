@@ -10,7 +10,7 @@ import type { UtilisateurConnecte } from '../auth/auth';
 import { lireClasseur } from '../common/excel';
 import { codeDepartement } from '../common/referentiels';
 import { motsDuNom, ressemblance } from '../common/ressemblance';
-import { lireDate, nettoyer, normaliser } from '../common/texte';
+import { ageRevolu, lireDate, nettoyer, normaliser } from '../common/texte';
 import { ConfigEnrolementService } from './configuration';
 import { JournalService } from '../core/core.service';
 import {
@@ -328,6 +328,23 @@ export interface EnroleDto {
   /** Enregistrer malgré un doublon signalé. */
   forcerDoublon?: boolean;
 }
+
+/** Une personne déjà connue ailleurs, qui ressemble fortement à un dossier d'enrôlement. */
+export interface Trouve {
+  source: string;
+  nom: string;
+  naissance: string | null;
+  detail: string;
+  statut: string;
+  etablissement: string | null;
+  departement: string | null;
+  /** Mêmes mots du nom et même date de naissance : sûre ; sinon à vérifier. */
+  sure: boolean;
+}
+
+/** « FONCTIONNAIRE » → « Fonctionnaire ». */
+const enClair = (code: string | null) =>
+  code ? code.charAt(0) + code.slice(1).toLowerCase().replace(/_/g, ' ') : '';
 
 @Injectable()
 export class EnrolementService implements OnApplicationBootstrap {
@@ -1248,110 +1265,213 @@ export class EnrolementService implements OnApplicationBootstrap {
   }
 
   /**
-   * Comparateur des « déjà connus » : recrutés de la Fonction publique, recrutés des années passées,
-   * registre des volontaires et communautaires, retenus des autres campagnes. Rend, pour un nom et
-   * une date, les fiches qui lui ressemblent fortement (règle commune des doublons).
+   * Comparateur des « déjà connus » : recrutés de la Fonction publique, base du personnel, recrutés
+   * des années passées, registre des volontaires et communautaires, retenus des autres campagnes.
+   * Rend, pour un nom et une date, les fiches qui lui ressemblent fortement (règle commune des
+   * doublons), avec où la personne a été trouvée (statut, établissement, département) et si la
+   * correspondance est sûre (mêmes mots du nom et même date de naissance) ou à vérifier.
    */
-  private async comparateurConnus(campagneId: number) {
-    type Ref = {
-      source: string;
-      nom: string;
-      naissance: string | null;
-      detail: string;
-      mots: string[];
-    };
+  /**
+   * Le comparateur est long à construire (toutes les bases) : « déjà connus » et « écartés » le
+   * partagent pendant deux minutes. Les bases comparées ne changent pas quand on tranche.
+   */
+  private comparateurs = new Map<
+    number,
+    { le: number; p: ReturnType<EnrolementService['construireComparateur']> }
+  >();
+  private comparateurConnus(campagneId: number, frais = false) {
+    const c = this.comparateurs.get(campagneId);
+    if (!frais && c && Date.now() - c.le < 120_000) return c.p;
+    const p = this.construireComparateur(campagneId);
+    this.comparateurs.set(campagneId, { le: Date.now(), p });
+    p.catch(() => this.comparateurs.delete(campagneId));
+    return p;
+  }
+
+  private async construireComparateur(campagneId: number) {
+    type Ref = Omit<Trouve, 'sure'> & { mots: string[]; cle: string };
     const refs: Ref[] = [];
-    const ajouter = (
-      source: string,
-      nom: string,
-      naissance: string | null,
-      detail: string,
-    ) => {
-      const mots = motsDuNom(nom);
-      if (mots.length >= 2) refs.push({ source, nom, naissance, detail, mots });
+    const nomsDep = new Map((await this.deps.find()).map((d) => [d.id, d.nom]));
+    const dep = (id: number | null | undefined) =>
+      id ? (nomsDep.get(id) ?? null) : null;
+    const ajouter = (r: Omit<Trouve, 'sure'>) => {
+      const mots = motsDuNom(r.nom);
+      if (mots.length >= 2)
+        refs.push({ ...r, mots, cle: [...mots].sort().join(' ') });
     };
     for (const a of await this.agents.find({
-      select: ['nomComplet', 'dateNaissance', 'quota', 'feuille'],
-    }))
-      ajouter(
-        'Recrutement (Fonction publique)',
-        a.nomComplet,
-        a.dateNaissance,
+      select: [
+        'nomComplet',
+        'dateNaissance',
+        'quota',
+        'feuille',
+        'departementId',
+        'departementBrut',
+        'lieuServiceBrut',
+        'statut',
+      ],
+    })) {
+      const detail =
         a.feuille === 'QUOTA_AUTRES'
           ? 'quota « Autres »'
-          : `quota ${a.quota ?? '?'}`,
-      );
+          : `quota ${a.quota ?? '?'}`;
+      ajouter({
+        source: 'Recrutement (Fonction publique)',
+        nom: a.nomComplet,
+        naissance: a.dateNaissance,
+        detail,
+        statut: ['Recruté', detail, a.statut].filter(Boolean).join(' · '),
+        etablissement: a.lieuServiceBrut,
+        departement: dep(a.departementId) ?? a.departementBrut,
+      });
+    }
     // La base du personnel (agents recensés) : un enrôlé y figure peut-être déjà (06/11/2026)
+    const structures = new Map<number, string>(
+      (
+        await this.enroles.manager.query<{ id: number; nom: string }[]>(
+          `SELECT id, nom FROM structure`,
+        )
+      ).map((s) => [s.id, s.nom]),
+    );
     for (const a of await this.personnel.find({
-      select: ['nomComplet', 'dateNaissance', 'statut'],
+      select: [
+        'nomComplet',
+        'dateNaissance',
+        'statut',
+        'departementId',
+        'structureId',
+      ],
     }))
-      ajouter('Base du personnel', a.nomComplet, a.dateNaissance, a.statut);
+      ajouter({
+        source: 'Base du personnel',
+        nom: a.nomComplet,
+        naissance: a.dateNaissance,
+        detail: a.statut,
+        statut: enClair(a.statut),
+        etablissement: a.structureId
+          ? (structures.get(a.structureId) ?? null)
+          : null,
+        departement: dep(a.departementId),
+      });
     for (const a of await this.anciens.find({
       select: ['nomComplet', 'dateNaissance', 'annee', 'source'],
     }))
-      ajouter(
-        'Recrutés des années passées',
-        a.nomComplet,
-        a.dateNaissance,
-        `${a.annee ?? 'année ?'}`,
-      );
+      ajouter({
+        source: 'Recrutés des années passées',
+        nom: a.nomComplet,
+        naissance: a.dateNaissance,
+        detail: `${a.annee ?? 'année ?'}`,
+        statut: `Recruté en ${a.annee ?? '?'}${a.source ? ` (${a.source})` : ''}`,
+        etablissement: null,
+        departement: null,
+      });
     for (const v of await this.volontaires.find({
-      select: ['nomComplet', 'dateNaissance', 'population', 'vague', 'statut'],
-    }))
-      ajouter(
-        v.population === 'COMMUNAUTAIRE'
-          ? 'Communautaires'
-          : 'Volontaires (bourse)',
-        v.nomComplet,
-        v.dateNaissance,
-        [v.vague, v.statut === 'SORTI' ? 'sorti' : 'en poste']
+      select: [
+        'nomComplet',
+        'dateNaissance',
+        'population',
+        'vague',
+        'statut',
+        'motifSortie',
+        'etablissement',
+        'departementId',
+        'departementBrut',
+      ],
+    })) {
+      const etat =
+        v.statut === 'SORTI'
+          ? `sorti${v.motifSortie ? ` (${this.config.motif(v.motifSortie)?.libelle ?? v.motifSortie})` : ''}`
+          : 'en poste';
+      ajouter({
+        source:
+          v.population === 'COMMUNAUTAIRE'
+            ? 'Communautaires'
+            : 'Volontaires (bourse)',
+        nom: v.nomComplet,
+        naissance: v.dateNaissance,
+        detail: [v.vague, v.statut === 'SORTI' ? 'sorti' : 'en poste']
           .filter(Boolean)
           .join(' · '),
-      );
+        statut: [
+          v.population === 'COMMUNAUTAIRE' ? 'Communautaire' : 'Volontaire',
+          etat,
+          v.vague,
+        ]
+          .filter(Boolean)
+          .join(' · '),
+        etablissement: v.etablissement,
+        departement: dep(v.departementId) ?? v.departementBrut,
+      });
+    }
     const annees = new Map(
       (await this.campagnes.find()).map((c) => [c.id, c.annee]),
     );
     for (const e of await this.enroles.find({
       where: { campagneId: Not(campagneId), etat: 'RETENU' },
-      select: ['nomComplet', 'dateNaissance', 'campagneId'],
+      select: [
+        'nomComplet',
+        'dateNaissance',
+        'campagneId',
+        'etablissement',
+        'departementRetenuId',
+      ],
     }))
-      ajouter(
-        'Enrôlement d’une autre année',
-        e.nomComplet,
-        e.dateNaissance,
-        `campagne ${annees.get(e.campagneId) ?? '?'}`,
-      );
+      ajouter({
+        source: 'Enrôlement d’une autre année',
+        nom: e.nomComplet,
+        naissance: e.dateNaissance,
+        detail: `campagne ${annees.get(e.campagneId) ?? '?'}`,
+        statut: `Retenu à l’enrôlement ${annees.get(e.campagneId) ?? '?'}`,
+        etablissement: e.etablissement,
+        departement: dep(e.departementRetenuId),
+      });
     // Index par mot du nom : on ne compare qu'aux noms qui partagent un des deux mots les plus longs
     const index = new Map<string, number[]>();
     refs.forEach((r, i) => {
       for (const m of new Set(r.mots))
         index.set(m, [...(index.get(m) ?? []), i]);
     });
-    return (nom: string, naissance: string | null) => {
+    return (nom: string, naissance: string | null): Trouve[] => {
       const mots = motsDuNom(nom);
       if (mots.length < 2) return [];
+      const cle = [...mots].sort().join(' ');
       const cles = [...mots].sort((a, b) => b.length - a.length).slice(0, 2);
       const vus = new Set<number>();
-      const trouves: {
-        source: string;
-        nom: string;
-        naissance: string | null;
-        detail: string;
-      }[] = [];
+      const trouves: Trouve[] = [];
       for (const k of cles)
         for (const i of index.get(k) ?? []) {
           if (vus.has(i)) continue;
           vus.add(i);
           const r = refs[i];
-          if (ressemblance(mots, naissance, r.mots, r.naissance) === 'PROBABLE')
-            trouves.push({
-              source: r.source,
-              nom: r.nom,
-              naissance: r.naissance,
-              detail: r.detail,
-            });
+          if (ressemblance(mots, naissance, r.mots, r.naissance) !== 'PROBABLE')
+            continue;
+          const { mots: _m, cle: c, ...reste } = r;
+          void _m;
+          trouves.push({
+            ...reste,
+            sure:
+              c === cle &&
+              !!naissance &&
+              !!r.naissance &&
+              naissance.slice(0, 10) === r.naissance.slice(0, 10),
+          });
         }
-      return trouves;
+      // Les correspondances sûres d'abord
+      return trouves.sort((a, b) => Number(b.sure) - Number(a.sure));
+    };
+  }
+
+  /** Un dossier comparé : ce qu'on en montre dans « déjà connus » et dans la liste des écartés. */
+  private dossierConnu(e: Enrole, trouves: Trouve[]) {
+    return {
+      id: e.id,
+      nom: e.nomComplet,
+      naissance: e.dateNaissance,
+      diplome: DIPLOMES_ENROLEMENT[e.diplome]?.libelle ?? e.diplome,
+      cycle: e.cycle,
+      etat: e.etat,
+      certitude: trouves.some((t) => t.sure) ? 'SURE' : 'A_VERIFIER',
+      trouves: trouves.slice(0, 5),
     };
   }
 
@@ -1359,7 +1479,8 @@ export class EnrolementService implements OnApplicationBootstrap {
    * Déjà connus (06/11/2026) : dossiers de la campagne (pas encore non retenus ni dans une note) qui
    * ressemblent fortement (même date et noms proches, ou mêmes mots sans date) à un recruté de la
    * Fonction publique, à une personne des années passées, à un volontaire ou communautaire du
-   * registre, ou à un retenu d'une autre campagne. La DGRHAS tranche : écarter, ou autre personne.
+   * registre, ou à un retenu d'une autre campagne. La DGRHAS tranche : écarter, autre personne, ou
+   * garder malgré tout (12/11/2026).
    */
   async dejaConnus(campagneId: number) {
     await this.campagne(campagneId);
@@ -1371,33 +1492,103 @@ export class EnrolementService implements OnApplicationBootstrap {
         dejaConnuVerifie: false,
       },
     });
-    const res: {
-      id: string;
-      nom: string;
-      naissance: string | null;
-      diplome: string;
-      etat: string;
-      trouves: {
-        source: string;
-        nom: string;
-        naissance: string | null;
-        detail: string;
-      }[];
-    }[] = [];
     const connus = await this.comparateurConnus(campagneId);
+    const res: ReturnType<EnrolementService['dossierConnu']>[] = [];
     for (const e of dossiers) {
       const trouves = connus(e.nomComplet, e.dateNaissance);
-      if (trouves.length)
-        res.push({
-          id: e.id,
-          nom: e.nomComplet,
-          naissance: e.dateNaissance,
-          diplome: DIPLOMES_ENROLEMENT[e.diplome]?.libelle ?? e.diplome,
-          etat: e.etat,
-          trouves: trouves.slice(0, 5),
-        });
+      if (trouves.length) res.push(this.dossierConnu(e, trouves));
     }
     return res.sort((a, b) => a.nom.localeCompare(b.nom, 'fr'));
+  }
+
+  /**
+   * Les écartés (DG, 12/11/2026) : dossiers non retenus parce que déjà connus ailleurs, avec où
+   * chacun a été trouvé. Ils sont tenus à part des retenus, et peuvent y revenir.
+   */
+  async ecartes(campagneId: number) {
+    const c = await this.campagne(campagneId);
+    const dossiers = await this.enroles.find({
+      where: { campagneId, etat: 'NON_RETENU', ecarteDejaConnu: true },
+    });
+    const connus = await this.comparateurConnus(campagneId);
+    const lignes = dossiers
+      .map((e) => ({
+        ...this.dossierConnu(e, connus(e.nomComplet, e.dateNaissance)),
+        motif: e.motifDecision,
+        decision: e.dejaConnuDecision,
+        decidePar: e.decidePar,
+        decideLe: e.decideLe,
+      }))
+      .sort((a, b) => a.nom.localeCompare(b.nom, 'fr'));
+    return { campagne: { id: c.id, annee: c.annee }, lignes };
+  }
+
+  /**
+   * Âge d'un dossier au 31 décembre de l'année de la campagne (une date fixe : l'âge ne change pas
+   * d'un jour à l'autre), et s'il sort des limites de la configuration (DG, 12/11/2026).
+   */
+  ageDe(naissance: string | null, annee: number) {
+    if (!naissance) return { age: null, horsLimite: false };
+    const age = ageRevolu(naissance, `${annee}-12-31`);
+    const c = this.config.get();
+    return { age, horsLimite: age < c.ageMinimum || age > c.ageMaximum };
+  }
+
+  /**
+   * Listes imprimables et exportables de l'enrôlement (DG, 12/11/2026) : les retenus, avec l'âge
+   * après la date de naissance ; les écartés, avec où chacun a été trouvé.
+   */
+  async listeEnrolement(campagneId: number, quoi: 'retenus' | 'ecartes') {
+    const c = await this.campagne(campagneId);
+    const conf = this.config.get();
+    const limites = `âge au 31/12/${c.annee}, limites ${conf.ageMinimum}–${conf.ageMaximum} ans`;
+    const jour = (d: string | null) =>
+      d ? d.slice(0, 10).split('-').reverse().join('/') : '';
+    if (quoi === 'retenus') {
+      const lignes = (await this.liste({ campagneId, etat: 'RETENU' })).map(
+        (e) => ({
+          nom: e.nomComplet,
+          naissance: jour(e.dateNaissance),
+          ...this.ageDe(e.dateNaissance, c.annee),
+          lieu: e.lieuNaissance,
+          diplome: e.diplomeLibelle,
+          cycle: [e.cycle, e.specialite].filter(Boolean).join(' · ') || null,
+          departement: e.departementRetenu,
+          etablissement: e.etablissement,
+        }),
+      );
+      return {
+        titre: `LISTE DES RETENUS — ENRÔLEMENT ${c.annee}`,
+        sousTitre: `Enrôlement ${c.annee} (${c.anneeScolaire}) · ${lignes.length.toLocaleString('fr-FR')} retenu(s) · ${limites}${
+          lignes.some((l) => l.horsLimite)
+            ? ` · ${lignes.filter((l) => l.horsLimite).length} hors des limites (en rouge)`
+            : ''
+        }`,
+        lignes,
+      };
+    }
+    const { lignes: ecartes } = await this.ecartes(campagneId);
+    const lignes = ecartes.map((e) => {
+      const t = e.trouves[0];
+      return {
+        nom: e.nom,
+        naissance: jour(e.naissance),
+        ...this.ageDe(e.naissance, c.annee),
+        diplome: e.diplome,
+        source: t?.source ?? 'Plus retrouvé dans les bases',
+        statut: t?.statut ?? null,
+        etablissement: t?.etablissement ?? null,
+        departement: t?.departement ?? null,
+        autres: e.trouves.length > 1 ? e.trouves.length - 1 : 0,
+        correspondance: e.certitude === 'SURE' ? 'Sûre' : 'À vérifier',
+        motif: e.motif,
+      };
+    });
+    return {
+      titre: `LISTE DES ÉCARTÉS (DÉJÀ CONNUS) — ENRÔLEMENT ${c.annee}`,
+      sousTitre: `Enrôlement ${c.annee} (${c.anneeScolaire}) · ${lignes.length.toLocaleString('fr-FR')} écarté(s) : déjà recrutés, au personnel, volontaires, communautaires ou retenus une autre année · ${lignes.filter((l) => l.correspondance === 'Sûre').length} sûr(s), ${lignes.filter((l) => l.correspondance !== 'Sûre').length} à vérifier`,
+      lignes,
+    };
   }
 
   /** Cycle d'un dossier quand il suit la règle (licence de langue ou de philosophie : lycée). */
@@ -1531,14 +1722,23 @@ export class EnrolementService implements OnApplicationBootstrap {
     return res;
   }
 
-  /** Déjà connu : l'écarter (non retenu) ou dire que c'est une autre personne. */
+  /**
+   * Déjà connu : l'écarter (c'est bien la même personne : non retenu, dans la liste des écartés),
+   * dire que c'est une autre personne, ou le garder malgré tout (c'est lui, mais pour une raison
+   * évidente il reste dans la course : le motif est demandé).
+   */
   async trancherDejaConnu(
     u: UtilisateurConnecte,
     ids: string[],
-    decision: 'ECARTER' | 'DIFFERENT',
+    decision: 'ECARTER' | 'DIFFERENT' | 'GARDER',
     motif?: string,
   ) {
     if (!ids.length) throw new BadRequestException('Aucun dossier choisi.');
+    const raison = motif?.trim() ?? '';
+    if (decision === 'GARDER' && !raison)
+      throw new BadRequestException(
+        'Pour garder un dossier malgré tout, écrivez la raison (elle reste dans le dossier).',
+      );
     const liste = await this.enroles.find({
       where: { id: In(ids), noteId: IsNull() },
     });
@@ -1549,20 +1749,116 @@ export class EnrolementService implements OnApplicationBootstrap {
           etat: 'NON_RETENU',
           decidePar: u.nom,
           decideLe: new Date(),
-          motifDecision: `Déjà connu${motif?.trim() ? ` : ${motif.trim()}` : ' (recruté, volontaire ou enrôlé)'}`,
+          ecarteDejaConnu: true,
+          dejaConnuDecision: 'C’est bien la même personne',
+          motifDecision: `Déjà connu${raison ? ` : ${raison}` : ' (recruté, volontaire ou enrôlé)'}`,
         });
-      else await this.enroles.update(paquet, { dejaConnuVerifie: true });
+      else
+        await this.enroles.update(paquet, {
+          dejaConnuVerifie: true,
+          dejaConnuDecision:
+            decision === 'GARDER'
+              ? `Gardé malgré tout : ${raison}`
+              : `Pas la même personne${raison ? ` : ${raison}` : ''}`,
+        });
     }
     await this.journal.log(
       u,
       decision === 'ECARTER'
         ? 'ENROLES_DEJA_CONNUS_ECARTES'
-        : 'ENROLES_DEJA_CONNUS_DIFFERENTS',
+        : decision === 'GARDER'
+          ? 'ENROLES_DEJA_CONNUS_GARDES'
+          : 'ENROLES_DEJA_CONNUS_DIFFERENTS',
       'enrole',
       null,
-      { dossiers: liste.length },
+      { dossiers: liste.length, motif: raison || undefined },
     );
     return { traites: liste.length };
+  }
+
+  /**
+   * Remettre des écartés parmi les retenus (DG, 12/11/2026) : ce n'est pas la même personne, ou
+   * c'est elle mais on la garde malgré tout (motif demandé). Le DG les retient aussitôt (dans la
+   * limite du quota, des places et de l'enveloppe) ; un autre profil les renvoie « à décider ».
+   */
+  async remettreEcartes(
+    u: UtilisateurConnecte,
+    ids: string[],
+    raison: 'DIFFERENT' | 'GARDER',
+    motif?: string,
+  ) {
+    if (!ids.length) throw new BadRequestException('Aucun dossier choisi.');
+    const texte = motif?.trim() ?? '';
+    if (raison === 'GARDER' && !texte)
+      throw new BadRequestException(
+        'Pour remettre quelqu’un malgré tout, écrivez la raison (elle reste dans le dossier).',
+      );
+    const liste = await this.enroles.find({
+      where: {
+        id: In(ids),
+        etat: 'NON_RETENU',
+        ecarteDejaConnu: true,
+        noteId: IsNull(),
+      },
+    });
+    if (!liste.length)
+      throw new BadRequestException(
+        'Ces dossiers ne sont plus dans les écartés.',
+      );
+    const avant = liste.map((e) => ({
+      id: e.id,
+      decidePar: e.decidePar,
+      decideLe: e.decideLe,
+      motifDecision: e.motifDecision,
+    }));
+    const decision =
+      raison === 'GARDER'
+        ? `Remis malgré tout : ${texte}`
+        : `Pas la même personne${texte ? ` : ${texte}` : ''}`;
+    for (let i = 0; i < liste.length; i += 1000)
+      await this.enroles.update(
+        { id: In(liste.slice(i, i + 1000).map((e) => e.id)) },
+        {
+          etat: 'CONTROLE',
+          ecarteDejaConnu: false,
+          dejaConnuVerifie: true,
+          dejaConnuDecision: decision,
+          motifDecision: null,
+          decidePar: null,
+          decideLe: null,
+        },
+      );
+    let retenus = 0;
+    if (u.role === 'DG') {
+      try {
+        retenus = (
+          await this.decider(
+            u,
+            liste.map((e) => e.id),
+            'RETENU',
+          )
+        ).traites;
+      } catch (err) {
+        // Quota, places ou enveloppe dépassés : ils restent écartés, comme avant
+        for (const a of avant)
+          await this.enroles.update(a.id, {
+            etat: 'NON_RETENU',
+            ecarteDejaConnu: true,
+            dejaConnuVerifie: false,
+            dejaConnuDecision: 'C’est bien la même personne',
+            motifDecision: a.motifDecision,
+            decidePar: a.decidePar,
+            decideLe: a.decideLe,
+          });
+        throw err;
+      }
+    }
+    await this.journal.log(u, 'ENROLES_ECARTES_REMIS', 'enrole', null, {
+      dossiers: liste.length,
+      retenus,
+      decision,
+    });
+    return { traites: liste.length, retenus };
   }
 
   /** Revenir sur une décision (avant la note validée). */
@@ -1810,7 +2106,7 @@ export class EnrolementService implements OnApplicationBootstrap {
     };
 
     // 2. Comparaisons : la campagne (même personne, puis doublon probable), le fichier, les bases
-    const connus = await this.comparateurConnus(campagneId);
+    const connus = await this.comparateurConnus(campagneId, true);
     const parMot = new Map<
       string,
       {

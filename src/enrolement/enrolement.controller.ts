@@ -18,6 +18,11 @@ import ExcelJS from 'exceljs';
 import type { Response } from 'express';
 import { classeurEnroles, ETAPES_ENROLE } from './export-enroles';
 import {
+  excelListe,
+  wordListe,
+  type ListeExportee,
+} from '../common/export-liste';
+import {
   Roles,
   ROLES_CONTROLE,
   ROLES_TRAITEMENT,
@@ -246,6 +251,119 @@ export class EnrolementController {
     return this.service.dejaConnus(campagne);
   }
 
+  /** Les écartés : non retenus parce que déjà connus ailleurs, avec où (12/11/2026). */
+  @Roles(...ROLES_TRAITEMENT)
+  @Get('ecartes')
+  ecartes(@Query('campagne', ParseIntPipe) campagne: number) {
+    return this.service.ecartes(campagne);
+  }
+
+  /** Remettre des écartés parmi les retenus : pas la même personne, ou gardés malgré tout. */
+  @Roles(...ROLES_CONTROLE)
+  @Post('ecartes/remettre')
+  remettreEcartes(
+    @Utilisateur() u: UtilisateurConnecte,
+    @Body()
+    body: { ids: string[]; raison: 'DIFFERENT' | 'GARDER'; motif?: string },
+  ) {
+    if (!['DIFFERENT', 'GARDER'].includes(body?.raison))
+      throw new BadRequestException('Raison inconnue.');
+    return this.service.remettreEcartes(
+      u,
+      Array.isArray(body?.ids) ? body.ids.map(String) : [],
+      body.raison,
+      body.motif,
+    );
+  }
+
+  /**
+   * Liste des retenus (avec l'âge) ou des écartés : `json` pour la page d'impression (PDF), `excel`
+   * ou `word` à télécharger, avec la mention « Généré par le Système d'Information… ».
+   */
+  @Roles(...ROLES_TRAITEMENT)
+  @Get('listes/:quoi/:format')
+  async listeEnrolement(
+    @Param('quoi') quoi: string,
+    @Param('format') format: string,
+    @Query('campagne', ParseIntPipe) campagne: number,
+    @Res() res: Response,
+  ) {
+    if (quoi !== 'retenus' && quoi !== 'ecartes')
+      throw new BadRequestException('Liste inconnue.');
+    const l = await this.service.listeEnrolement(campagne, quoi);
+    if (format === 'json') return res.json(l);
+    if (format !== 'excel' && format !== 'word')
+      throw new BadRequestException('Format inconnu.');
+    const ecartes = quoi === 'ecartes';
+    const lignes = l.lignes as unknown as Record<
+      string,
+      string | number | boolean | null
+    >[];
+    const colonnes: [string, string, number][] = ecartes
+      ? [
+          ['N°', 'n', 6],
+          ['Noms et prénoms', 'nom', 30],
+          ['Date de naissance', 'naissance', 12],
+          ['Âge', 'age', 6],
+          ['Diplôme', 'diplome', 18],
+          ['Trouvé dans', 'source', 22],
+          ['Statut', 'statut', 24],
+          ['Établissement', 'etablissement', 24],
+          ['Département', 'departement', 16],
+          ['Correspondance', 'correspondance', 13],
+          ['Motif', 'motif', 26],
+        ]
+      : [
+          ['N°', 'n', 6],
+          ['Noms et prénoms', 'nom', 32],
+          ['Date de naissance', 'naissance', 12],
+          ['Âge', 'age', 6],
+          ['Lieu de naissance', 'lieu', 16],
+          ['Diplôme', 'diplome', 20],
+          ['Cycle · spécialité', 'cycle', 22],
+          ['Département retenu', 'departement', 18],
+          ['Établissement', 'etablissement', 26],
+        ];
+    const colAge = colonnes.findIndex(([, k]) => k === 'age');
+    const liste: ListeExportee = {
+      titre: l.titre,
+      sousTitre: l.sousTitre,
+      entetes: colonnes.map(([t]) => t),
+      largeurs: colonnes.map(([, , w]) => w),
+      nombres: [0, colAge],
+      nomFeuille: ecartes ? 'Écartés' : 'Retenus',
+      lignes: lignes.map((x, i) =>
+        colonnes.map(([, k]) =>
+          k === 'n'
+            ? i + 1
+            : k === 'source' && x.autres
+              ? `${String(x.source)} (+${Number(x.autres)} autre(s))`
+              : typeof x[k] === 'boolean'
+                ? null
+                : (x[k] ?? null),
+        ),
+      ),
+      rouges: lignes.flatMap((x, i) =>
+        x.horsLimite ? [[i, colAge] as [number, number]] : [],
+      ),
+      fin: `Arrêtée la présente liste à ${lignes.length.toLocaleString('fr-FR')} ${ecartes ? 'écarté(s)' : 'retenu(s)'}.`,
+    };
+    const contenu =
+      format === 'excel' ? await excelListe(liste) : await wordListe(liste);
+    const nom = `${ecartes ? 'Ecartes' : 'Retenus'} enrolement ${new Date().toLocaleDateString('fr-FR').replaceAll('/', '-')}.${format === 'excel' ? 'xlsx' : 'docx'}`;
+    res.setHeader(
+      'Content-Type',
+      format === 'excel'
+        ? 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+        : 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    );
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename*=UTF-8''${encodeURIComponent(nom)}`,
+    );
+    res.send(contenu);
+  }
+
   /** Envoyer des dossiers dans une autre note (lycée, collège, primaire, préscolaire) ou à la règle. */
   @Roles(...ROLES_TRAITEMENT)
   @Post('dossiers/note')
@@ -288,9 +406,13 @@ export class EnrolementController {
   trancherDejaConnu(
     @Utilisateur() u: UtilisateurConnecte,
     @Body()
-    body: { ids: string[]; decision: 'ECARTER' | 'DIFFERENT'; motif?: string },
+    body: {
+      ids: string[];
+      decision: 'ECARTER' | 'DIFFERENT' | 'GARDER';
+      motif?: string;
+    },
   ) {
-    if (!['ECARTER', 'DIFFERENT'].includes(body?.decision))
+    if (!['ECARTER', 'DIFFERENT', 'GARDER'].includes(body?.decision))
       throw new BadRequestException('Décision inconnue.');
     return this.service.trancherDejaConnu(
       u,
@@ -508,6 +630,7 @@ export class EnrolementController {
       liste.map((e) => ({
         nom: e.nomComplet,
         dateNaissance: e.dateNaissance,
+        ...this.service.ageDe(e.dateNaissance, c.annee),
         lieuNaissance: e.lieuNaissance,
         diplome: e.diplomeLibelle,
         promotion: e.promotion,

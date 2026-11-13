@@ -1170,6 +1170,10 @@ export class Enrole {
    * ce n'est pas la même personne (06/11/2026). Il ne revient plus dans « déjà connus ».
    */
   @Column({ default: false }) dejaConnuVerifie: boolean;
+  /** Écarté parce que déjà connu ailleurs (recruté, volontaire…) : la liste des écartés (12/11/2026). */
+  @Column({ default: false }) ecarteDejaConnu: boolean;
+  /** Ce qui a été décidé sur un « déjà connu » : « Pas la même personne », « Gardé malgré tout : … ». */
+  @Column({ type: 'text', nullable: true }) dejaConnuDecision: string | null;
   /**
    * Note choisie à la main (06/11/2026) : BET (préscolaire), CFEEN (primaire), LICENCE (collège),
    * MASTER (lycée)… ; null : la règle automatique (licence de langue ou de philosophie au lycée…).
