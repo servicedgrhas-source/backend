@@ -2590,6 +2590,8 @@ export class VolontairesService implements OnModuleInit {
           categorie?: string | null;
         }
       >;
+      /** Noms donnés par l'agent aux lignes sans nom (clé « feuille#ligne »). */
+      nomsSansNom?: Record<string, string>;
       essai: boolean;
     },
   ) {
@@ -2646,15 +2648,31 @@ export class VolontairesService implements OnModuleInit {
       Number(enTexte(this.valeur(l, ['MONTANT'])).replace(/\s/g, '')) || 0;
 
     // Les lignes de toutes les feuilles cochées
-    const sansNom: { feuille: string; ligne: number; montant: number }[] = [];
+    const sansNom: {
+      cle: string;
+      feuille: string;
+      ligne: number;
+      montant: number;
+      numero: string;
+      cycle: string | null;
+      departement: string | null;
+      etablissement: string | null;
+    }[] = [];
+    // Le nom donné par l'agent à une ligne sans nom (au moins deux lettres)
+    const nomDonne = (feuille: string, ligne: number) => {
+      const n = nettoyer(o.nomsSansNom?.[`${feuille}#${ligne}`]);
+      return n && /\p{L}.*\p{L}/u.test(n) ? n.slice(0, 150) : null;
+    };
+    const nomDe = (f: { nom: string }, l: Ligne) =>
+      nettoyer(
+        this.valeur(l, ['NOMSETPRENOMS', 'NOMETPRENOMS', 'NOMSPRENOMS']),
+      ) ?? nomDonne(f.nom, l._ligne);
     const lignes = feuilles.flatMap((f) => {
       const depsFeuille = this.departementsDeFeuille(f.nom, deps);
       // Toute ligne numérotée qui porte un nom est une personne payée, même un nom d'un seul mot
       // (l'état d'août des communautaires en compte 57) : elle est lue, et montrée à l'agent
       const personnes = f.lignes.filter((l) => {
-        const nom = nettoyer(
-          this.valeur(l, ['NOMSETPRENOMS', 'NOMETPRENOMS', 'NOMSPRENOMS']),
-        );
+        const nom = nomDe(f, l);
         return (
           !!nom &&
           !/^(TOTAL|NOMS?\s+(ET\s+)?PR)/i.test(normaliser(nom)) &&
@@ -2662,25 +2680,29 @@ export class VolontairesService implements OnModuleInit {
         );
       });
       const gardees = new Set(personnes);
-      // Une ligne numérotée et payée mais sans nom : signalée (le DG doit la compléter)
+      // Une ligne numérotée et payée mais sans nom (et sans nom donné par l'agent) : mise de
+      // côté et signalée, avec ce qui permet de la retrouver (le DG doit la compléter)
       for (const l of f.lignes)
         if (
           !gardees.has(l) &&
           /^\d+$/.test(enTexte(this.valeur(l, ['N'])).trim()) &&
-          !nettoyer(
-            this.valeur(l, ['NOMSETPRENOMS', 'NOMETPRENOMS', 'NOMSPRENOMS']),
-          ) &&
+          !nomDe(f, l) &&
           montantDe(l) > 0
         )
           sansNom.push({
+            cle: `${f.nom}#${l._ligne}`,
             feuille: f.nom,
             ligne: l._ligne,
             montant: montantDe(l),
+            numero: enTexte(this.valeur(l, ['N'])).trim(),
+            cycle: nettoyer(this.valeur(l, ['CYCLE'])),
+            departement:
+              nettoyer(this.valeur(l, ['DEPART', 'DPART'])) ??
+              (depsFeuille.length === 1 ? depsFeuille[0].nom : null),
+            etablissement: nettoyer(this.valeur(l, ['ETABLISSEMENT'])),
           });
       return personnes.map((l) => {
-        const nom = nettoyer(
-          this.valeur(l, ['NOMSETPRENOMS', 'NOMETPRENOMS', 'NOMSPRENOMS']),
-        )!;
+        const nom = nomDe(f, l)!;
         const naissance = lireDate(this.valeur(l, ['DATEDENAIS', 'NELE']));
         const cycleBrut = nettoyer(this.valeur(l, ['CYCLE']));
         const depBrutColonne = nettoyer(this.valeur(l, ['DEPART', 'DPART']));
@@ -2889,7 +2911,15 @@ export class VolontairesService implements OnModuleInit {
         exemples: sansNom
           .slice(0, 60)
           .map((x) => `« ${x.feuille} » ligne ${x.ligne} : ${x.montant} F`),
+        lignes: sansNom.slice(0, 500),
       },
+      nommees: Object.keys(o.nomsSansNom ?? {}).filter((k) => {
+        const [feuille, ligne] = [
+          k.slice(0, k.lastIndexOf('#')),
+          Number(k.slice(k.lastIndexOf('#') + 1)),
+        ];
+        return !!nomDonne(feuille, ligne);
+      }).length,
       doublons: court(doublons),
       retrouves: gardes.length + reintegres.length,
       dejaPayables,

@@ -335,6 +335,36 @@ export class BourseService {
 
   /** Prépare (ou recalcule) l'état d'un mois : qui est payé, combien, et les contrôles. */
   async preparer(u: UtilisateurConnecte, mois: string, pop?: string) {
+    return (await this.calculer(u, mois, pop, 'ENREGISTRER')).etat!;
+  }
+
+  /**
+   * Ce que « Recalculer » changerait, sans rien enregistrer (14/11/2026 : les chiffres d'un état
+   * préparé ne changent que quand on recalcule exprès) : entrées, sorties, montants changés.
+   */
+  async apercuRecalcul(u: UtilisateurConnecte, id: number) {
+    const e = await this.etats.findOne({ where: { id } });
+    if (!e) throw new NotFoundException('État de bourse introuvable');
+    return (await this.calculer(u, e.mois, e.population, 'APERCU')).apercu;
+  }
+
+  /**
+   * Les contrôles d'un état remis à jour (après une décision, une fiche corrigée), sans toucher à
+   * ses lignes ni à ses montants : seuls les contrôles des personnes de l'état sont gardés.
+   */
+  async controlesAJour(u: UtilisateurConnecte, id: number) {
+    const e = await this.etats.findOne({ where: { id } });
+    if (!e) throw new NotFoundException('État de bourse introuvable');
+    const r = await this.calculer(u, e.mois, e.population, 'CONTROLES');
+    return { ...r.etat!, apercu: r.apercu };
+  }
+
+  private async calculer(
+    u: UtilisateurConnecte,
+    mois: string,
+    pop: string | undefined,
+    mode: 'ENREGISTRER' | 'CONTROLES' | 'APERCU',
+  ) {
     if (!MOIS_RE.test(mois ?? ''))
       throw new BadRequestException('Mois attendu (AAAA-MM).');
     const population = populationDe(pop);
@@ -695,6 +725,67 @@ export class BourseService {
 
     // Une ligne par volontaire payé (les montants de l'instant sont figés)
     const total = calculs.reduce((t, x) => t + totalLigne(x), 0);
+
+    // Ce qui changerait par rapport à l'état enregistré (entrées, sorties, montants)
+    const anciennes = etat
+      ? await this.lignes.find({
+          where: { etatId: etat.id },
+          select: { volontaireId: true, nomComplet: true, total: true },
+        })
+      : [];
+    const avantParId = new Map(anciennes.map((l) => [l.volontaireId, l]));
+    const apresParId = new Map(calculs.map((x) => [x.v.id, x]));
+    const entrees = calculs.filter((x) => !avantParId.has(x.v.id));
+    const sorties = anciennes.filter((l) => !apresParId.has(l.volontaireId));
+    const montants = calculs.filter((x) => {
+      const a = avantParId.get(x.v.id);
+      return a && Number(a.total) !== totalLigne(x);
+    });
+    const court = <T>(liste: T[], texte: (x: T) => string) => ({
+      n: liste.length,
+      exemples: liste.slice(0, 40).map(texte),
+    });
+    const bloquantsDe = (liste: Anomalie[]) =>
+      liste.filter((a) => a.gravite === 'BLOQUANT').length;
+    // Les contrôles des seules personnes de l'état tel qu'il est enregistré
+    const anomaliesEtat = anomalies.filter((a) =>
+      avantParId.has(a.volontaireId),
+    );
+    const apercu = {
+      calculeLe: etat?.calculeLe ?? null,
+      effectifAvant: anciennes.length,
+      totalAvant: anciennes.reduce((t, l) => t + Number(l.total), 0),
+      effectifApres: calculs.length,
+      totalApres: total,
+      entrees: court(
+        entrees,
+        (x) => `${x.v.nomComplet} : ${fcfa(totalLigne(x))} F`,
+      ),
+      sorties: court(
+        sorties,
+        (l) => `${l.nomComplet} : ${fcfa(Number(l.total))} F`,
+      ),
+      montants: court(
+        montants,
+        (x) =>
+          `${x.v.nomComplet} : ${fcfa(Number(avantParId.get(x.v.id)!.total))} → ${fcfa(totalLigne(x))} F`,
+      ),
+      bloquantsAvant: bloquantsDe((etat?.anomalies ?? []) as Anomalie[]),
+      bloquantsApres: bloquantsDe(anomalies),
+      changements: entrees.length + sorties.length + montants.length,
+    };
+    if (mode === 'APERCU') return { etat: null, apercu };
+    if (mode === 'CONTROLES') {
+      if (!etat)
+        throw new BadRequestException(
+          `Aucun état de ${moisEnClair(mois)} (${liste}) : préparez-le d'abord.`,
+        );
+      await this.etats.update(etat.id, { anomalies: anomaliesEtat });
+      return {
+        etat: await this.etats.findOneOrFail({ where: { id: etat.id } }),
+        apercu,
+      };
+    }
     await this.ds.transaction(async (m) => {
       if (!etat)
         etat = await m.save(EtatBourse, {
@@ -742,8 +833,12 @@ export class BourseService {
       effectif: calculs.length,
       total,
       bloquants: anomalies.filter((a) => a.gravite === 'BLOQUANT').length,
+      changements: apercu.changements,
     });
-    return this.etats.findOneOrFail({ where: { id: etat!.id } });
+    return {
+      etat: await this.etats.findOneOrFail({ where: { id: etat!.id } }),
+      apercu,
+    };
   }
 
   /** Validation par le DG : seulement après un calcul à jour et sans contrôle bloquant. */
@@ -767,8 +862,15 @@ export class BourseService {
       throw new BadRequestException(
         `L’état de ${moisEnClair(enProjet.mois)} n’est pas validé : validez-le d’abord, ou supprimez-le (ses mois seront alors payés en rappel ici).`,
       );
-    // On recalcule d'abord : la fiche d'un volontaire a pu changer depuis
-    const etat = await this.preparer(u, avant.mois, avant.population);
+    // Les contrôles sont remis à jour (une fiche a pu être réglée depuis) ; les lignes et les
+    // montants restent ceux du dernier calcul : seul « Recalculer » les change (14/11/2026)
+    const { etat } = await this.calculer(
+      u,
+      avant.mois,
+      avant.population,
+      'CONTROLES',
+    );
+    if (!etat) throw new NotFoundException('État de bourse introuvable');
     const bloquants = (etat.anomalies as Anomalie[]).filter(
       (a) => a.gravite === 'BLOQUANT',
     );
@@ -1741,6 +1843,428 @@ export class BourseService {
     return {
       // « Fiche de prise en charge Communautaires Septembre 2026 » (le nom du DG, 13/11/2026)
       nom: `Fiche de prise en charge ${communautaires ? 'Communautaires' : 'Volontaires'} ${moisMajuscule(etat.mois)}${etat.statut === 'VALIDE' ? '' : ' (projet)'}.xlsx`,
+      contenu: Buffer.from(await wb.xlsx.writeBuffer()),
+    };
+  }
+
+  /**
+   * Les sortants du mois d'un état et leur incidence financière (14/11/2026 : « les sortants et leur
+   * motif explicite, août pour août » ; « s'ils étaient payés, combien ils devaient prendre ») : les
+   * personnes de cette liste dont la bourse s'arrête ce mois-ci (premier mois non payé = le mois de
+   * l'état, d'après le motif et la date de sortie). Pour chacune : la bourse qu'elle aurait touchée
+   * ce mois (le barème de son cycle), et ce qui n'est plus payé jusqu'à la fin de l'année scolaire
+   * (août). Totaux par motif, par département et par cycle. Partagé par l'Excel et la page.
+   */
+  async sortantsDuMois(id: number) {
+    const etat = await this.etats.findOne({ where: { id } });
+    if (!etat) throw new NotFoundException('État de bourse introuvable');
+    const c = this.config.get();
+    const communautaires = etat.population === 'COMMUNAUTAIRE';
+    const categories = this.config.categoriesDe(etat.population);
+    const deps = new Map((await this.deps.find()).map((d) => [d.id, d.nom]));
+    const precedent = ajouterMois(etat.mois, -1);
+    // La fin de l'année scolaire : août (septembre 2026 → août 2027 ; août 2026 → août 2026)
+    const [an, m] = etat.mois.split('-').map(Number);
+    const finAnnee = `${m >= 9 ? an + 1 : an}-08`;
+    const moisRestants = ecartMois(etat.mois, finAnnee) + 1;
+    const sortis = (
+      await this.volontaires.find({
+        where: { population: etat.population, statut: 'SORTI' },
+      })
+    ).filter(
+      (v) =>
+        BourseService.dernierMois(v, c, BourseService.premierMois(v, c)) ===
+        precedent,
+    );
+    // Ce qui a été constaté à la sortie (le dernier mouvement « SORTIE »)
+    const constats = new Map<
+      string,
+      { observation: string | null; par: string; le: string }
+    >();
+    if (sortis.length)
+      for (const r of await this.volontaires.query<
+        { id: string; observation: string | null; par: string; le: string }[]
+      >(
+        `SELECT DISTINCT ON ("volontaireId") "volontaireId" AS id, details->>'observation' AS observation,
+                par, to_char("creeLe", 'DD/MM/YYYY') AS le
+           FROM mouvement_volontaire
+          WHERE type = 'SORTIE' AND "volontaireId" = ANY($1)
+          ORDER BY "volontaireId", "creeLe" DESC`,
+        [sortis.map((v) => v.id)],
+      ))
+        constats.set(r.id, r);
+    const motifDe = (code: string | null) =>
+      c.motifsSortie.find((x) => x.code === code)?.libelle ?? code ?? '';
+    const lignes = sortis
+      .map((v) => {
+        const taux =
+          categories.find((x) => x.code === v.categorie)?.bourse ?? 0;
+        const constat = constats.get(v.id);
+        return {
+          id: v.id,
+          nom: v.nomComplet,
+          departement: v.departementId
+            ? (deps.get(v.departementId) ?? '')
+            : (v.departementBrut ?? 'Non renseigné'),
+          cycle:
+            categories.find((x) => x.code === v.categorie)?.libelle ??
+            v.cycleBrut ??
+            'Non renseigné',
+          etablissement: v.etablissement ?? '',
+          motif: motifDe(v.motifSortie),
+          precision: (constat?.observation ?? v.observation ?? '').replace(
+            /\s+/g,
+            ' ',
+          ),
+          dateSortie: v.dateSortie
+            ? String(v.dateSortie).slice(0, 10).split('-').reverse().join('/')
+            : '',
+          dernierMois: moisEnClair(precedent),
+          // Ce qu'elle aurait touché ce mois, et jusqu'à la fin de l'année scolaire
+          taux,
+          economieAnnee: taux * moisRestants,
+          source: v.source ?? '',
+          par: constat ? `${constat.par}, le ${constat.le}` : '',
+        };
+      })
+      .sort(
+        (a, b) =>
+          a.motif.localeCompare(b.motif, 'fr') ||
+          a.departement.localeCompare(b.departement, 'fr') ||
+          a.nom.localeCompare(b.nom, 'fr'),
+      );
+    const regrouper = (cle: (l: (typeof lignes)[number]) => string) => {
+      const g = new Map<
+        string,
+        { n: number; mensuel: number; annee: number }
+      >();
+      for (const l of lignes) {
+        const x = g.get(cle(l)) ?? { n: 0, mensuel: 0, annee: 0 };
+        x.n++;
+        x.mensuel += l.taux;
+        x.annee += l.economieAnnee;
+        g.set(cle(l), x);
+      }
+      return [...g.entries()]
+        .map(([libelle, x]) => ({ libelle, ...x }))
+        .sort(
+          (a, b) =>
+            b.mensuel - a.mensuel || a.libelle.localeCompare(b.libelle, 'fr'),
+        );
+    };
+    return {
+      etat: { id: etat.id, mois: etat.mois, population: etat.population },
+      communautaires,
+      moisEnClair: moisEnClair(etat.mois),
+      dernierMoisPaye: moisEnClair(precedent),
+      finAnnee: moisEnClair(finAnnee),
+      moisRestants,
+      lignes,
+      parMotif: regrouper((l) => l.motif),
+      parDepartement: regrouper((l) => l.departement),
+      parCycle: regrouper((l) => l.cycle),
+      total: {
+        n: lignes.length,
+        mensuel: lignes.reduce((s, l) => s + l.taux, 0),
+        annee: lignes.reduce((s, l) => s + l.economieAnnee, 0),
+        sansBareme: lignes.filter((l) => !l.taux).length,
+      },
+    };
+  }
+
+  /**
+   * Les sortants du mois en Excel : la feuille « Incidence financière » (par motif, par département,
+   * par cycle : ce qu'ils auraient touché ce mois et jusqu'à août), puis la liste.
+   */
+  async sortantsExcel(
+    id: number,
+    police: PoliceDocument = 'actuelle',
+  ): Promise<{ nom: string; contenu: Buffer }> {
+    const d = await this.sortantsDuMois(id);
+    const wb = new ExcelJS.Workbook();
+    wb.creator = 'SIGRHAS-MEPPSA';
+    const fin: Partial<ExcelJS.Border> = {
+      style: 'thin',
+      color: { argb: 'FFBDBDBD' },
+    };
+    const bords = { top: fin, bottom: fin, left: fin, right: fin };
+    const VERT = 'FF0F5132';
+    const VERT_CLAIR = 'FFE8F3EC';
+    const fmtF = '#,##0" F"';
+    const liste = d.communautaires ? 'COMMUNAUTAIRES' : 'VOLONTAIRES';
+    const titreMois = d.moisEnClair
+      .normalize('NFD')
+      .replace(/[̀-ͯ]/g, '')
+      .toUpperCase();
+    const titre = `SORTANTS DU MOIS DE ${titreMois} — ENSEIGNANTS ${liste}`;
+    const sous = `${d.total.n} personne(s) dont la bourse s'arrête en ${d.moisEnClair} (dernier mois payé : ${d.dernierMoisPaye})`;
+    const entete = (
+      ws: ExcelJS.Worksheet,
+      nbCol: number,
+      t: string,
+      s: string,
+    ) => {
+      const ecrire = (
+        l: number,
+        c1: number,
+        c2: number,
+        v: string,
+        font: Partial<ExcelJS.Font>,
+      ) => {
+        if (c2 > c1) ws.mergeCells(l, c1, l, c2);
+        const x = ws.getCell(l, c1);
+        x.value = v;
+        x.font = { name: 'Calibri', ...font };
+        x.alignment = {
+          horizontal: 'center',
+          vertical: 'middle',
+          wrapText: true,
+        };
+      };
+      const g = { size: 11, bold: true };
+      const gauche = Math.min(4, nbCol - 2);
+      const d1 = nbCol - 1;
+      ecrire(1, 1, gauche, "MINISTERE DE L'ENSEIGNEMENT PRESCOLAIRE,", g);
+      ecrire(1, d1, nbCol, 'REPUBLIQUE DU CONGO', g);
+      ecrire(2, 1, gauche, "PRIMAIRE, SECONDAIRE ET DE L'ALPHABETISATION", g);
+      ecrire(2, d1, nbCol, 'Unité - Travail - Progrès', g);
+      ecrire(3, 1, gauche, '-----------', g);
+      ecrire(3, d1, nbCol, '-----------', g);
+      ecrire(4, 1, gauche, 'CABINET', g);
+      ecrire(5, 1, gauche, '-----------', g);
+      ecrire(6, 1, gauche, 'DIRECTION GENERALE DES RESSOURCES HUMAINES', g);
+      ecrire(7, 1, gauche, "ET DE L'ADMINISTRATION SCOLAIRE", g);
+      ecrire(8, 1, gauche, '-----------', g);
+      ecrire(10, 1, nbCol, t, { size: 14, bold: true, color: { argb: VERT } });
+      ecrire(11, 1, nbCol, s, { size: 11, italic: true });
+      ws.getRow(10).height = 22;
+      ws.getRow(11).height = 30;
+    };
+    const titres = (ws: ExcelJS.Worksheet, l: number, noms: string[]) => {
+      const r = ws.getRow(l);
+      noms.forEach((t, i) => {
+        const x = r.getCell(i + 1);
+        x.value = t;
+        x.font = {
+          name: 'Calibri',
+          size: 10,
+          bold: true,
+          color: { argb: 'FFFFFFFF' },
+        };
+        x.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: VERT } };
+        x.alignment = {
+          horizontal: 'center',
+          vertical: 'middle',
+          wrapText: true,
+        };
+        x.border = bords;
+      });
+      r.height = 32;
+    };
+
+    // 1. L'incidence financière
+    const inc = wb.addWorksheet('Incidence financière', {
+      pageSetup: {
+        paperSize: 9,
+        orientation: 'portrait',
+        fitToPage: true,
+        fitToWidth: 1,
+        fitToHeight: 0,
+      },
+    });
+    entete(
+      inc,
+      4,
+      titre,
+      `Incidence financière : la bourse que ces ${d.total.n} personne(s) auraient touchée en ${d.moisEnClair}, et jusqu'à ${d.finAnnee} (${d.moisRestants} mois), si elles étaient restées payées`,
+    );
+    let l = 13;
+    const resume = (libelle: string, valeur: number | string, fmt?: string) => {
+      inc.mergeCells(l, 1, l, 3);
+      const a = inc.getCell(l, 1);
+      a.value = libelle;
+      a.font = { name: 'Calibri', size: 11, bold: true };
+      a.border = bords;
+      const b = inc.getCell(l, 4);
+      b.value = valeur;
+      b.font = { name: 'Calibri', size: 11, bold: true, color: { argb: VERT } };
+      b.border = bords;
+      b.alignment = { horizontal: 'right' };
+      if (fmt) b.numFmt = fmt;
+      l++;
+    };
+    resume('Sortants du mois', d.total.n, '#,##0');
+    resume(
+      `Bourse qui n'est plus payée en ${d.moisEnClair}`,
+      d.total.mensuel,
+      fmtF,
+    );
+    resume(
+      `Bourse qui n'est plus payée jusqu'à ${d.finAnnee} (${d.moisRestants} mois)`,
+      d.total.annee,
+      fmtF,
+    );
+    if (d.total.sansBareme)
+      resume(
+        'Dont sans cycle (barème inconnu, comptés à 0)',
+        d.total.sansBareme,
+        '#,##0',
+      );
+    l++;
+    const tableau = (
+      t: string,
+      lignes: { libelle: string; n: number; mensuel: number; annee: number }[],
+      colonne: string,
+    ) => {
+      inc.mergeCells(l, 1, l, 4);
+      const x = inc.getCell(l, 1);
+      x.value = t;
+      x.font = { name: 'Calibri', size: 12, bold: true, color: { argb: VERT } };
+      l++;
+      titres(inc, l, [
+        colonne,
+        'Personnes',
+        `Par mois (${d.moisEnClair})`,
+        `Jusqu'à ${d.finAnnee}`,
+      ]);
+      l++;
+      for (const [i, y] of lignes.entries()) {
+        inc.getRow(l).values = [y.libelle, y.n, y.mensuel, y.annee];
+        for (let k = 1; k <= 4; k++) {
+          const c = inc.getCell(l, k);
+          c.border = bords;
+          c.font = { name: 'Calibri', size: 10 };
+          if (k >= 3) c.numFmt = fmtF;
+          if (i % 2)
+            c.fill = {
+              type: 'pattern',
+              pattern: 'solid',
+              fgColor: { argb: 'FFF4F4F5' },
+            };
+        }
+        l++;
+      }
+      inc.getRow(l).values = [
+        'TOTAL',
+        d.total.n,
+        d.total.mensuel,
+        d.total.annee,
+      ];
+      for (let k = 1; k <= 4; k++) {
+        const c = inc.getCell(l, k);
+        c.border = bords;
+        c.font = { name: 'Calibri', size: 10, bold: true };
+        c.fill = {
+          type: 'pattern',
+          pattern: 'solid',
+          fgColor: { argb: VERT_CLAIR },
+        };
+        if (k >= 3) c.numFmt = fmtF;
+      }
+      l += 2;
+    };
+    tableau('Par motif de sortie', d.parMotif, 'Motif de sortie');
+    tableau('Par département', d.parDepartement, 'Département');
+    tableau('Par cycle', d.parCycle, 'Cycle');
+    [44, 12, 20, 20].forEach((w, i) => (inc.getColumn(i + 1).width = w));
+
+    // 2. La liste
+    const ws = wb.addWorksheet('Sortants', {
+      pageSetup: {
+        paperSize: 9,
+        orientation: 'landscape',
+        fitToPage: true,
+        fitToWidth: 1,
+        fitToHeight: 0,
+        printTitlesRow: '13:13',
+      },
+    });
+    const COLS: [string, number][] = [
+      ['N°', 6],
+      ['Nom et prénoms', 32],
+      ['Département', 16],
+      ['Cycle', 18],
+      ['Établissement', 24],
+      ['Motif de sortie', 28],
+      ['Ce qui a été constaté', 44],
+      ['Date de sortie', 12],
+      ['Dernier mois payé', 15],
+      [`Aurait touché en ${d.moisEnClair}`, 15],
+      [`Jusqu'à ${d.finAnnee} (${d.moisRestants} mois)`, 16],
+      ['Fichier d’origine', 28],
+      ['Sortie enregistrée par', 22],
+    ];
+    entete(ws, COLS.length, titre, sous);
+    titres(
+      ws,
+      13,
+      COLS.map((x) => x[0]),
+    );
+    d.lignes.forEach((x, i) => {
+      const row = ws.getRow(14 + i);
+      row.values = [
+        i + 1,
+        x.nom,
+        x.departement,
+        x.cycle,
+        x.etablissement,
+        x.motif,
+        x.precision,
+        x.dateSortie,
+        x.dernierMois,
+        x.taux || null,
+        x.economieAnnee || null,
+        x.source,
+        x.par,
+      ];
+      for (let k = 1; k <= COLS.length; k++) {
+        const c = row.getCell(k);
+        c.border = bords;
+        c.font = { name: 'Calibri', size: 10 };
+        c.alignment = { vertical: 'middle', wrapText: k === 7 };
+        if (k === 10 || k === 11) c.numFmt = fmtF;
+        if (i % 2)
+          c.fill = {
+            type: 'pattern',
+            pattern: 'solid',
+            fgColor: { argb: 'FFF4F4F5' },
+          };
+      }
+    });
+    const lt = 14 + d.lignes.length;
+    ws.getRow(lt).values = [
+      '',
+      'TOTAL',
+      '',
+      '',
+      '',
+      '',
+      '',
+      '',
+      '',
+      d.total.mensuel,
+      d.total.annee,
+    ];
+    for (let k = 1; k <= COLS.length; k++) {
+      const c = ws.getCell(lt, k);
+      c.border = bords;
+      c.font = { name: 'Calibri', size: 10, bold: true };
+      c.fill = {
+        type: 'pattern',
+        pattern: 'solid',
+        fgColor: { argb: VERT_CLAIR },
+      };
+      if (k === 10 || k === 11) c.numFmt = fmtF;
+    }
+    COLS.forEach(([, w], i) => (ws.getColumn(i + 1).width = w));
+    if (d.lignes.length)
+      ws.autoFilter = {
+        from: { row: 13, column: 1 },
+        to: { row: lt - 1, column: COLS.length },
+      };
+    appliquerPolice(wb, police);
+    return {
+      nom: `Sortants ${d.communautaires ? 'Communautaires' : 'Volontaires'} ${moisMajuscule(d.etat.mois)}.xlsx`,
       contenu: Buffer.from(await wb.xlsx.writeBuffer()),
     };
   }

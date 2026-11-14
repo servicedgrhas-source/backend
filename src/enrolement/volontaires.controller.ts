@@ -607,7 +607,13 @@ export class VolontairesController {
     @Query('population') population: string,
     @Query('essai') essai: string,
     @Body()
-    body: { feuilles?: string; memes?: string; choix?: string; motif?: string },
+    body: {
+      feuilles?: string;
+      memes?: string;
+      choix?: string;
+      motif?: string;
+      nomsSansNom?: string;
+    },
     @UploadedFile() fichier?: Express.Multer.File,
   ) {
     const lire = (texte: string | undefined, quoi: string): unknown => {
@@ -659,6 +665,14 @@ export class VolontairesController {
         memes: chaines(lire(body?.memes, 'Confirmations'), 5000),
         motifNouveaux: typeof body?.motif === 'string' ? body.motif : undefined,
         choix,
+        nomsSansNom: Object.fromEntries(
+          Object.entries(
+            (lire(body?.nomsSansNom, 'Noms des lignes sans nom') ??
+              {}) as Record<string, unknown>,
+          )
+            .filter((x): x is [string, string] => typeof x[1] === 'string')
+            .slice(0, 2000),
+        ),
         essai: essai === '1',
       },
     );
@@ -824,6 +838,56 @@ export class VolontairesController {
     @Body() dto: { mois: string; population?: string },
   ) {
     return this.bourse.preparer(u, dto?.mois, dto?.population);
+  }
+
+  /** Les sortants du mois et leur incidence financière, pour la page. */
+  @Roles(...ROLES_TRAITEMENT)
+  @Get('bourse/:id/sortants')
+  sortantsDuMois(@Param('id', ParseIntPipe) id: number) {
+    return this.bourse.sortantsDuMois(id);
+  }
+
+  /** Les sortants du mois de cet état (bourse arrêtée ce mois-ci), avec leur motif en clair. */
+  @Roles(...ROLES_TRAITEMENT)
+  @Get('bourse/:id/sortants/excel')
+  async sortantsExcel(
+    @Param('id', ParseIntPipe) id: number,
+    @Res() res: Response,
+    @Query('police') police?: string,
+  ) {
+    const { nom, contenu } = await this.bourse.sortantsExcel(
+      id,
+      policeDocument(police),
+    );
+    res.setHeader(
+      'Content-Type',
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    );
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename*=UTF-8''${encodeURIComponent(nom)}`,
+    );
+    res.send(contenu);
+  }
+
+  /** Ce que « Recalculer » changerait, sans rien enregistrer. */
+  @Roles('CHEF_SERVICE', 'DIRECTEUR', 'DG')
+  @Post('bourse/:id/apercu')
+  apercuRecalcul(
+    @Utilisateur() u: UtilisateurConnecte,
+    @Param('id', ParseIntPipe) id: number,
+  ) {
+    return this.bourse.apercuRecalcul(u, id);
+  }
+
+  /** Les contrôles remis à jour, sans toucher aux lignes ni aux montants. */
+  @Roles('CHEF_SERVICE', 'DIRECTEUR', 'DG')
+  @Post('bourse/:id/controles')
+  controlesAJour(
+    @Utilisateur() u: UtilisateurConnecte,
+    @Param('id', ParseIntPipe) id: number,
+  ) {
+    return this.bourse.controlesAJour(u, id);
   }
 
   @Roles('DG')
