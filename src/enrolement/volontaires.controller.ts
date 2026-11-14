@@ -590,6 +590,80 @@ export class VolontairesController {
     );
   }
 
+  /**
+   * Reprendre un mois déjà payé par le DG avant le système (août 2026) : le premier mois payé des
+   * personnes de l'état recule à ce mois, sans sortie ni réintégration. Corps : `feuilles`, `memes`,
+   * `choix` (absents du registre : ajouter ou non, département, cycle), `motif` des ajoutés.
+   * `essai=1` : le rapport seulement.
+   */
+  @Roles('CHEF_SERVICE', 'DG')
+  @Post('volontaires/reprendre-mois')
+  @UseInterceptors(
+    FileInterceptor('fichier', { limits: { fileSize: 40 * 1024 * 1024 } }),
+  )
+  reprendreMois(
+    @Utilisateur() u: UtilisateurConnecte,
+    @Query('mois') mois: string,
+    @Query('population') population: string,
+    @Query('essai') essai: string,
+    @Body()
+    body: { feuilles?: string; memes?: string; choix?: string; motif?: string },
+    @UploadedFile() fichier?: Express.Multer.File,
+  ) {
+    const lire = (texte: string | undefined, quoi: string): unknown => {
+      try {
+        return JSON.parse(texte || 'null') as unknown;
+      } catch {
+        throw new BadRequestException(`${quoi} illisibles.`);
+      }
+    };
+    const chaines = (v: unknown, max: number) =>
+      Array.isArray(v)
+        ? v.filter((x): x is string => typeof x === 'string').slice(0, max)
+        : [];
+    const brut = lire(body?.choix, 'Choix des absents du registre');
+    const choix: Record<
+      string,
+      {
+        ajouter?: boolean;
+        departementId?: number | null;
+        categorie?: string | null;
+      }
+    > = {};
+    if (brut && typeof brut === 'object' && !Array.isArray(brut))
+      for (const [k, x] of Object.entries(
+        brut as Record<string, unknown>,
+      ).slice(0, 20000)) {
+        if (!x || typeof x !== 'object') continue;
+        const c = x as Record<string, unknown>;
+        choix[k] = {
+          ...(typeof c.ajouter === 'boolean' ? { ajouter: c.ajouter } : {}),
+          ...(c.departementId === null ||
+          (typeof c.departementId === 'number' &&
+            Number.isInteger(c.departementId))
+            ? { departementId: c.departementId }
+            : {}),
+          ...(c.categorie === null || typeof c.categorie === 'string'
+            ? { categorie: c.categorie }
+            : {}),
+        };
+      }
+    return this.volontaires.reprendreMois(
+      u,
+      this.classeur(fichier),
+      fichier!.originalname,
+      {
+        population,
+        mois,
+        feuilles: chaines(lire(body?.feuilles, 'Feuilles'), 100),
+        memes: chaines(lire(body?.memes, 'Confirmations'), 5000),
+        motifNouveaux: typeof body?.motif === 'string' ? body.motif : undefined,
+        choix,
+        essai: essai === '1',
+      },
+    );
+  }
+
   @Roles('CHEF_SERVICE', 'DG')
   @Post('volontaires/import')
   @UseInterceptors(
@@ -839,6 +913,36 @@ export class VolontairesController {
     res.setHeader(
       'Content-Disposition',
       `attachment; filename="${nom}"; filename*=UTF-8''${encodeURIComponent(nom)}`,
+    );
+    res.send(contenu);
+  }
+
+  /** Fiche de prise en charge : ses données, pour l'impression (PDF) au modèle du cabinet. */
+  @Roles(...ROLES_TRAITEMENT)
+  @Get('bourse/:id/prise-en-charge/donnees')
+  ficheDonnees(@Param('id', ParseIntPipe) id: number) {
+    return this.bourse.ficheDonnees(id);
+  }
+
+  /** Fiche de prise en charge en Word, au modèle du cabinet. */
+  @Roles(...ROLES_TRAITEMENT)
+  @Get('bourse/:id/prise-en-charge/word')
+  async ficheWord(
+    @Param('id', ParseIntPipe) id: number,
+    @Res() res: Response,
+    @Query('police') police?: string,
+  ) {
+    const { nom, contenu } = await this.bourse.ficheWord(
+      id,
+      policeDocument(police),
+    );
+    res.setHeader(
+      'Content-Type',
+      'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    );
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename*=UTF-8''${encodeURIComponent(nom)}`,
     );
     res.send(contenu);
   }

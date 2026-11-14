@@ -11,7 +11,7 @@ import type { LigneVolontaire } from './export-volontaires';
 import type { UtilisateurConnecte } from '../auth/auth';
 import { lireClasseur, lireFeuilleBrute, type Ligne } from '../common/excel';
 import { IndexNoms } from '../common/index-noms';
-import { MOIS_RE } from '../common/mois';
+import { ajouterMois, moisEnClair, MOIS_RE } from '../common/mois';
 import { codeDepartement } from '../common/referentiels';
 import { motsCommuns, motsDuNom, ressemblance } from '../common/ressemblance';
 import {
@@ -1986,7 +1986,6 @@ export class VolontairesService implements OnModuleInit {
         'La feuille des retraits ne peut pas être aussi une feuille de paiement.',
       );
     const cle = (nom: string) => motsDuNom(nom).sort().join(' ');
-    const compact = (s: string) => normaliser(s).replace(/[^A-Z]/g, '');
     const deps = await this.deps.find();
     const depDeCode = (code: string | null) =>
       code ? (deps.find((d) => d.code === code) ?? null) : null;
@@ -1994,25 +1993,8 @@ export class VolontairesService implements OnModuleInit {
       id ? (deps.find((d) => d.id === id)?.nom ?? null) : null;
     const depId = (brut: unknown) =>
       depDeCode(codeDepartement(nettoyer(brut)?.split(/[/(]/)[0]))?.id ?? null;
-    /**
-     * Département d'une feuille d'après son nom : « ETAT DE PAIEMENT BZV (CORRIGE) » → Brazzaville,
-     * « … PN (+ALPHA) » → Pointe-Noire ; « … PLATEAUX-NKENI » : deux départements (ambigu).
-     */
-    const departementsDeFeuille = (nom: string) => {
-      const reste = normaliser(nom)
-        .replace(/^ETATS?\s+DE\s+PAIEMENT\s*/, '')
-        .replace(/\(.*?\)/g, '')
-        .trim();
-      if (/^PN$|^P\s*NOIRE$/.test(reste)) return [depDeCode('POINTE_NOIRE')!];
-      const entier = depDeCode(codeDepartement(reste));
-      if (entier && compact(entier.nom) === compact(reste)) return [entier];
-      const parties = reste
-        .split(/[-/,]|\s+ET\s+/)
-        .map((x) => depDeCode(codeDepartement(x.trim())))
-        .filter((d): d is Departement => !!d);
-      const uniquesDeps = [...new Map(parties.map((d) => [d.id, d])).values()];
-      return uniquesDeps.length ? uniquesDeps : entier ? [entier] : [];
-    };
+    const departementsDeFeuille = (nom: string) =>
+      this.departementsDeFeuille(nom, deps);
     const conf = this.config.get();
     const categories = this.config.categoriesDe('COMMUNAUTAIRE');
     const libelleCat = (code: string | null) =>
@@ -2546,6 +2528,413 @@ export class VolontairesService implements OnModuleInit {
       void this.lier();
     }
     return rapport;
+  }
+
+  /**
+   * Département d'une feuille d'après son nom : « ETAT DE PAIEMENT BZV (CORRIGE) » → Brazzaville,
+   * « … PN (+ALPHA) » → Pointe-Noire ; « … PLATEAUX-NKENI » : deux départements (ambigu).
+   */
+  private departementsDeFeuille(nom: string, deps: Departement[]) {
+    const compact = (s: string) => normaliser(s).replace(/[^A-Z]/g, '');
+    const depDeCode = (code: string | null) =>
+      code ? (deps.find((d) => d.code === code) ?? null) : null;
+    const reste = normaliser(nom)
+      .replace(/^ETATS?\s+DE\s+PAIEMENT\s*/, '')
+      .replace(/\(.*?\)/g, '')
+      .trim();
+    if (/^PN$|^P\s*NOIRE$/.test(reste)) {
+      const pn = depDeCode('POINTE_NOIRE');
+      return pn ? [pn] : [];
+    }
+    const entier = depDeCode(codeDepartement(reste));
+    if (entier && compact(entier.nom) === compact(reste)) return [entier];
+    const parties = reste
+      .split(/[-/,]|\s+ET\s+/)
+      .map((x) => depDeCode(codeDepartement(x.trim())))
+      .filter((d): d is Departement => !!d);
+    const uniquesDeps = [...new Map(parties.map((d) => [d.id, d])).values()];
+    return uniquesDeps.length ? uniquesDeps : entier ? [entier] : [];
+  }
+
+  /* ------------------ Reprendre un mois passé (août 2026) ------------------ */
+
+  /**
+   * Un mois déjà payé par le DG avant le système (14/11/2026 : « on devait aussi payer août ») :
+   * le registre apprend que les personnes de son état de paiement étaient payées ce mois-là, sans
+   * rien changer à leur situation d'aujourd'hui.
+   * - En poste : le premier mois payé recule à ce mois s'il était plus tard.
+   * - Sorti après ce mois : idem (la sortie ne bouge pas).
+   * - Sorti avant ce mois, ou sans date : payé ce mois d'après le DG, la sortie est reportée au 1er du
+   *   mois suivant (dernier mois payé : ce mois) ; le motif ne change pas.
+   * - Absent du registre : ajouté comme sorti au 1er du mois suivant (payé ce mois seulement), si
+   *   l'agent le coche ; il n'est sur aucune liste plus récente.
+   * - Personne ne sort et personne n'est réintégré : les mois suivants ne bougent pas.
+   * Lignes sans nom, doublons du fichier et montants différents du barème sont signalés.
+   * `essai` : le rapport seulement.
+   */
+  async reprendreMois(
+    u: UtilisateurConnecte,
+    contenu: Buffer,
+    nomFichier: string,
+    o: {
+      population: string;
+      mois: string;
+      feuilles: string[];
+      memes?: string[];
+      motifNouveaux?: string;
+      choix?: Record<
+        string,
+        {
+          ajouter?: boolean;
+          departementId?: number | null;
+          categorie?: string | null;
+        }
+      >;
+      essai: boolean;
+    },
+  ) {
+    const population = populationDe(o.population);
+    if (!MOIS_RE.test(o.mois ?? ''))
+      throw new BadRequestException(
+        'Indiquez le mois de cet état de paiement (ex. 2026-08).',
+      );
+    if (!o.feuilles?.length)
+      throw new BadRequestException(
+        'Cochez la ou les feuilles de l’état de paiement de ce mois.',
+      );
+    const [etat] = await this.volontaires.query<{ statut: string }[]>(
+      `SELECT statut FROM etat_bourse WHERE mois = $1 AND population = $2`,
+      [o.mois, population],
+    );
+    if (etat?.statut === 'VALIDE')
+      throw new BadRequestException(
+        `L’état de ${moisEnClair(o.mois)} est déjà validé : le DG doit le rouvrir avant.`,
+      );
+    const motifNouveaux = this.config.motif(
+      o.motifNouveaux || 'RETIRE_DDEPPSA',
+    );
+    if (!motifNouveaux?.actif)
+      throw new BadRequestException(
+        'Choisissez le motif de sortie des personnes ajoutées.',
+      );
+    const lues = await lireClasseur(
+      contenu,
+      ['NOMSETPRENOMS|NOMETPRENOMS|NOMSPRENOMS'],
+      { inclureMasquees: true },
+    );
+    const feuilles = o.feuilles.map((nom) => {
+      const f = lues.find((x) => x.nom === nom);
+      if (!f)
+        throw new BadRequestException(
+          `Feuille « ${nom} » introuvable dans le fichier.`,
+        );
+      return f;
+    });
+    const cle = (nom: string) => motsDuNom(nom).sort().join(' ');
+    const deps = await this.deps.find();
+    const depDeCode = (code: string | null) =>
+      code ? (deps.find((d) => d.code === code) ?? null) : null;
+    const depId = (brut: unknown) =>
+      depDeCode(codeDepartement(nettoyer(brut)?.split(/[/(]/)[0]))?.id ?? null;
+    const nomDep = (id: number | null | undefined) =>
+      id ? (deps.find((d) => d.id === id)?.nom ?? null) : null;
+    const conf = this.config.get();
+    const categories = this.config.categoriesDe(population);
+    const tauxDe = (code: string | null) =>
+      categories.find((c) => c.code === code)?.bourse ?? 0;
+    const montantDe = (l: Ligne) =>
+      Number(enTexte(this.valeur(l, ['MONTANT'])).replace(/\s/g, '')) || 0;
+
+    // Les lignes de toutes les feuilles cochées
+    const sansNom: { feuille: string; ligne: number; montant: number }[] = [];
+    const lignes = feuilles.flatMap((f) => {
+      const depsFeuille = this.departementsDeFeuille(f.nom, deps);
+      // Toute ligne numérotée qui porte un nom est une personne payée, même un nom d'un seul mot
+      // (l'état d'août des communautaires en compte 57) : elle est lue, et montrée à l'agent
+      const personnes = f.lignes.filter((l) => {
+        const nom = nettoyer(
+          this.valeur(l, ['NOMSETPRENOMS', 'NOMETPRENOMS', 'NOMSPRENOMS']),
+        );
+        return (
+          !!nom &&
+          !/^(TOTAL|NOMS?\s+(ET\s+)?PR)/i.test(normaliser(nom)) &&
+          /^\d+$/.test(enTexte(this.valeur(l, ['N'])).trim())
+        );
+      });
+      const gardees = new Set(personnes);
+      // Une ligne numérotée et payée mais sans nom : signalée (le DG doit la compléter)
+      for (const l of f.lignes)
+        if (
+          !gardees.has(l) &&
+          /^\d+$/.test(enTexte(this.valeur(l, ['N'])).trim()) &&
+          !nettoyer(
+            this.valeur(l, ['NOMSETPRENOMS', 'NOMETPRENOMS', 'NOMSPRENOMS']),
+          ) &&
+          montantDe(l) > 0
+        )
+          sansNom.push({
+            feuille: f.nom,
+            ligne: l._ligne,
+            montant: montantDe(l),
+          });
+      return personnes.map((l) => {
+        const nom = nettoyer(
+          this.valeur(l, ['NOMSETPRENOMS', 'NOMETPRENOMS', 'NOMSPRENOMS']),
+        )!;
+        const naissance = lireDate(this.valeur(l, ['DATEDENAIS', 'NELE']));
+        const cycleBrut = nettoyer(this.valeur(l, ['CYCLE']));
+        const depBrutColonne = nettoyer(this.valeur(l, ['DEPART', 'DPART']));
+        const depColonne = depId(depBrutColonne);
+        const departementId =
+          depColonne ?? (depsFeuille.length === 1 ? depsFeuille[0].id : null);
+        const depBrut = depColonne
+          ? depBrutColonne
+          : departementId
+            ? nomDep(departementId)
+            : null;
+        const valeurs = this.valeursDuFichier(l, {
+          naissance,
+          cycleBrut,
+          diplome: nettoyer(this.valeur(l, ['DIPLOME'])),
+          departementId,
+          depBrut,
+          population,
+        });
+        return {
+          nom,
+          cle: cle(nom),
+          feuille: f.nom,
+          ligne: Number(l._ligne),
+          naissance,
+          cycleBrut,
+          categorie: valeurs.categorie ?? null,
+          departementId,
+          etablissement: valeurs.etablissement ?? null,
+          montant: montantDe(l),
+          valeurs,
+        };
+      });
+    });
+    if (!lignes.length)
+      throw new BadRequestException(
+        'Aucune personne lue dans ces feuilles (colonnes « N° » et « Noms et prénoms »).',
+      );
+    // Doublons du fichier : même nom et même date de naissance ; sans date des deux côtés, même nom
+    // et même département. Même nom ailleurs (autre département, autre date) : les deux lignes sont
+    // gardées (homonymes, ou payé deux fois par le DG : montré à l'agent, rien n'est décidé)
+    const parCle = new Map<string, (typeof lignes)[number][]>();
+    const doublons: string[] = [];
+    const uniques: typeof lignes = [];
+    for (const p of lignes) {
+      const deja = (parCle.get(p.cle) ?? []).find((q) =>
+        q.naissance && p.naissance
+          ? q.naissance === p.naissance
+          : !q.naissance && !p.naissance
+            ? q.departementId === p.departementId
+            : false,
+      );
+      if (deja) {
+        doublons.push(
+          `${p.nom} : « ${p.feuille} » ligne ${p.ligne} (déjà « ${deja.feuille} » ligne ${deja.ligne})`,
+        );
+        continue;
+      }
+      parCle.set(p.cle, [...(parCle.get(p.cle) ?? []), p]);
+      uniques.push(p);
+    }
+    const fiches = await this.volontaires.find({ where: { population } });
+    const {
+      gardes,
+      reintegres,
+      nouveaux,
+      plusieursFiches,
+      rapproches,
+      ambigus,
+      possibles,
+    } = this.rapprocherListe(uniques, fiches, o.memes ?? []);
+
+    // Ce qui change pour chaque fiche retrouvée
+    const suivant = `${ajouterMois(o.mois, 1)}-01`;
+    const avancer: { v: Volontaire; p: (typeof uniques)[number] }[] = [];
+    const reporter: { v: Volontaire; p: (typeof uniques)[number] }[] = [];
+    let dejaPayables = 0;
+    for (const x of [...gardes, ...reintegres]) {
+      const debut = BourseService.premierMois(x.v, conf);
+      const fin = BourseService.dernierMois(x.v, conf, debut);
+      if (
+        x.v.statut === 'SORTI' &&
+        (fin === '0000-01' || (fin && fin < o.mois))
+      )
+        reporter.push(x);
+      else if (!debut || debut > o.mois) avancer.push(x);
+      else dejaPayables++;
+    }
+    // Les absents du registre : ajoutés s'ils sont cochés. Proposés quand le cycle et le
+    // département sont connus, sauf un nom d'un seul mot ou un nom porté par une autre ligne de
+    // l'état (homonyme ou payé deux fois) : l'agent décide
+    const memeNom = new Map<string, (typeof uniques)[number][]>();
+    for (const p of uniques)
+      memeNom.set(p.cle, [...(memeNom.get(p.cle) ?? []), p]);
+    const alertesDe = (p: (typeof uniques)[number]) => [
+      ...(motsDuNom(p.nom).length < 2 ? ['Nom d’un seul mot'] : []),
+      ...(memeNom.get(p.cle) ?? [])
+        .filter((q) => q !== p)
+        .map(
+          (q) =>
+            `Même nom qu’une autre ligne de l’état (« ${q.feuille} » ligne ${q.ligne}, ${nomDep(q.departementId) ?? 'département inconnu'}) : homonyme ou payé deux fois ?`,
+        ),
+    ];
+    const propose = (p: (typeof uniques)[number]) =>
+      !!p.categorie && !!p.departementId && !alertesDe(p).length;
+    const aAjouter = nouveaux
+      .map((p) => {
+        const c = o.choix?.[`${p.feuille}#${p.ligne}`];
+        return {
+          p,
+          ajouter: c?.ajouter ?? propose(p),
+          departementId:
+            c?.departementId !== undefined ? c.departementId : p.departementId,
+          categorie: c?.categorie !== undefined ? c.categorie : p.categorie,
+        };
+      })
+      .filter((x) => x.ajouter);
+    const montantsDifferents = uniques
+      .filter(
+        (p) => p.categorie && p.montant && p.montant !== tauxDe(p.categorie),
+      )
+      .map(
+        (p) =>
+          `${p.nom} : ${p.montant} F dans le fichier, ${tauxDe(p.categorie)} F au barème (${p.cycleBrut ?? ''})`,
+      );
+    const ici = (p: { feuille: string; ligne: number }) =>
+      `${nomFichier} · ${p.feuille} · ligne ${p.ligne}`;
+    const dateFr = (d: string) => d.split('-').reverse().join('/');
+
+    if (!o.essai) {
+      for (const { v } of avancer)
+        await this.volontaires.update(v.id, { premierMois: o.mois });
+      for (const { v, p } of reporter) {
+        const debut = BourseService.premierMois(v, conf);
+        await this.volontaires.update(v.id, {
+          dateSortie: suivant,
+          ...(!debut || debut > o.mois ? { premierMois: o.mois } : {}),
+        });
+        await this.mouvement(u, v.id, 'SORTIE', suivant, v.motifSortie, {
+          observation: `Payé(e) en ${moisEnClair(o.mois)} d’après l’état du DG : sortie reportée du ${v.dateSortie ? dateFr(String(v.dateSortie).slice(0, 10)) : '(sans date)'} au ${dateFr(suivant)}`,
+          source: ici(p),
+        });
+      }
+      if (aAjouter.length) {
+        const lot = await this.volontaires.save(
+          aAjouter.map(({ p, departementId, categorie }) => ({
+            ...p.valeurs,
+            nomComplet: p.nom,
+            nomNormalise: normaliser(p.nom),
+            categorie,
+            departementId,
+            departementBrut: departementId
+              ? (nomDep(departementId) ?? p.valeurs.departementBrut ?? null)
+              : (p.valeurs.departementBrut ?? null),
+            population,
+            statut: 'SORTI',
+            motifSortie: motifNouveaux.code,
+            dateSortie: suivant,
+            premierMois: o.mois,
+            observation: `Payé(e) en ${moisEnClair(o.mois)} (état du DG), absent(e) des listes suivantes`,
+            source: ici(p),
+            creePar: u.nom,
+            verifications: {},
+          })) as Volontaire[],
+        );
+        for (const v of lot) {
+          await this.mouvement(
+            u,
+            v.id,
+            'ENTREE',
+            `${o.mois}-01`,
+            'BOURSE_PAYEE',
+            {
+              source: v.source,
+            },
+          );
+          await this.mouvement(u, v.id, 'SORTIE', suivant, motifNouveaux.code, {
+            observation: v.observation,
+          });
+        }
+      }
+      await this.journal.log(u, 'MOIS_REPRIS', 'volontaire', null, {
+        fichier: nomFichier,
+        mois: o.mois,
+        population,
+        feuilles: o.feuilles,
+        personnes: uniques.length,
+        avances: avancer.length,
+        sortiesReportees: reporter.length,
+        ajoutes: aAjouter.length,
+      });
+      if (aAjouter.length) void this.lier();
+    }
+    const court = (t: string[]) => ({ n: t.length, exemples: t.slice(0, 60) });
+    const montantFichier = lignes.reduce((s, p) => s + p.montant, 0);
+    return {
+      essai: o.essai,
+      mois: o.mois,
+      population,
+      feuilles: o.feuilles,
+      lus: lignes.length,
+      montantFichier,
+      sansNom: {
+        n: sansNom.length,
+        montant: sansNom.reduce((s, x) => s + x.montant, 0),
+        exemples: sansNom
+          .slice(0, 60)
+          .map((x) => `« ${x.feuille} » ligne ${x.ligne} : ${x.montant} F`),
+      },
+      doublons: court(doublons),
+      retrouves: gardes.length + reintegres.length,
+      dejaPayables,
+      avances: {
+        n: avancer.length,
+        exemples: avancer.slice(0, 20).map(({ v }) => v.nomComplet),
+      },
+      sortiesReportees: court(
+        reporter.map(
+          ({ v }) =>
+            `${v.nomComplet} : ${this.config.motif(v.motifSortie)?.libelle ?? v.motifSortie ?? 'sorti'}, sortie du ${v.dateSortie ? dateFr(String(v.dateSortie).slice(0, 10)) : '(sans date)'} reportée au ${dateFr(suivant)}`,
+        ),
+      ),
+      nouveaux: nouveaux.map((p) => ({
+        cle: `${p.feuille}#${p.ligne}`,
+        nom: p.nom,
+        feuille: p.feuille,
+        ligne: p.ligne,
+        naissance: p.naissance,
+        cycle: p.cycleBrut,
+        categorie: p.categorie,
+        departementId: p.departementId,
+        departement: nomDep(p.departementId),
+        etablissement: p.etablissement,
+        montant: p.montant,
+        propose: propose(p),
+        alertes: alertesDe(p),
+      })),
+      ajoutes: aAjouter.length,
+      motifNouveaux: motifNouveaux.code,
+      possibles,
+      rapproches: court(rapproches),
+      ambigus: court(ambigus),
+      plusieursFiches: court(plusieursFiches),
+      montantsDifferents: court(montantsDifferents),
+      // Ce que l'état de ce mois devrait payer une fois la reprise faite (les fiches retrouvées et
+      // les ajoutés, au barème)
+      prevision: {
+        effectif: gardes.length + reintegres.length + aAjouter.length,
+        montantFichierRetrouves: [...gardes, ...reintegres].reduce(
+          (s, x) => s + x.p.montant,
+          0,
+        ),
+      },
+    };
   }
 
   /* ------------------ Remplacer les communautaires d'un département ------------------ */

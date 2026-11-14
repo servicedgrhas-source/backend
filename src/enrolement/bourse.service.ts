@@ -969,20 +969,10 @@ export class BourseService {
   }
 
   /**
-   * Fiche de prise en charge, copiée sur le modèle du cabinet (« FICHE DE PRISE EN CHARGE DES
-   * ENSEIGNANTS COMMUNAUTAIRES AOUT 2026 », feuille « Version 3 F (3) ») : en-tête du ministère à
-   * gauche et de la République à droite, titre, mesure gouvernementale, année scolaire, période ;
-   * par département (les regroupements du cabinet : Cuvette/Congo-Oubangui, Plateaux/Nkéni-Alima…),
-   * l'effectif, le taux et le montant de chaque cycle (Préscolaire, Primaire, Collège, Lycée,
-   * Alph/Resco/ORA, Post-Alphabétisation), le total mensuel (effectif, montant) et le total
-   * trimestriel et annuel ; le texte « Au mois de … l'effectif … est évalué à … » ; la signature.
-   * Les montants sont des formules (effectif × taux) : la fiche se corrige dans Excel comme le
-   * modèle. Une ligne par personne payée, sans les rappels (la prise en charge d'un mois).
+   * Le calcul de la fiche de prise en charge (colonnes par cycle, lignes par département ou
+   * regroupement du cabinet), partagé par l'Excel, le Word et l'impression.
    */
-  async priseEnChargeExcel(
-    id: number,
-    police: PoliceDocument = 'actuelle',
-  ): Promise<{ nom: string; contenu: Buffer }> {
+  private async calculPriseEnCharge(id: number) {
     const etat = await this.etats.findOne({ where: { id } });
     if (!etat) throw new NotFoundException('État de bourse introuvable');
     const c = this.config.get();
@@ -1095,6 +1085,370 @@ export class BourseService {
               : l.categorie === code),
         )
         .reduce((t, l) => t + l.effectif, 0);
+
+    return { etat, c, communautaires, colonnes, groupes, effectif };
+  }
+
+  /**
+   * Les données de la fiche de prise en charge, pour le Word et l'impression (PDF), au modèle du
+   * cabinet (« FICHE DE PRISE EN CHARGE DES ENSEIGNANTS COMMUNAUTAIRES DU MOIS D'AOÛT 2026 ») :
+   * en-tête, titre, mesure, année scolaire, période, un groupe Eff. / Montant par cycle (le taux dans
+   * le titre du cycle), le total mensuel, le texte et la signature.
+   */
+  async ficheDonnees(id: number) {
+    const { etat, c, communautaires, colonnes, groupes, effectif } =
+      await this.calculPriseEnCharge(id);
+    const lignes = groupes.map((g) => {
+      const cellules = colonnes.map((x) => {
+        const eff = effectif(g.ids, x.code);
+        return { eff, mont: eff * x.taux };
+      });
+      return {
+        libelle: g.libelle,
+        cellules,
+        eff: cellules.reduce((s, x) => s + x.eff, 0),
+        mont: cellules.reduce((s, x) => s + x.mont, 0),
+      };
+    });
+    const totaux = colonnes.map((_, k) => ({
+      eff: lignes.reduce((s, l) => s + l.cellules[k].eff, 0),
+      mont: lignes.reduce((s, l) => s + l.cellules[k].mont, 0),
+    }));
+    const effTotal = lignes.reduce((s, l) => s + l.eff, 0);
+    const montantTotal = lignes.reduce((s, l) => s + l.mont, 0);
+    const [an, m] = etat.mois.split('-').map(Number);
+    const debutAnnee = m >= 9 ? an : an - 1;
+    const sansAccents = (s: string) =>
+      s.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+    const nomMois = moisEnClair(etat.mois).toLowerCase();
+    const liste = communautaires ? 'communautaires' : 'volontaires';
+    return {
+      etat: {
+        id: etat.id,
+        mois: etat.mois,
+        statut: etat.statut,
+        population: etat.population,
+      },
+      brouillon: etat.statut !== 'VALIDE',
+      titre: `FICHE DE PRISE EN CHARGE DES ENSEIGNANTS ${liste.toUpperCase()}`,
+      mention: communautaires ? c.ficheMentionCommunautaires || null : null,
+      annee: `ANNEE SCOLAIRE ${debutAnnee}-${debutAnnee + 1}`,
+      periode: `PERIODE : ${sansAccents(moisEnClair(etat.mois)).toUpperCase()}`,
+      colonnes: colonnes.map((x) => ({ libelle: x.libelle, taux: x.taux })),
+      lignes,
+      totaux,
+      effTotal,
+      montantTotal,
+      texteEffectif: `Au mois ${/^[aeiouh]/i.test(sansAccents(nomMois)) ? "d'" : 'de '}${nomMois}, l'effectif des enseignants ${liste} est évalué à ${effTotal.toLocaleString('fr-FR').replace(/\s/g, ' ')}. Leur prise en charge nécessite un montant de ${fcfa(montantTotal)} FCFA.`,
+      texteFrais:
+        "A ce montant, il faut ajouter les frais de la prise en charge de l'organisation de la paie et de l'acheminement des fonds dans les différents sites départementaux.",
+      signature: {
+        titre: c.signatairePaiementTitre,
+        nom: c.signatairePaiementNom,
+      },
+      nomFichier: `Fiche de prise en charge ${communautaires ? 'Communautaires' : 'Volontaires'} ${moisMajuscule(etat.mois)}${etat.statut === 'VALIDE' ? '' : ' (projet)'}`,
+    };
+  }
+  /**
+   * Fiche de prise en charge en Word, au modèle du cabinet (PDF d'août 2026, 14/11/2026) : paysage,
+   * en-tête du ministère à gauche et de la République à droite, titre, mesure, année scolaire,
+   * période sur une bande grise, tableau Eff. / Montant par cycle (le taux dans le titre du cycle)
+   * et total mensuel, texte, « Fait à Brazzaville, le », signature. Police du modèle (étroite) ou
+   * Gill Sans MT.
+   */
+  async ficheWord(
+    id: number,
+    choix: PoliceDocument = 'actuelle',
+  ): Promise<{ nom: string; contenu: Buffer }> {
+    const d = await this.ficheDonnees(id);
+    const police = choix === 'gill' ? GILL : 'Gill Sans MT Condensed';
+    const texte = (
+      t: string,
+      o: { gras?: boolean; taille?: number; souligne?: boolean } = {},
+    ) =>
+      new TextRun({
+        text: t,
+        bold: o.gras,
+        size: o.taille ?? 20,
+        font: police,
+        underline: o.souligne ? {} : undefined,
+      });
+    const para = (
+      t: string,
+      o: {
+        gras?: boolean;
+        taille?: number;
+        souligne?: boolean;
+        centre?: boolean;
+        droite?: boolean;
+        avant?: number;
+        fond?: string;
+        retrait?: number;
+      } = {},
+    ) =>
+      new Paragraph({
+        alignment: o.centre
+          ? AlignmentType.CENTER
+          : o.droite
+            ? AlignmentType.RIGHT
+            : AlignmentType.LEFT,
+        spacing: { before: o.avant ?? 0, after: 0 },
+        indent: o.retrait ? { left: o.retrait } : undefined,
+        shading: o.fond ? { fill: o.fond } : undefined,
+        children: [texte(t, o)],
+      });
+    const sansBord = { style: BorderStyle.NONE, size: 0, color: 'FFFFFF' };
+    const aucun = {
+      top: sansBord,
+      bottom: sansBord,
+      left: sansBord,
+      right: sansBord,
+    };
+    const bloc = (
+      lignes: { t: string; souligne?: boolean }[],
+      largeur: number,
+    ) =>
+      new TableCell({
+        width: { size: largeur, type: WidthType.PERCENTAGE },
+        borders: aucun,
+        children: lignes.map((x) =>
+          para(x.t, {
+            gras: true,
+            taille: 20,
+            centre: true,
+            souligne: x.souligne,
+          }),
+        ),
+      });
+    const entete = new Table({
+      width: { size: 100, type: WidthType.PERCENTAGE },
+      borders: {
+        ...aucun,
+        insideHorizontal: sansBord,
+        insideVertical: sansBord,
+      },
+      rows: [
+        new TableRow({
+          children: [
+            bloc(
+              [
+                { t: "MINISTERE DE L'ENSEIGNEMENT PRESCOLAIRE, PRIMAIRE," },
+                { t: "SECONDAIRE ET DE L'ALPHABETISATION" },
+                { t: 'CABINET', souligne: true },
+                { t: 'DIRECTION GENERALE DES RESSOURCES HUMAINES' },
+                { t: "ET DE L'ADMINISTRATION SCOLAIRE", souligne: true },
+              ],
+              40,
+            ),
+            bloc([{ t: '' }], 40),
+            bloc(
+              [
+                { t: 'REPUBLIQUE DU CONGO' },
+                { t: 'Unité-Travail-Progrès', souligne: true },
+              ],
+              20,
+            ),
+          ],
+        }),
+      ],
+    });
+    // Le tableau : DEPARTEMENT, puis Eff. / Montant par cycle, puis le total mensuel
+    const nombre = (n: number) => fcfa(n).replace(/\./g, ' ');
+    const montant = (n: number) => (n ? nombre(n) : '-');
+    const fin = { style: BorderStyle.SINGLE, size: 4, color: '000000' };
+    const bords = { top: fin, bottom: fin, left: fin, right: fin };
+    const cellule = (
+      t: string | number,
+      o: {
+        gras?: boolean;
+        droite?: boolean;
+        gauche?: boolean;
+        span?: number;
+        fusion?: 'debut' | 'suite';
+        fond?: string;
+      } = {},
+    ) =>
+      new TableCell({
+        verticalAlign: VerticalAlign.CENTER,
+        borders: bords,
+        columnSpan: o.span,
+        shading: o.fond ? { fill: o.fond } : undefined,
+        verticalMerge:
+          o.fusion === 'debut'
+            ? VerticalMergeType.RESTART
+            : o.fusion === 'suite'
+              ? VerticalMergeType.CONTINUE
+              : undefined,
+        children: String(t)
+          .split('\n')
+          .map(
+            (x) =>
+              new Paragraph({
+                alignment: o.droite
+                  ? AlignmentType.RIGHT
+                  : o.gauche
+                    ? AlignmentType.LEFT
+                    : AlignmentType.CENTER,
+                children: [texte(x, { gras: o.gras, taille: 18 })],
+              }),
+          ),
+      });
+    const n = d.colonnes.length;
+    // Largeurs (vingtièmes de point, A4 paysage moins les marges) : département, puis chaque cycle
+    const utile = 15600;
+    const dep = 2100;
+    const parCycle = Math.floor((utile - dep) / (n + 1));
+    const largeurs = [
+      dep,
+      ...Array.from({ length: n + 1 }, () => [
+        Math.round(parCycle * 0.36),
+        parCycle - Math.round(parCycle * 0.36),
+      ]).flat(),
+    ];
+    const gris = 'D9D9D9';
+    const tableau = new Table({
+      width: { size: 100, type: WidthType.PERCENTAGE },
+      columnWidths: largeurs,
+      rows: [
+        new TableRow({
+          tableHeader: true,
+          children: [
+            cellule('DEPARTEMENT', { gras: true, fusion: 'debut' }),
+            ...d.colonnes.map((x) =>
+              cellule(x.taux ? `${x.libelle}\n(${fcfa(x.taux)})` : x.libelle, {
+                gras: true,
+                span: 2,
+              }),
+            ),
+            cellule('TOTAL MENSUEL', { gras: true, span: 2 }),
+          ],
+        }),
+        new TableRow({
+          tableHeader: true,
+          children: [
+            cellule('', { fusion: 'suite' }),
+            ...Array.from({ length: n + 1 }, () => [
+              cellule('Eff.', { gras: true }),
+              cellule('Montant', { gras: true }),
+            ]).flat(),
+          ],
+        }),
+        ...d.lignes.map(
+          (l) =>
+            new TableRow({
+              cantSplit: true,
+              children: [
+                cellule(l.libelle, { gauche: true }),
+                ...l.cellules
+                  .map((x) => [
+                    cellule(nombre(x.eff)),
+                    cellule(montant(x.mont), { droite: true }),
+                  ])
+                  .flat(),
+                cellule(nombre(l.eff), { gras: true }),
+                cellule(montant(l.mont), { gras: true, droite: true }),
+              ],
+            }),
+        ),
+        new TableRow({
+          cantSplit: true,
+          children: [
+            cellule('TOTAL', { gras: true, fond: gris }),
+            ...d.totaux
+              .map((x) => [
+                cellule(nombre(x.eff), { gras: true, fond: gris }),
+                cellule(montant(x.mont), {
+                  gras: true,
+                  droite: true,
+                  fond: gris,
+                }),
+              ])
+              .flat(),
+            cellule(nombre(d.effTotal), { gras: true, fond: gris }),
+            cellule(montant(d.montantTotal), {
+              gras: true,
+              droite: true,
+              fond: gris,
+            }),
+          ],
+        }),
+      ],
+    });
+    const doc = new Document({
+      sections: [
+        {
+          properties: {
+            page: {
+              size: { orientation: PageOrientation.LANDSCAPE },
+              margin: { top: 560, bottom: 500, left: 620, right: 620 },
+            },
+          },
+          children: [
+            entete,
+            para(d.titre, { gras: true, taille: 28, centre: true, avant: 200 }),
+            ...(d.mention
+              ? [para(d.mention, { gras: true, taille: 26, centre: true })]
+              : []),
+            para(d.annee, { gras: true, taille: 24, centre: true, avant: 160 }),
+            // La période sur une bande grise, comme la fiche du cabinet
+            para(d.periode, {
+              gras: true,
+              taille: 24,
+              centre: true,
+              avant: 120,
+              fond: 'BFBFBF',
+            }),
+            new Paragraph({ children: [], spacing: { after: 80 } }),
+            tableau,
+            para(d.texteEffectif, { taille: 20, avant: 200 }),
+            para(d.texteFrais, { taille: 20 }),
+            para('Fait à Brazzaville, le', {
+              taille: 20,
+              avant: 160,
+              retrait: 10600,
+            }),
+            // Une ligne entre « Fait à… » et le titre (13/11/2026)
+            para('', { taille: 20 }),
+            para(d.signature.titre, { gras: true, taille: 20, retrait: 10600 }),
+            para('', { taille: 20 }),
+            para('', { taille: 20 }),
+            para('', { taille: 20 }),
+            para(d.signature.nom, { gras: true, taille: 20, retrait: 10600 }),
+            ...(d.brouillon
+              ? [
+                  para(
+                    'Projet : état de paiement pas encore validé par le Directeur général.',
+                    { taille: 16, avant: 120 },
+                  ),
+                ]
+              : []),
+          ],
+        },
+      ],
+      ...(choix === 'gill'
+        ? { styles: { default: { document: { run: { font: GILL } } } } }
+        : {}),
+    });
+    return { nom: `${d.nomFichier}.docx`, contenu: await Packer.toBuffer(doc) };
+  }
+
+  /**
+   * Fiche de prise en charge, copiée sur le modèle du cabinet (« FICHE DE PRISE EN CHARGE DES
+   * ENSEIGNANTS COMMUNAUTAIRES AOUT 2026 », feuille « Version 3 F (3) ») : en-tête du ministère à
+   * gauche et de la République à droite, titre, mesure gouvernementale, année scolaire, période ;
+   * par département (les regroupements du cabinet : Cuvette/Congo-Oubangui, Plateaux/Nkéni-Alima…),
+   * l'effectif, le taux et le montant de chaque cycle (Préscolaire, Primaire, Collège, Lycée,
+   * Alph/Resco/ORA, Post-Alphabétisation), le total mensuel (effectif, montant) et le total
+   * trimestriel et annuel ; le texte « Au mois de … l'effectif … est évalué à … » ; la signature.
+   * Les montants sont des formules (effectif × taux) : la fiche se corrige dans Excel comme le
+   * modèle. Une ligne par personne payée, sans les rappels (la prise en charge d'un mois).
+   */
+  async priseEnChargeExcel(
+    id: number,
+    police: PoliceDocument = 'actuelle',
+  ): Promise<{ nom: string; contenu: Buffer }> {
+    const { etat, c, communautaires, colonnes, groupes, effectif } =
+      await this.calculPriseEnCharge(id);
 
     // Le classeur
     const wb = new ExcelJS.Workbook();
