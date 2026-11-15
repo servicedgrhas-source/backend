@@ -2746,6 +2746,10 @@ export class VolontairesService implements OnModuleInit {
     // gardées (homonymes, ou payé deux fois par le DG : montré à l'agent, rien n'est décidé)
     const parCle = new Map<string, (typeof lignes)[number][]>();
     const doublons: string[] = [];
+    const doublonsLignes: {
+      p: (typeof lignes)[number];
+      deja: (typeof lignes)[number];
+    }[] = [];
     const uniques: typeof lignes = [];
     for (const p of lignes) {
       const deja = (parCle.get(p.cle) ?? []).find((q) =>
@@ -2759,6 +2763,7 @@ export class VolontairesService implements OnModuleInit {
         doublons.push(
           `${p.nom} : « ${p.feuille} » ligne ${p.ligne} (déjà « ${deja.feuille} » ligne ${deja.ligne})`,
         );
+        doublonsLignes.push({ p, deja });
         continue;
       }
       parCle.set(p.cle, [...(parCle.get(p.cle) ?? []), p]);
@@ -2895,6 +2900,69 @@ export class VolontairesService implements OnModuleInit {
         ajoutes: aAjouter.length,
       });
       if (aAjouter.length) void this.lier();
+      // Les lignes de l'état du DG mises de côté (pas payées par le système ce mois-là), gardées
+      // pour l'Excel des sortants du mois et leur incidence (15/11/2026) : sans nom, doublon du
+      // fichier, absent du registre non ajouté. Une nouvelle reprise du même mois les remplace.
+      const libelleCycle = (code: string | null, brut: string | null) =>
+        categories.find((x) => x.code === code)?.libelle ?? brut ?? '';
+      const ajoutesCles = new Set(aAjouter.map((x) => x.p));
+      const misDeCote = [
+        ...sansNom.map((x) => ({
+          raison: 'SANS_NOM',
+          nom: null as string | null,
+          numero: x.numero,
+          feuille: x.feuille,
+          ligne: x.ligne,
+          departement: x.departement,
+          cycle: x.cycle,
+          etablissement: x.etablissement,
+          montant: x.montant,
+          precision: 'Ligne sans nom dans l’état du DG',
+        })),
+        ...doublonsLignes.map(({ p, deja }) => ({
+          raison: 'DOUBLON_FICHIER',
+          nom: p.nom,
+          numero: null as string | null,
+          feuille: p.feuille,
+          ligne: p.ligne,
+          departement: nomDep(p.departementId),
+          cycle: libelleCycle(p.categorie, p.cycleBrut),
+          etablissement: p.etablissement,
+          montant: p.montant,
+          precision: `Même personne que « ${deja.feuille} » ligne ${deja.ligne} : payée une seule fois`,
+        })),
+        ...nouveaux
+          .filter((p) => !ajoutesCles.has(p))
+          .map((p) => ({
+            raison: 'ABSENT_NON_AJOUTE',
+            nom: p.nom,
+            numero: null as string | null,
+            feuille: p.feuille,
+            ligne: p.ligne,
+            departement: nomDep(p.departementId),
+            cycle: libelleCycle(p.categorie, p.cycleBrut),
+            etablissement: p.etablissement,
+            montant: p.montant,
+            precision: [
+              'Absent(e) du registre, non ajouté(e)',
+              ...alertesDe(p),
+            ].join(' · '),
+          })),
+      ];
+      await this.volontaires.query(
+        `INSERT INTO parametre (cle, valeur, description) VALUES ($1, $2, $3)
+         ON CONFLICT (cle) DO UPDATE SET valeur = EXCLUDED.valeur, description = EXCLUDED.description`,
+        [
+          `MIS_DE_COTE:${population}:${o.mois}`,
+          JSON.stringify({
+            fichier: nomFichier,
+            le: new Date().toISOString(),
+            par: u.nom,
+            lignes: misDeCote,
+          }),
+          `Lignes de l’état du DG mises de côté (${moisEnClair(o.mois)}, ${LISTES[population]})`,
+        ],
+      );
     }
     const court = (t: string[]) => ({ n: t.length, exemples: t.slice(0, 60) });
     const montantFichier = lignes.reduce((s, p) => s + p.montant, 0);

@@ -657,7 +657,8 @@ export class VolontairesController {
     return this.volontaires.reprendreMois(
       u,
       this.classeur(fichier),
-      fichier!.originalname,
+      // Le nom arrive encodé en latin1 par le navigateur (« Août ») : remis en UTF-8
+      Buffer.from(fichier!.originalname, 'latin1').toString('utf8'),
       {
         population,
         mois,

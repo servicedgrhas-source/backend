@@ -1999,11 +1999,106 @@ export class BourseService {
             b.mensuel - a.mensuel || a.libelle.localeCompare(b.libelle, 'fr'),
         );
     };
+    // Les mis de côté : les lignes de l'état du DG que la reprise du mois n'a pas payées (sans nom,
+    // doublon du fichier, absent non ajouté), et les lignes de cet état sans barème (cycle non
+    // renseigné : bourse à 0). Ils ne sortent pas du registre : ils ne sont pas payés ce mois-ci.
+    const RAISONS: Record<string, string> = {
+      SANS_NOM: 'Ligne sans nom',
+      DOUBLON_FICHIER: 'Doublon dans l’état du DG',
+      ABSENT_NON_AJOUTE: 'Absent du registre, non ajouté',
+      SANS_BAREME: 'Cycle non renseigné (bourse à 0)',
+    };
+    const [stocke] = await this.volontaires.query<{ valeur: string }[]>(
+      `SELECT valeur FROM parametre WHERE cle = $1`,
+      [`MIS_DE_COTE:${etat.population}:${etat.mois}`],
+    );
+    const reprise = stocke
+      ? (JSON.parse(stocke.valeur) as {
+          fichier: string;
+          le: string;
+          par: string;
+          lignes: {
+            raison: string;
+            nom: string | null;
+            numero: string | null;
+            feuille: string;
+            ligne: number;
+            departement: string | null;
+            cycle: string | null;
+            etablissement: string | null;
+            montant: number;
+            precision: string;
+          }[];
+        })
+      : null;
+    const sansBareme = await this.lignes.query<
+      {
+        nom: string;
+        departementId: number | null;
+        etablissement: string | null;
+      }[]
+    >(
+      `SELECT "nomComplet" AS nom, "departementId", etablissement FROM ligne_bourse
+        WHERE "etatId" = $1 AND montant = 0 AND total = 0 ORDER BY 1`,
+      [id],
+    );
+    const misLignes = [
+      ...(reprise?.lignes ?? []).map((x) => ({
+        raison: RAISONS[x.raison] ?? x.raison,
+        nom: x.nom ?? `(sans nom — N° ${x.numero ?? '?'})`,
+        departement: x.departement ?? '',
+        cycle: x.cycle ?? '',
+        etablissement: x.etablissement ?? '',
+        montant: Number(x.montant) || 0,
+        precision: x.precision,
+        origine: `${reprise!.fichier} · « ${x.feuille} » ligne ${x.ligne}`,
+      })),
+      ...sansBareme.map((x) => ({
+        raison: RAISONS.SANS_BAREME,
+        nom: x.nom,
+        departement: x.departementId ? (deps.get(x.departementId) ?? '') : '',
+        cycle: 'Non renseigné',
+        etablissement: x.etablissement ?? '',
+        montant: 0,
+        precision:
+          'Dans l’état, mais sans barème : rien n’est payé tant que le cycle manque',
+        origine: 'État de paiement du mois',
+      })),
+    ];
+    const parRaison = [
+      ...misLignes
+        .reduce((m, x) => {
+          const g = m.get(x.raison) ?? { libelle: x.raison, n: 0, montant: 0 };
+          g.n++;
+          g.montant += x.montant;
+          return m.set(x.raison, g);
+        }, new Map<string, { libelle: string; n: number; montant: number }>())
+        .values(),
+    ];
+    const misTotal = {
+      n: misLignes.length,
+      montant: misLignes.reduce((s, x) => s + x.montant, 0),
+    };
+    const sortantsMensuel = lignes.reduce((s, l) => s + l.taux, 0);
     return {
       etat: { id: etat.id, mois: etat.mois, population: etat.population },
       communautaires,
       moisEnClair: moisEnClair(etat.mois),
       dernierMoisPaye: moisEnClair(precedent),
+      misDeCote: {
+        lignes: misLignes,
+        parRaison,
+        total: misTotal,
+        // La reprise d'où viennent les lignes du DG (aucune : seulement les lignes sans barème)
+        reprise: reprise
+          ? { fichier: reprise.fichier, le: reprise.le, par: reprise.par }
+          : null,
+      },
+      // Sortants et mis de côté ensemble : ce qui n'est pas payé ce mois-ci
+      ensemble: {
+        n: lignes.length + misTotal.n,
+        mensuel: sortantsMensuel + misTotal.montant,
+      },
       finAnnee: moisEnClair(finAnnee),
       moisRestants,
       lignes,
@@ -2123,7 +2218,7 @@ export class BourseService {
       inc,
       4,
       titre,
-      `Incidence financière : la bourse que ces ${d.total.n} personne(s) auraient touchée en ${d.moisEnClair}, et jusqu'à ${d.finAnnee} (${d.moisRestants} mois), si elles étaient restées payées`,
+      `Incidence financière : la bourse que les ${d.total.n} sortant(s) auraient touchée en ${d.moisEnClair} et jusqu'à ${d.finAnnee} (${d.moisRestants} mois) ; les ${d.misDeCote.total.n} mis de côté (pas payés ce mois pour un problème) ; et les deux ensemble`,
     );
     let l = 13;
     const resume = (libelle: string, valeur: number | string, fmt?: string) => {
@@ -2213,7 +2308,148 @@ export class BourseService {
     tableau('Par motif de sortie', d.parMotif, 'Motif de sortie');
     tableau('Par département', d.parDepartement, 'Département');
     tableau('Par cycle', d.parCycle, 'Cycle');
+    // Les mis de côté, puis sortants et mis de côté ensemble (le mois)
+    const petit = (
+      t: string,
+      entetes: string[],
+      rangs: (string | number)[][],
+      total?: (string | number)[],
+    ) => {
+      inc.mergeCells(l, 1, l, 4);
+      const x = inc.getCell(l, 1);
+      x.value = t;
+      x.font = { name: 'Calibri', size: 12, bold: true, color: { argb: VERT } };
+      l++;
+      titres(inc, l, entetes);
+      l++;
+      for (const [i, r] of [...rangs, ...(total ? [total] : [])].entries()) {
+        inc.getRow(l).values = r;
+        const estTotal = !!total && i === rangs.length;
+        for (let k = 1; k <= entetes.length; k++) {
+          const c = inc.getCell(l, k);
+          c.border = bords;
+          c.font = { name: 'Calibri', size: 10, bold: estTotal };
+          if (k >= 3) c.numFmt = fmtF;
+          if (estTotal)
+            c.fill = {
+              type: 'pattern',
+              pattern: 'solid',
+              fgColor: { argb: VERT_CLAIR },
+            };
+        }
+        l++;
+      }
+      l++;
+    };
+    petit(
+      `Mis de côté : pas payés en ${d.moisEnClair} pour un problème`,
+      ['Raison', 'Personnes', `Montant du mois`, ''],
+      d.misDeCote.parRaison.map((g) => [g.libelle, g.n, g.montant, '']),
+      ['TOTAL', d.misDeCote.total.n, d.misDeCote.total.montant, ''],
+    );
+    petit(
+      `Sortants et mis de côté ensemble (${d.moisEnClair})`,
+      ['', 'Personnes', `Bourse non payée en ${d.moisEnClair}`, ''],
+      [
+        ['Sortants du mois', d.total.n, d.total.mensuel, ''],
+        ['Mis de côté', d.misDeCote.total.n, d.misDeCote.total.montant, ''],
+      ],
+      ['ENSEMBLE', d.ensemble.n, d.ensemble.mensuel, ''],
+    );
+    if (!d.misDeCote.reprise) {
+      inc.mergeCells(l, 1, l, 4);
+      const n = inc.getCell(l, 1);
+      n.value =
+        'Les lignes du DG mises de côté (sans nom, doublons, absents non ajoutés) apparaissent après « Reprendre un mois déjà payé » ; ici, seulement les lignes de l’état sans barème.';
+      n.font = { name: 'Calibri', size: 9, italic: true };
+      n.alignment = { wrapText: true };
+      inc.getRow(l).height = 26;
+    }
     [44, 12, 20, 20].forEach((w, i) => (inc.getColumn(i + 1).width = w));
+
+    // La feuille des mis de côté
+    const md = wb.addWorksheet('Mis de côté', {
+      pageSetup: {
+        paperSize: 9,
+        orientation: 'landscape',
+        fitToPage: true,
+        fitToWidth: 1,
+        fitToHeight: 0,
+        printTitlesRow: '13:13',
+      },
+    });
+    const COLS_MD: [string, number][] = [
+      ['N°', 6],
+      ['Nom et prénoms', 32],
+      ['Département', 16],
+      ['Cycle', 18],
+      ['Établissement', 24],
+      ['Raison', 28],
+      ['Précision', 46],
+      [`Montant du mois (${d.moisEnClair})`, 15],
+      ['Origine', 40],
+    ];
+    entete(
+      md,
+      COLS_MD.length,
+      `MIS DE CÔTÉ — ${titreMois} — ENSEIGNANTS ${liste}`,
+      `${d.misDeCote.total.n} ligne(s) pas payée(s) en ${d.moisEnClair} pour un problème (elles ne sortent pas du registre)`,
+    );
+    titres(
+      md,
+      13,
+      COLS_MD.map((x) => x[0]),
+    );
+    d.misDeCote.lignes.forEach((x, i) => {
+      const row = md.getRow(14 + i);
+      row.values = [
+        i + 1,
+        x.nom,
+        x.departement,
+        x.cycle,
+        x.etablissement,
+        x.raison,
+        x.precision,
+        x.montant || null,
+        x.origine,
+      ];
+      for (let k = 1; k <= COLS_MD.length; k++) {
+        const c = row.getCell(k);
+        c.border = bords;
+        c.font = { name: 'Calibri', size: 10 };
+        c.alignment = { vertical: 'middle', wrapText: k === 7 };
+        if (k === 8) c.numFmt = fmtF;
+        if (i % 2)
+          c.fill = {
+            type: 'pattern',
+            pattern: 'solid',
+            fgColor: { argb: 'FFF4F4F5' },
+          };
+      }
+    });
+    const ltMd = 14 + d.misDeCote.lignes.length;
+    md.getRow(ltMd).values = [
+      '',
+      'TOTAL',
+      '',
+      '',
+      '',
+      '',
+      '',
+      d.misDeCote.total.montant,
+    ];
+    for (let k = 1; k <= COLS_MD.length; k++) {
+      const c = md.getCell(ltMd, k);
+      c.border = bords;
+      c.font = { name: 'Calibri', size: 10, bold: true };
+      c.fill = {
+        type: 'pattern',
+        pattern: 'solid',
+        fgColor: { argb: VERT_CLAIR },
+      };
+      if (k === 8) c.numFmt = fmtF;
+    }
+    COLS_MD.forEach(([, w], i) => (md.getColumn(i + 1).width = w));
 
     // 2. La liste
     const ws = wb.addWorksheet('Sortants', {
