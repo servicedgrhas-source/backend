@@ -54,22 +54,37 @@ import {
  * Police des documents de la bourse (13/11/2026) : la police actuelle (celle des modèles du DG)
  * ou « Gill Sans MT », au choix de l'utilisateur au moment de télécharger ou d'imprimer.
  */
-export type PoliceDocument = 'actuelle' | 'gill';
+export type PoliceDocument = 'actuelle' | 'gill' | 'condensee';
 export const policeDocument = (v: unknown): PoliceDocument =>
-  v === 'gill' ? 'gill' : 'actuelle';
+  v === 'gill' ? 'gill' : v === 'condensee' ? 'condensee' : 'actuelle';
 /** Orientation des états en Word et en PDF (13/11/2026) : paysage (habituel) ou portrait. */
 export type OrientationDocument = 'paysage' | 'portrait';
 export const orientationDocument = (v: unknown): OrientationDocument =>
   v === 'portrait' ? 'portrait' : 'paysage';
 const GILL = 'Gill Sans MT';
+const GILL_CONDENSEE = 'Gill Sans MT Condensed';
+/** La police choisie ; null : la police actuelle de chaque document. */
+const nomPolice = (p: PoliceDocument) =>
+  p === 'gill' ? GILL : p === 'condensee' ? GILL_CONDENSEE : null;
 /** Passe tout le classeur en Gill Sans MT (le « Gill Sans MT Condensed » du DG reste tel quel). */
 const appliquerPolice = (wb: ExcelJS.Workbook, police: PoliceDocument) => {
-  if (police !== 'gill') return;
+  const nom = nomPolice(police);
+  if (!nom) return;
   for (const ws of wb.worksheets)
     ws.eachRow({ includeEmpty: true }, (row) =>
       row.eachCell({ includeEmpty: true }, (cell) => {
-        if (cell.font?.name?.startsWith(GILL)) return;
-        cell.font = { ...(cell.font ?? {}), name: GILL };
+        // Le « Gill Sans MT Condensed » du DG (titres du RECAP) reste tel quel en Gill Sans MT
+        if (police === 'gill' && cell.font?.name?.startsWith(GILL)) return;
+        cell.font = { ...(cell.font ?? {}), name: nom };
+        // Le texte riche (un montant en gras dans une phrase) : chaque morceau change de police
+        const v = cell.value as ExcelJS.CellRichTextValue | null;
+        if (v && typeof v === 'object' && Array.isArray(v.richText))
+          cell.value = {
+            richText: v.richText.map((r) => ({
+              ...r,
+              font: { ...(r.font ?? {}), name: nom },
+            })),
+          };
       }),
     );
 };
@@ -1242,6 +1257,8 @@ export class BourseService {
       effTotal,
       montantTotal,
       texteEffectif: `Au mois ${/^[aeiouh]/i.test(sansAccents(nomMois)) ? "d'" : 'de '}${nomMois}, l'effectif des enseignants ${liste} est évalué à ${effTotal.toLocaleString('fr-FR').replace(/\s/g, ' ')}. Leur prise en charge nécessite un montant de ${fcfa(montantTotal)} FCFA.`,
+      // Le montant, en gras dans la phrase (comme la fiche du cabinet)
+      montantEnGras: `${fcfa(montantTotal)} FCFA`,
       texteFrais:
         "A ce montant, il faut ajouter les frais de la prise en charge de l'organisation de la paie et de l'acheminement des fonds dans les différents sites départementaux.",
       signature: {
@@ -1263,7 +1280,7 @@ export class BourseService {
     choix: PoliceDocument = 'actuelle',
   ): Promise<{ nom: string; contenu: Buffer }> {
     const d = await this.ficheDonnees(id);
-    const police = choix === 'gill' ? GILL : 'Gill Sans MT Condensed';
+    const police = nomPolice(choix) ?? GILL_CONDENSEE;
     const texte = (
       t: string,
       o: { gras?: boolean; taille?: number; souligne?: boolean } = {},
@@ -1332,13 +1349,17 @@ export class BourseService {
       rows: [
         new TableRow({
           children: [
+            // Des tirets courts entre les éléments, comme le modèle (15/11/2026)
             bloc(
               [
                 { t: "MINISTERE DE L'ENSEIGNEMENT PRESCOLAIRE, PRIMAIRE," },
                 { t: "SECONDAIRE ET DE L'ALPHABETISATION" },
-                { t: 'CABINET', souligne: true },
+                { t: '-----------' },
+                { t: 'CABINET' },
+                { t: '-----------' },
                 { t: 'DIRECTION GENERALE DES RESSOURCES HUMAINES' },
-                { t: "ET DE L'ADMINISTRATION SCOLAIRE", souligne: true },
+                { t: "ET DE L'ADMINISTRATION SCOLAIRE" },
+                { t: '-----------' },
               ],
               40,
             ),
@@ -1346,7 +1367,8 @@ export class BourseService {
             bloc(
               [
                 { t: 'REPUBLIQUE DU CONGO' },
-                { t: 'Unité-Travail-Progrès', souligne: true },
+                { t: 'Unité - Travail - Progrès' },
+                { t: '-----------' },
               ],
               20,
             ),
@@ -1502,7 +1524,19 @@ export class BourseService {
             }),
             new Paragraph({ children: [], spacing: { after: 80 } }),
             tableau,
-            para(d.texteEffectif, { taille: 20, avant: 200 }),
+            new Paragraph({
+              spacing: { before: 200, after: 0 },
+              children: d.texteEffectif
+                .split(d.montantEnGras)
+                .flatMap((morceau, i) =>
+                  i === 0
+                    ? [texte(morceau, { taille: 20 })]
+                    : [
+                        texte(d.montantEnGras, { gras: true, taille: 20 }),
+                        texte(morceau, { taille: 20 }),
+                      ],
+                ),
+            }),
             para(d.texteFrais, { taille: 20 }),
             para('Fait à Brazzaville, le', {
               taille: 20,
@@ -1527,8 +1561,12 @@ export class BourseService {
           ],
         },
       ],
-      ...(choix === 'gill'
-        ? { styles: { default: { document: { run: { font: GILL } } } } }
+      ...(nomPolice(choix)
+        ? {
+            styles: {
+              default: { document: { run: { font: nomPolice(choix)! } } },
+            },
+          }
         : {}),
     });
     return { nom: `${d.nomFichier}.docx`, contenu: await Packer.toBuffer(doc) };
@@ -1603,8 +1641,9 @@ export class BourseService {
     // En-tête officiel, celui du modèle du DG (« Fiche de prise en charge Communautaires
     // Septembre 2026 », 13/11/2026) : le ministère, le cabinet et la DGRHAS sur les cinq premières
     // colonnes, la République sur les deux dernières, en Calibri 12 gras
-    const gauche = Math.min(5, nbCol - 2);
-    const droite = nbCol - 1;
+    // Assez larges pour que rien ne soit coupé, même en Gill Sans MT (plus large) (15/11/2026)
+    const gauche = Math.min(7, nbCol - 5);
+    const droite = nbCol - 3;
     const officiel = (l: number, c1: number, c2: number, v: string) => {
       texte(l, c1, c2, v, { bold: true, size: 12 });
       ws.getCell(l, c1).font = { name: 'Calibri', bold: true, size: 12 };
@@ -1789,14 +1828,22 @@ export class BourseService {
     const points = (n: number) =>
       String(n).replace(/\B(?=(\d{3})+(?!\d))/g, '.');
     const lt = l + 2;
-    texte(
-      lt,
-      1,
-      nbCol,
-      `Au mois ${/^[aeiouh]/i.test(sansAccents(nomMois)) ? "d'" : 'de '}${nomMois}, l'effectif des enseignants ${communautaires ? 'communautaires' : 'volontaires'} est évalué à ${espaces(effTotal)}. Leur prise en charge nécessite un montant de ${points(montantTotal)} FCFA.`,
-      { size: 11 },
-      'left',
-    );
+    texte(lt, 1, nbCol, '', { size: 11 }, 'left');
+    // Le montant en gras dans la phrase, comme la fiche du cabinet (15/11/2026)
+    const police11 = { name: 'Times New Roman', size: 11 };
+    ws.getCell(lt, 1).value = {
+      richText: [
+        {
+          font: police11,
+          text: `Au mois ${/^[aeiouh]/i.test(sansAccents(nomMois)) ? "d'" : 'de '}${nomMois}, l'effectif des enseignants ${communautaires ? 'communautaires' : 'volontaires'} est évalué à ${espaces(effTotal)}. Leur prise en charge nécessite un montant de `,
+        },
+        {
+          font: { ...police11, bold: true },
+          text: `${points(montantTotal)} FCFA`,
+        },
+        { font: police11, text: '.' },
+      ],
+    };
     texte(
       lt + 1,
       1,
@@ -2293,7 +2340,7 @@ export class BourseService {
   ): Promise<{ nom: string; contenu: Buffer }> {
     const e = await this.etatPaiement(id);
     // Times New Roman (la police actuelle) ou Gill Sans MT, au choix (13/11/2026)
-    const police = choix === 'gill' ? GILL : 'Times New Roman';
+    const police = nomPolice(choix) ?? 'Times New Roman';
     const texte = (
       t: string,
       o: {
@@ -2583,8 +2630,12 @@ export class BourseService {
             ],
           },
         ],
-        ...(choix === 'gill'
-          ? { styles: { default: { document: { run: { font: GILL } } } } }
+        ...(nomPolice(choix)
+          ? {
+              styles: {
+                default: { document: { run: { font: nomPolice(choix)! } } },
+              },
+            }
           : {}),
       });
       return {
@@ -2702,8 +2753,12 @@ export class BourseService {
     // La police choisie vaut aussi pour les passages qui ne fixent pas la leur (tableaux…)
     const doc = new Document({
       sections,
-      ...(choix === 'gill'
-        ? { styles: { default: { document: { run: { font: GILL } } } } }
+      ...(nomPolice(choix)
+        ? {
+            styles: {
+              default: { document: { run: { font: nomPolice(choix)! } } },
+            },
+          }
         : {}),
     });
     return {
