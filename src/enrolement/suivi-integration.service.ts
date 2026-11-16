@@ -33,7 +33,8 @@ import { ConfigEnrolementService } from './configuration';
  * Règles (DGRHAS, 16/11/2026) :
  * - recruté : fonctionnaire ou contractuel dans la base du personnel (le statut suffit, même sans
  *   texte), ou un texte d'intégration retrouvé, ou la sortie « Recruté à la FP » ;
- * - payé : fonctionnaire ou contractuel, avec ou sans matricule solde : il perçoit son salaire ;
+ * - payé : un matricule solde (c'est la Solde qui paie le salaire) ; un fonctionnaire ou contractuel
+ *   sans matricule est recruté, « en attente de matricule » ;
  * - affecté : fonctionnaire ou contractuel qui travaille dans une structure (lieu de service ou
  *   rattachement à l'organigramme dans la base du personnel) ; à défaut, une note d'affectation
  *   retrouvée (recrue des textes pas encore dans la base du personnel).
@@ -42,6 +43,7 @@ import { ConfigEnrolementService } from './configuration';
 export type CodeSituation =
   | 'PAYE_AFFECTE'
   | 'PAYE_SANS_NOTE'
+  | 'ATTENTE_MATRICULE'
   | 'ATTENTE_SALAIRE'
   | 'ATTENTE_NOTE'
   | 'RECRUTE_SANS_PIECE'
@@ -51,9 +53,10 @@ export type CodeSituation =
   | 'ABSENT_REGISTRE';
 
 export const SITUATIONS: Record<CodeSituation, string> = {
-  PAYE_AFFECTE: 'Fonctionnaire ou contractuel, en poste dans une structure',
-  PAYE_SANS_NOTE:
-    'Fonctionnaire ou contractuel, structure à compléter dans sa fiche',
+  PAYE_AFFECTE: 'Payé (matricule solde), en poste dans une structure',
+  PAYE_SANS_NOTE: 'Payé (matricule solde), structure à compléter dans sa fiche',
+  ATTENTE_MATRICULE:
+    'Fonctionnaire ou contractuel, en attente de matricule solde',
   ATTENTE_SALAIRE:
     'Texte reçu et affecté, pas encore dans la base du personnel',
   ATTENTE_NOTE: 'Texte reçu, pas encore affecté ni dans la base du personnel',
@@ -80,9 +83,10 @@ export const DEFINITIONS: [string, string][] = [
     'Affecté',
     'un fonctionnaire ou un contractuel est affecté : il travaille dans un département et une structure (école, inspection, direction…), indiquée dans sa fiche du personnel. Pour une recrue pas encore dans la base du personnel : une note d’affectation retrouvée.',
   ],
+  ['Payé (salaire)', 'a un matricule solde : la Solde lui paie son salaire.'],
   [
-    'Payé (salaire)',
-    'fonctionnaire ou contractuel, avec ou sans matricule solde : il perçoit son salaire.',
+    'En attente de matricule',
+    'fonctionnaire ou contractuel sans matricule solde : recruté, mais son salaire n’est pas encore confirmé par la Solde.',
   ],
   [
     'Reste à intégrer',
@@ -155,6 +159,8 @@ type Groupe = {
   recrutes: number;
   affectes: number;
   payes: number;
+  /** Fonctionnaires ou contractuels sans matricule solde : salaire pas encore confirmé. */
+  attente: number;
   reste: number;
   aVerifier: number;
 };
@@ -168,6 +174,12 @@ export class SuiviIntegrationService {
    */
   private readonly memoire: CalculMemorise<{
     lignes: LigneSuivi[];
+    personnel: {
+      contractuel: boolean;
+      departementId: number | null;
+      matricule: boolean;
+      structure: boolean;
+    }[];
     sources: Record<string, number>;
     choix: { vagues: number[]; annees: string[] };
   }>;
@@ -439,47 +451,54 @@ export class SuiviIntegrationService {
                 source: 'Base du personnel (note d’affectation)',
               }
             : null));
-      // 3. Le salaire : matricule solde, ou statut de fonctionnaire ou de contractuel
-      const matricule = p ? (p.matricule ?? p.matriculeSolde ?? null) : null;
-      const paye = !!p && (fc(p.statut) || !!matricule);
+      // 3. Le salaire : un matricule solde (DG, 16/11/2026) ; un fonctionnaire ou contractuel sans
+      // matricule est recruté, en attente de matricule
+      const matricule = p
+        ? p.matricule?.trim() || p.matriculeSolde?.trim() || null
+        : null;
+      const paye = estFC && !!matricule;
       const premierMois = paye
         ? ((matricule && bottinMatricule.get(matricule.toUpperCase())) ??
           bottinNom.probables(v.nomComplet, v.dateNaissance)[0] ??
           null)
         : null;
       const salaire =
-        paye && p
+        estFC && p
           ? { statut: p.statut, matricule, indice: p.indice, premierMois }
           : null;
       // 4. La fin de la bourse
       const debut = BourseService.premierMois(v, c);
       const fin = BourseService.dernierMois(v, c, debut);
-      const recrute = !!texte || paye || v.motifSortie === 'RECRUTE_FP';
+      const recrute = !!texte || estFC || v.motifSortie === 'RECRUTE_FP';
       const situation: CodeSituation = paye
         ? note?.lieu
           ? 'PAYE_AFFECTE'
           : 'PAYE_SANS_NOTE'
-        : texte
-          ? note
-            ? 'ATTENTE_SALAIRE'
-            : 'ATTENTE_NOTE'
-          : recrute
-            ? 'RECRUTE_SANS_PIECE'
-            : piste || texteIncertain
-              ? 'A_VERIFIER'
-              : v.statut === 'EN_POSTE'
-                ? 'NON_RECRUTE'
-                : 'SORTI_AUTRE';
+        : estFC
+          ? 'ATTENTE_MATRICULE'
+          : texte
+            ? note
+              ? 'ATTENTE_SALAIRE'
+              : 'ATTENTE_NOTE'
+            : recrute
+              ? 'RECRUTE_SANS_PIECE'
+              : piste || texteIncertain
+                ? 'A_VERIFIER'
+                : v.statut === 'EN_POSTE'
+                  ? 'NON_RECRUTE'
+                  : 'SORTI_AUTRE';
       const aRegler: string[] = [];
       if (v.statut === 'EN_POSTE' && paye)
         aRegler.push('Payé en salaire et encore payé en bourse');
+      else if (v.statut === 'EN_POSTE' && estFC)
+        aRegler.push('Fonctionnaire ou contractuel et encore payé en bourse');
       else if (v.statut === 'EN_POSTE' && texte)
         aRegler.push(
           'Texte d’intégration reçu, encore payé en bourse (jusqu’au premier salaire ?)',
         );
-      if (paye && !matricule)
+      if (estFC && !matricule)
         aRegler.push(
-          'Fonctionnaire ou contractuel sans matricule dans notre base',
+          'En attente de matricule solde (salaire pas encore confirmé par la Solde)',
         );
       if (estFC && !enStructure)
         aRegler.push(
@@ -586,6 +605,13 @@ export class SuiviIntegrationService {
     );
     return {
       lignes,
+      // Toute la base du personnel (fonctionnaires et contractuels), pour le bloc d'ensemble
+      personnel: personnel.map((x) => ({
+        contractuel: x.statut === 'CONTRACTUEL',
+        departementId: x.departementId,
+        matricule: !!(x.matricule?.trim() || x.matriculeSolde?.trim()),
+        structure: !!(x.structure ?? x.lieu),
+      })),
       choix: {
         vagues: [
           ...new Set(
@@ -644,6 +670,7 @@ export class SuiviIntegrationService {
       [
         'PAYE_AFFECTE',
         'PAYE_SANS_NOTE',
+        'ATTENTE_MATRICULE',
         'ATTENTE_SALAIRE',
         'ATTENTE_NOTE',
         'RECRUTE_SANS_PIECE',
@@ -652,7 +679,8 @@ export class SuiviIntegrationService {
       base: liste.length,
       recrutes: liste.filter(estRecrute).length,
       affectes: liste.filter((l) => estRecrute(l) && !!l.note).length,
-      payes: liste.filter((l) => !!l.salaire).length,
+      payes: liste.filter((l) => !!l.salaire?.matricule).length,
+      attente: liste.filter((l) => !!l.salaire && !l.salaire.matricule).length,
       reste: liste.filter((l) => l.situation === 'NON_RECRUTE').length,
       aVerifier: liste.filter((l) => l.situation === 'A_VERIFIER').length,
     });
@@ -719,9 +747,34 @@ export class SuiviIntegrationService {
     };
   }
 
+  /** Toute la base du personnel : effectifs, payés (matricule), en attente, affectés. */
+  private basePersonnel(
+    base: { contractuel: boolean; matricule: boolean; structure: boolean }[],
+  ) {
+    return {
+      total: base.length,
+      fonctionnaires: base.filter((x) => !x.contractuel).length,
+      contractuels: base.filter((x) => x.contractuel).length,
+      payes: base.filter((x) => x.matricule).length,
+      attente: base.filter((x) => !x.matricule).length,
+      avecStructure: base.filter((x) => x.structure).length,
+      sansStructure: base.filter((x) => !x.structure).length,
+    };
+  }
+
   /** La page : synthèse, une page de la liste, et de quoi remplir les filtres. */
   async suivi(f: FiltresSuivi, page = 1, taille = 50) {
-    const { lignes: toutes, sources, choix, le, aJour } = await this.toutes();
+    const {
+      lignes: toutes,
+      sources,
+      choix,
+      le,
+      aJour,
+      personnel,
+    } = await this.toutes();
+    const base = personnel.filter(
+      (x) => !f.departementId || x.departementId === f.departementId,
+    );
     const lignes = this.filtrer(toutes, f);
     const debut = (Math.max(1, page) - 1) * taille;
     return {
@@ -735,6 +788,8 @@ export class SuiviIntegrationService {
       choix,
       situations: SITUATIONS,
       calculeLe: new Date(le).toISOString(),
+      /** Toute la base du personnel (fonctionnaires et contractuels), au-delà du registre. */
+      basePersonnel: this.basePersonnel(base),
       /** Faux : des données ont changé, une mise à jour se fait en arrière-plan. */
       aJour,
     };
@@ -764,7 +819,12 @@ export class SuiviIntegrationService {
 
   /** L'Excel : synthèse, liste nominative, à régler (en-tête officiel). */
   async excel(f: FiltresSuivi): Promise<{ nom: string; contenu: Buffer }> {
-    const { lignes: toutes, sources } = await this.toutes();
+    const { lignes: toutes, sources, personnel } = await this.toutes();
+    const B = this.basePersonnel(
+      personnel.filter(
+        (x) => !f.departementId || x.departementId === f.departementId,
+      ),
+    );
     const lignes = this.filtrer(toutes, f);
     const s = this.synthese(lignes);
     const deps = new Map(
@@ -886,27 +946,49 @@ export class SuiviIntegrationService {
       x.font = { name: 'Calibri', size: 12, bold: true, color: { argb: VERT } };
       l++;
     };
-    bloc('Le parcours en chiffres');
+    bloc('1. Toute la base du personnel (fonctionnaires et contractuels)');
+    titres(syn, l, ['', 'Personnes', '', '', '', '']);
+    l++;
+    for (const [lib, n] of [
+      [
+        `Fonctionnaires et contractuels (${B.fonctionnaires} + ${B.contractuels})`,
+        B.total,
+      ],
+      ['Payés (matricule solde)', B.payes],
+      [
+        'En attente de matricule (recrutés, salaire pas encore confirmé)',
+        B.attente,
+      ],
+      ['Affectés, structure connue dans la fiche', B.avecStructure],
+      ['Structure à compléter dans la fiche', B.sansStructure],
+    ] as [string, number][]) {
+      ligne(syn, l, [lib, n, '', '', '', '']);
+      syn.mergeCells(l, 3, l, 6);
+      l++;
+    }
+    l++;
+    bloc('2. Volontaires et communautaires : où en sont-ils ?');
     titres(syn, l, ['', 'Personnes', 'Taux', '', '', '']);
     l++;
     const T = s.total;
     for (const [lib, n, tx] of [
-      ['Volontaires et communautaires (registre de la bourse)', T.base, ''],
+      ['Payés en bourse un jour (registre de la bourse)', T.base, ''],
       [
-        'Recrutés (texte d’intégration, salaire ou sortie « recruté »)',
+        'Recrutés (fonctionnaire ou contractuel, texte reçu, ou sortie « recruté »)',
         T.recrutes,
         `${s.taux.integration} % du registre`,
       ],
       [
-        'Affectés (en poste dans une structure)',
+        'Affectés (fonctionnaires ou contractuels : département et structure)',
         T.affectes,
         `${s.taux.affectation} % des recrutés`,
       ],
       [
-        'Payés (matricule solde ou statut fonctionnaire / contractuel)',
+        'Payés (matricule solde)',
         T.payes,
         `${s.taux.priseEnCharge} % des recrutés`,
       ],
+      ['En attente de matricule (salaire pas encore confirmé)', T.attente, ''],
       [
         'Peut-être déjà recrutés (même nom, sans date de naissance : à vérifier)',
         T.aVerifier,
@@ -946,7 +1028,8 @@ export class SuiviIntegrationService {
         'Registre',
         'Recrutés',
         'Affectés',
-        'Payés',
+        'Payés (matricule)',
+        'En attente de matricule',
         'Reste à intégrer',
         'À vérifier',
       ]);
@@ -961,6 +1044,7 @@ export class SuiviIntegrationService {
             g.recrutes,
             g.affectes,
             g.payes,
+            g.attente,
             g.reste,
             g.aVerifier,
           ],
@@ -978,6 +1062,7 @@ export class SuiviIntegrationService {
           T.recrutes,
           T.affectes,
           T.payes,
+          T.attente,
           T.reste,
           T.aVerifier,
         ],
@@ -1032,7 +1117,7 @@ export class SuiviIntegrationService {
       x.font = { name: 'Calibri', size: 10 };
       l++;
     }
-    [52, 13, 13, 13, 13, 16, 13].forEach(
+    [52, 13, 13, 13, 13, 14, 16, 13].forEach(
       (w, i) => (syn.getColumn(i + 1).width = w),
     );
 
@@ -1141,7 +1226,12 @@ export class SuiviIntegrationService {
 
   /** Le Word de la synthèse (en-tête officiel, paysage), pour la Banque mondiale. */
   async word(f: FiltresSuivi): Promise<{ nom: string; contenu: Buffer }> {
-    const { lignes: toutes, sources } = await this.toutes();
+    const { lignes: toutes, sources, personnel } = await this.toutes();
+    const B = this.basePersonnel(
+      personnel.filter(
+        (x) => !f.departementId || x.departementId === f.departementId,
+      ),
+    );
     const lignes = this.filtrer(toutes, f);
     const s = this.synthese(lignes);
     const deps = new Map(
@@ -1314,10 +1404,20 @@ export class SuiviIntegrationService {
         x.recrutes,
         x.affectes,
         x.payes,
+        x.attente,
         x.reste,
         x.aVerifier,
       ]),
-      ['TOTAL', T.base, T.recrutes, T.affectes, T.payes, T.reste, T.aVerifier],
+      [
+        'TOTAL',
+        T.base,
+        T.recrutes,
+        T.affectes,
+        T.payes,
+        T.attente,
+        T.reste,
+        T.aVerifier,
+      ],
     ];
     const doc = new Document({
       sections: [
@@ -1341,14 +1441,40 @@ export class SuiviIntegrationService {
               },
             ),
             p(
-              'Du registre de la bourse au salaire : textes d’intégration, notes d’affectation, prise en charge de la solde',
+              'Toute la base du personnel, puis le parcours des volontaires et communautaires : recrutement, affectation, salaire (matricule solde)',
               { ital: true, centre: true },
             ),
             p(
               `${this.libelleFiltres(f, deps)} · situation au ${new Date().toLocaleDateString('fr-FR')}`,
               { ital: true, centre: true, taille: 18 },
             ),
-            p('1. Le parcours en chiffres', {
+            p(
+              '1. Toute la base du personnel (fonctionnaires et contractuels)',
+              {
+                gras: true,
+                taille: 24,
+                avant: 240,
+                couleur: '0F5132',
+              },
+            ),
+            tab(
+              ['', 'Personnes'],
+              [
+                [
+                  `Fonctionnaires et contractuels (${B.fonctionnaires} + ${B.contractuels})`,
+                  B.total,
+                ],
+                ['Payés (matricule solde)', B.payes],
+                [
+                  'En attente de matricule (salaire pas encore confirmé)',
+                  B.attente,
+                ],
+                ['Affectés, structure connue dans la fiche', B.avecStructure],
+                ['Structure à compléter dans la fiche', B.sansStructure],
+              ],
+              [75, 25],
+            ),
+            p('Volontaires et communautaires : où en sont-ils ?', {
               gras: true,
               taille: 24,
               avant: 240,
@@ -1357,25 +1483,26 @@ export class SuiviIntegrationService {
             tab(
               ['Étape', 'Personnes', 'Taux'],
               [
+                ['Payés en bourse un jour (registre de la bourse)', T.base, ''],
                 [
-                  'Volontaires et communautaires (registre de la bourse)',
-                  T.base,
-                  '',
-                ],
-                [
-                  'Recrutés (texte d’intégration, salaire ou sortie « recruté »)',
+                  'Recrutés (fonctionnaire ou contractuel, texte reçu, ou sortie « recruté »)',
                   T.recrutes,
                   `${s.taux.integration} % du registre`,
                 ],
                 [
-                  'Affectés (en poste dans une structure)',
+                  'Affectés (fonctionnaires ou contractuels : département et structure)',
                   T.affectes,
                   `${s.taux.affectation} % des recrutés`,
                 ],
                 [
-                  'Payés (matricule solde ou statut fonctionnaire / contractuel)',
+                  'Payés (matricule solde)',
                   T.payes,
                   `${s.taux.priseEnCharge} % des recrutés`,
+                ],
+                [
+                  'En attente de matricule (salaire pas encore confirmé)',
+                  T.attente,
+                  '',
                 ],
                 [
                   'Reste à intégrer (en poste, pas encore recrutés)',
@@ -1397,12 +1524,13 @@ export class SuiviIntegrationService {
                 'Registre',
                 'Recrutés',
                 'Affectés',
-                'Payés',
+                'Payés (matricule)',
+                'Attente de matricule',
                 'Reste à intégrer',
                 'À vérifier',
               ],
               groupe(s.parPopulation),
-              [28, 12, 12, 12, 12, 12, 12],
+              [23, 11, 11, 11, 11, 11, 11, 11],
             ),
             p('3. Par département', {
               gras: true,
@@ -1416,12 +1544,13 @@ export class SuiviIntegrationService {
                 'Registre',
                 'Recrutés',
                 'Affectés',
-                'Payés',
+                'Payés (matricule)',
+                'Attente de matricule',
                 'Reste à intégrer',
                 'À vérifier',
               ],
               groupe(s.parDepartement),
-              [28, 12, 12, 12, 12, 12, 12],
+              [23, 11, 11, 11, 11, 11, 11, 11],
             ),
             p('4. Par cycle', {
               gras: true,
@@ -1435,12 +1564,13 @@ export class SuiviIntegrationService {
                 'Registre',
                 'Recrutés',
                 'Affectés',
-                'Payés',
+                'Payés (matricule)',
+                'Attente de matricule',
                 'Reste à intégrer',
                 'À vérifier',
               ],
               groupe(s.parCycle),
-              [28, 12, 12, 12, 12, 12, 12],
+              [23, 11, 11, 11, 11, 11, 11, 11],
             ),
             p('5. Ce qui est à régler', {
               gras: true,
