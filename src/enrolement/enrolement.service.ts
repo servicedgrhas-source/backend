@@ -10,7 +10,13 @@ import type { UtilisateurConnecte } from '../auth/auth';
 import { lireClasseur } from '../common/excel';
 import { codeDepartement } from '../common/referentiels';
 import { motsDuNom, ressemblance } from '../common/ressemblance';
-import { ageRevolu, lireDate, nettoyer, normaliser } from '../common/texte';
+import {
+  ageRevolu,
+  enTexte,
+  lireDate,
+  nettoyer,
+  normaliser,
+} from '../common/texte';
 import { ConfigEnrolementService } from './configuration';
 import { JournalService } from '../core/core.service';
 import {
@@ -1549,7 +1555,10 @@ export class EnrolementService implements OnApplicationBootstrap {
    * Listes imprimables et exportables de l'enrôlement (DG, 12/11/2026) : les retenus, avec l'âge
    * après la date de naissance ; les écartés, avec où chacun a été trouvé.
    */
-  async listeEnrolement(campagneId: number, quoi: 'retenus' | 'ecartes') {
+  async listeEnrolement(
+    campagneId: number,
+    quoi: 'retenus' | 'ecartes' | 'non-retenus',
+  ) {
     const c = await this.campagne(campagneId);
     const conf = this.config.get();
     const limites = `âge au 31/12/${c.annee}, limites ${conf.ageMinimum}–${conf.ageMaximum} ans`;
@@ -1576,6 +1585,33 @@ export class EnrolementService implements OnApplicationBootstrap {
             ? ` · ${lignes.filter((l) => l.horsLimite).length} hors des limites (en rouge)`
             : ''
         }`,
+        lignes,
+      };
+    }
+    // Tous les non retenus (DG, 16/11/2026) : les écartés déjà connus et ceux écartés pour un autre motif
+    if (quoi === 'non-retenus') {
+      const lignes = (await this.liste({ campagneId, etat: 'NON_RETENU' })).map(
+        (e) => ({
+          id: e.id,
+          nom: e.nomComplet,
+          naissance: jour(e.dateNaissance),
+          ...this.ageDe(e.dateNaissance, c.annee),
+          diplome: e.diplomeLibelle,
+          cycle: [e.cycle, e.specialite].filter(Boolean).join(' · ') || null,
+          motif:
+            e.motifDecision ??
+            (e.ecarteDejaConnu ? 'Déjà connu ailleurs' : 'Non précisé'),
+          decision: e.decidePar
+            ? `${e.decidePar}${e.decideLe ? `, le ${jour(new Date(e.decideLe).toISOString())}` : ''}`
+            : null,
+        }),
+      );
+      const deja = lignes.filter((l) =>
+        /^D[ée]j[àa] connu/i.test(l.motif),
+      ).length;
+      return {
+        titre: `LISTE DES NON RETENUS — ENRÔLEMENT ${c.annee}`,
+        sousTitre: `Enrôlement ${c.annee} (${c.anneeScolaire}) · ${lignes.length.toLocaleString('fr-FR')} non retenu(s) : ${deja.toLocaleString('fr-FR')} déjà connu(s) ailleurs, ${(lignes.length - deja).toLocaleString('fr-FR')} pour un autre motif`,
         lignes,
       };
     }
@@ -1702,7 +1738,7 @@ export class EnrolementService implements OnApplicationBootstrap {
       // Une licence de langue ou de philosophie part au lycée ; la règle suit la spécialité
       const maj: Partial<Enrole> = { specialite: valeur };
       if (!e.noteForcee)
-        maj.cycle = this.cycleDeLaRegle({ ...e, specialite: valeur } as Enrole);
+        maj.cycle = this.cycleDeLaRegle({ ...e, specialite: valeur });
       await this.enroles.update(e.id, maj);
       changes++;
     }
@@ -2088,9 +2124,9 @@ export class EnrolementService implements OnApplicationBootstrap {
             .join(', ')
         : champ === 'departementRetenuId'
           ? v
-            ? String(nomDep.get(v as number) ?? v)
+            ? (nomDep.get(v as number) ?? enTexte(v))
             : ''
-          : String(v ?? '');
+          : enTexte(v);
     const ecarts = (e: Partial<Enrole>, x: Ligne): Ecart[] =>
       CHAMPS.flatMap(([champ, libelle]) => {
         const f = lisible(champ, x[champ]);
@@ -2269,7 +2305,10 @@ export class EnrolementService implements OnApplicationBootstrap {
 
     // 3. Règle des diplômes : un diplôme non conforme est mis de côté (non retenu, motif écrit,
     // décision annulable) ; un cas douteux est signalé sur le dossier
-    const nouveaux: Partial<Enrole>[] = garder.map(({ cle: _cle, ...x }) => {
+    const nouveaux: Partial<Enrole>[] = garder.map((ligne) => {
+      // La clé de rapprochement ne fait pas partie du dossier
+      const { cle, ...x } = ligne;
+      void cle;
       const regle = regleDiplome(
         x.diplome!,
         x.diplomePrecision ?? null,

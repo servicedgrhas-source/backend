@@ -318,7 +318,7 @@ export class EnrolementController {
     @Query('campagne', ParseIntPipe) campagne: number,
     @Res() res: Response,
   ) {
-    if (quoi !== 'retenus' && quoi !== 'ecartes')
+    if (quoi !== 'retenus' && quoi !== 'ecartes' && quoi !== 'non-retenus')
       throw new BadRequestException('Liste inconnue.');
     const brut = await this.service.listeEnrolement(campagne, quoi);
     // L'origine (qui a recommandé) : pour la DGRHAS seulement (DG, 16/11/2026)
@@ -339,41 +339,56 @@ export class EnrolementController {
     if (format !== 'excel' && format !== 'word')
       throw new BadRequestException('Format inconnu.');
     const ecartes = quoi === 'ecartes';
+    const nonRetenus = quoi === 'non-retenus';
     const lignes = l.lignes as unknown as Record<
       string,
       string | number | boolean | null
     >[];
-    const colonnes: [string, string, number][] = ecartes
+    const colonnes: [string, string, number][] = nonRetenus
       ? [
-          ['N°', 'n', 6],
-          ['Noms et prénoms', 'nom', 30],
-          ['Date de naissance', 'naissance', 12],
-          ['Âge', 'age', 6],
-          ['Diplôme', 'diplome', 18],
-          ['Trouvé dans', 'source', 22],
-          ['Statut', 'statut', 24],
-          ['Établissement', 'etablissement', 24],
-          ['Département', 'departement', 16],
-          ['Correspondance', 'correspondance', 13],
-          ['Motif', 'motif', 26],
-          ...(avecOrigine
-            ? ([['Origine', 'origine', 18]] as [string, string, number][])
-            : []),
-        ]
-      : [
           ['N°', 'n', 6],
           ['Noms et prénoms', 'nom', 32],
           ['Date de naissance', 'naissance', 12],
           ['Âge', 'age', 6],
-          ['Lieu de naissance', 'lieu', 16],
           ['Diplôme', 'diplome', 20],
           ['Cycle · spécialité', 'cycle', 22],
-          ['Département retenu', 'departement', 18],
-          ['Établissement', 'etablissement', 26],
+          ['Motif', 'motif', 34],
+          ['Décidé par', 'decision', 22],
           ...(avecOrigine
             ? ([['Origine', 'origine', 18]] as [string, string, number][])
             : []),
-        ];
+        ]
+      : ecartes
+        ? [
+            ['N°', 'n', 6],
+            ['Noms et prénoms', 'nom', 30],
+            ['Date de naissance', 'naissance', 12],
+            ['Âge', 'age', 6],
+            ['Diplôme', 'diplome', 18],
+            ['Trouvé dans', 'source', 22],
+            ['Statut', 'statut', 24],
+            ['Établissement', 'etablissement', 24],
+            ['Département', 'departement', 16],
+            ['Correspondance', 'correspondance', 13],
+            ['Motif', 'motif', 26],
+            ...(avecOrigine
+              ? ([['Origine', 'origine', 18]] as [string, string, number][])
+              : []),
+          ]
+        : [
+            ['N°', 'n', 6],
+            ['Noms et prénoms', 'nom', 32],
+            ['Date de naissance', 'naissance', 12],
+            ['Âge', 'age', 6],
+            ['Lieu de naissance', 'lieu', 16],
+            ['Diplôme', 'diplome', 20],
+            ['Cycle · spécialité', 'cycle', 22],
+            ['Département retenu', 'departement', 18],
+            ['Établissement', 'etablissement', 26],
+            ...(avecOrigine
+              ? ([['Origine', 'origine', 18]] as [string, string, number][])
+              : []),
+          ];
     const colAge = colonnes.findIndex(([, k]) => k === 'age');
     const liste: ListeExportee = {
       titre: l.titre,
@@ -381,7 +396,7 @@ export class EnrolementController {
       entetes: colonnes.map(([t]) => t),
       largeurs: colonnes.map(([, , w]) => w),
       nombres: [0, colAge],
-      nomFeuille: ecartes ? 'Écartés' : 'Retenus',
+      nomFeuille: nonRetenus ? 'Non retenus' : ecartes ? 'Écartés' : 'Retenus',
       lignes: lignes.map((x, i) =>
         colonnes.map(([, k]) =>
           k === 'n'
@@ -396,11 +411,11 @@ export class EnrolementController {
       rouges: lignes.flatMap((x, i) =>
         x.horsLimite ? [[i, colAge] as [number, number]] : [],
       ),
-      fin: `Arrêtée la présente liste à ${lignes.length.toLocaleString('fr-FR')} ${ecartes ? 'écarté(s)' : 'retenu(s)'}.`,
+      fin: `Arrêtée la présente liste à ${lignes.length.toLocaleString('fr-FR')} ${nonRetenus ? 'non retenu(s)' : ecartes ? 'écarté(s)' : 'retenu(s)'}.`,
     };
     const contenu =
       format === 'excel' ? await excelListe(liste) : await wordListe(liste);
-    const nom = `${ecartes ? 'Ecartes' : 'Retenus'} enrolement ${new Date().toLocaleDateString('fr-FR').replaceAll('/', '-')}.${format === 'excel' ? 'xlsx' : 'docx'}`;
+    const nom = `${nonRetenus ? 'Non retenus' : ecartes ? 'Ecartes' : 'Retenus'} enrolement ${new Date().toLocaleDateString('fr-FR').replaceAll('/', '-')}.${format === 'excel' ? 'xlsx' : 'docx'}`;
     res.setHeader(
       'Content-Type',
       format === 'excel'

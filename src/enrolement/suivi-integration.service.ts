@@ -29,12 +29,13 @@ import { ConfigEnrolementService } from './configuration';
  * (salaire) et la fin de la bourse ; une situation par personne et ce qui est à régler.
  * Lecture seule : rien n'est modifié.
  *
- * Règles (DGRHAS) :
- * - recruté : un texte d'intégration retrouvé, ou un salaire, ou la sortie « Recruté à la FP » ;
- * - affecté : une note d'affectation retrouvée (signée dans le système, référence importée, ou
- *   « note d'affectation » de la base du personnel) ;
- * - payé : un matricule solde, ou le statut de fonctionnaire ou de contractuel (c'est le salaire
- *   qui apporte le matricule ; un fonctionnaire est payé même si son matricule manque chez nous).
+ * Règles (DGRHAS, 16/11/2026) :
+ * - recruté : fonctionnaire ou contractuel dans la base du personnel (le statut suffit, même sans
+ *   texte), ou un texte d'intégration retrouvé, ou la sortie « Recruté à la FP » ;
+ * - payé : fonctionnaire ou contractuel, avec ou sans matricule solde : il perçoit son salaire ;
+ * - affecté : fonctionnaire ou contractuel qui travaille dans une structure (lieu de service ou
+ *   rattachement à l'organigramme dans la base du personnel) ; à défaut, une note d'affectation
+ *   retrouvée (recrue des textes pas encore dans la base du personnel).
  */
 
 export type CodeSituation =
@@ -49,16 +50,48 @@ export type CodeSituation =
   | 'ABSENT_REGISTRE';
 
 export const SITUATIONS: Record<CodeSituation, string> = {
-  PAYE_AFFECTE: 'Recruté, affecté et payé',
-  PAYE_SANS_NOTE: 'Payé, note d’affectation à retrouver',
-  ATTENTE_SALAIRE: 'Recruté et affecté, en attente de salaire',
-  ATTENTE_NOTE: 'Recruté, en attente de note d’affectation',
-  RECRUTE_SANS_PIECE: 'Sorti « recruté », texte et salaire à retrouver',
-  A_VERIFIER: 'Peut-être déjà recruté (même nom, à vérifier)',
-  NON_RECRUTE: 'Pas encore recruté (en poste)',
-  SORTI_AUTRE: 'Sorti du registre pour un autre motif',
-  ABSENT_REGISTRE: 'Recrue des textes absente du registre',
+  PAYE_AFFECTE: 'Fonctionnaire ou contractuel, en poste dans une structure',
+  PAYE_SANS_NOTE:
+    'Fonctionnaire ou contractuel, structure à compléter dans sa fiche',
+  ATTENTE_SALAIRE:
+    'Texte reçu et affecté, pas encore dans la base du personnel',
+  ATTENTE_NOTE: 'Texte reçu, pas encore affecté ni dans la base du personnel',
+  RECRUTE_SANS_PIECE:
+    'Sorti « recruté », introuvable dans la base du personnel',
+  A_VERIFIER:
+    'Peut-être déjà recruté : même nom qu’un fonctionnaire (à vérifier)',
+  NON_RECRUTE: 'Pas encore recruté (toujours payé en bourse)',
+  SORTI_AUTRE: 'Sorti de la bourse pour un autre motif (désertion, décès…)',
+  ABSENT_REGISTRE: 'Recruté par texte, absent du registre de la bourse',
 };
+
+/** Les mots du suivi, expliqués pour un lecteur qui découvre le document (DG, 16/11/2026). */
+export const DEFINITIONS: [string, string][] = [
+  [
+    'Registre de la bourse',
+    'toutes les personnes payées un jour en bourse : les volontaires (finalistes enrôlés) et les communautaires (recrutés autrefois par les écoles), encore en poste ou déjà sortis.',
+  ],
+  [
+    'Recruté',
+    'devenu fonctionnaire ou contractuel ; son statut dans la base du personnel suffit, même si le texte manque. Comptent aussi : un arrêté ou un décret d’intégration reçu, ou une sortie de la bourse avec le motif « recruté à la Fonction publique ».',
+  ],
+  [
+    'Affecté',
+    'un fonctionnaire ou un contractuel est affecté : il travaille dans un département et une structure (école, inspection, direction…), indiquée dans sa fiche du personnel. Pour une recrue pas encore dans la base du personnel : une note d’affectation retrouvée.',
+  ],
+  [
+    'Payé (salaire)',
+    'fonctionnaire ou contractuel, avec ou sans matricule solde : il perçoit son salaire.',
+  ],
+  [
+    'Reste à intégrer',
+    'encore en poste et payés en bourse, pas encore recrutés.',
+  ],
+  [
+    'À vérifier',
+    'même nom qu’un fonctionnaire ou un contractuel, sans date de naissance pour être sûr que c’est la même personne ; pas compté.',
+  ],
+];
 
 /** L'ordre du parcours, pour trier la liste nominative. */
 const ORDRE_SITUATIONS = Object.keys(SITUATIONS) as CodeSituation[];
@@ -83,10 +116,12 @@ export interface LigneSuivi {
     source: string;
   } | null;
   anneeTexte: string | null;
+  /** L'affectation : la structure où il travaille (base du personnel), sinon une note retrouvée. */
   note: {
-    numero: string;
+    numero: string | null;
     date: string | null;
     lieu: string | null;
+    departement?: string | null;
     source: string;
   } | null;
   salaire: {
@@ -194,16 +229,21 @@ export class SuiviIntegrationService {
       texte: string | null;
       nature: string | null;
       note: string | null;
+      lieu: string | null;
+      structure: string | null;
+      departementId: number | null;
     }>(
-      `SELECT id, "nomComplet", to_char("dateNaissance", 'YYYY-MM-DD') AS naissance, statut,
-              matricule, "volontaireId",
-              donnees->>'MATRICULE_SOLDE' AS "matriculeSolde", donnees->>'INDICE_SOLDE' AS indice,
-              donnees->>'DATE_RECRUTEMENT' AS "dateRecrutement",
-              donnees->>'TEXTE_RECRUTEMENT' AS texte,
-              donnees->>'NATURE_TEXTE_RECRUTEMENT' AS nature,
-              donnees->>'NOTE_AFFECTATION' AS note
-         FROM agent_recense
-        WHERE coalesce(contentieux->>'etat', 'CONFIRME') = 'CONFIRME'`,
+      `SELECT a.id, a."nomComplet", to_char(a."dateNaissance", 'YYYY-MM-DD') AS naissance, a.statut,
+              a.matricule, a."volontaireId",
+              a.donnees->>'MATRICULE_SOLDE' AS "matriculeSolde", a.donnees->>'INDICE_SOLDE' AS indice,
+              a.donnees->>'DATE_RECRUTEMENT' AS "dateRecrutement",
+              a.donnees->>'TEXTE_RECRUTEMENT' AS texte,
+              a.donnees->>'NATURE_TEXTE_RECRUTEMENT' AS nature,
+              a.donnees->>'NOTE_AFFECTATION' AS note,
+              nullif(trim(a.donnees->>'LIEU_SERVICE'), '') AS lieu,
+              s.nom AS structure, coalesce(s."departementId", a."departementId") AS "departementId"
+         FROM agent_recense a LEFT JOIN structure s ON s.id = a."structureId"
+        WHERE coalesce(a.contentieux->>'etat', 'CONFIRME') = 'CONFIRME'`,
     );
     // Le premier mois de salaire, d'après les fichiers de la Solde déjà chargés (bottin)
     const bottinMatricule = new Map<string, string>();
@@ -325,16 +365,33 @@ export class SuiviIntegrationService {
           : null);
       // La note d'affectation : celle de la recrue, sinon celle de la fiche du fonctionnaire (la
       // « note » d'une fiche de volontaire est sa note de volontariat, pas une affectation)
-      const note =
-        noteDeAgent(a) ??
-        (p?.note
-          ? {
-              numero: p.note,
-              date: null,
-              lieu: null,
-              source: 'Base du personnel',
-            }
-          : null);
+      // L'affectation (DG, 16/11/2026) : un fonctionnaire ou un contractuel est affecté — on l'a
+      // envoyé travailler dans un département et une structure. La structure vient de sa fiche
+      // (organigramme, sinon lieu de service) ; sans fiche du personnel, une note retrouvée
+      const estFC = !!p && fc(p.statut);
+      const enStructure = estFC ? (p?.structure ?? p?.lieu ?? null) : null;
+      const noteTrouvee = noteDeAgent(a);
+      const note = estFC
+        ? {
+            numero: noteTrouvee?.numero ?? p?.note ?? null,
+            date: noteTrouvee?.date ?? null,
+            lieu: enStructure,
+            departement: p?.departementId
+              ? (deps.get(p.departementId) ?? null)
+              : null,
+            source: enStructure
+              ? 'Base du personnel (lieu de service)'
+              : 'Base du personnel (structure à compléter)',
+          }
+        : (noteTrouvee ??
+          (p?.note
+            ? {
+                numero: p.note,
+                date: null,
+                lieu: null,
+                source: 'Base du personnel (note d’affectation)',
+              }
+            : null));
       // 3. Le salaire : matricule solde, ou statut de fonctionnaire ou de contractuel
       const matricule = p ? (p.matricule ?? p.matriculeSolde ?? null) : null;
       const paye = !!p && (fc(p.statut) || !!matricule);
@@ -352,7 +409,7 @@ export class SuiviIntegrationService {
       const fin = BourseService.dernierMois(v, c, debut);
       const recrute = !!texte || paye || v.motifSortie === 'RECRUTE_FP';
       const situation: CodeSituation = paye
-        ? note
+        ? note?.lieu
           ? 'PAYE_AFFECTE'
           : 'PAYE_SANS_NOTE'
         : texte
@@ -376,6 +433,10 @@ export class SuiviIntegrationService {
       if (paye && !matricule)
         aRegler.push(
           'Fonctionnaire ou contractuel sans matricule dans notre base',
+        );
+      if (estFC && !enStructure)
+        aRegler.push(
+          'Structure (lieu de service) à compléter dans sa fiche du personnel',
         );
       if (situation === 'RECRUTE_SANS_PIECE')
         aRegler.push('Sorti comme recruté : aucun texte ni salaire retrouvé');
@@ -782,7 +843,7 @@ export class SuiviIntegrationService {
         `${s.taux.integration} % du registre`,
       ],
       [
-        'Affectés (note d’affectation retrouvée)',
+        'Affectés (en poste dans une structure)',
         T.affectes,
         `${s.taux.affectation} % des recrutés`,
       ],
@@ -882,10 +943,31 @@ export class SuiviIntegrationService {
       l++;
     }
     l++;
+    bloc('Comment lire ce document');
+    for (const [mot, explication] of DEFINITIONS) {
+      syn.mergeCells(l, 1, l, 6);
+      const x = syn.getCell(l, 1);
+      x.value = {
+        richText: [
+          {
+            text: `${mot} : `,
+            font: { name: 'Calibri', size: 10, bold: true },
+          },
+          { text: explication, font: { name: 'Calibri', size: 10 } },
+        ],
+      };
+      x.alignment = { wrapText: true, vertical: 'top' };
+      syn.getRow(l).height = Math.max(
+        15,
+        Math.ceil(explication.length / 95) * 14,
+      );
+      l++;
+    }
+    l++;
     bloc('Sources utilisées');
     for (const t of [
       `Registre de la bourse : ${sources.registre} fiches · textes reçus de la Fonction Publique : ${sources.textes} recrues`,
-      `Notes d’affectation signées dans le système : ${sources.notesSignees} · références de notes importées : ${sources.referencesNotes}`,
+      `Affectation : la structure où travaille chaque fonctionnaire ou contractuel (base du personnel) ; à défaut, les notes signées dans le système (${sources.notesSignees}) ou importées (${sources.referencesNotes})`,
       `Base du personnel : ${sources.personnelPaye} fonctionnaires et contractuels, dont ${sources.personnelSansMatricule} sans matricule`,
       `Fichiers de la Solde chargés : ${sources.moisSolde} mois`,
     ]) {
@@ -911,9 +993,9 @@ export class SuiviIntegrationService {
       ['Dernier mois de bourse', 14],
       ['Texte d’intégration', 26],
       ['Date du texte', 12],
-      ['Note d’affectation', 18],
-      ['Date de la note', 12],
-      ['Lieu d’affectation', 22],
+      ['Structure où il travaille (affectation)', 26],
+      ['Département de la structure', 15],
+      ['Note d’affectation (si retrouvée)', 18],
       ['Statut (personnel)', 15],
       ['Matricule solde', 14],
       ['Indice', 9],
@@ -958,9 +1040,11 @@ export class SuiviIntegrationService {
             x.dernierMoisBourse ?? '',
             x.texte ? `${x.texte.nature} n° ${x.texte.numero}` : '',
             x.texte?.date ?? '',
-            x.note?.numero ?? '',
-            x.note?.date ?? '',
             x.note?.lieu ?? '',
+            x.note?.departement ?? '',
+            x.note?.numero
+              ? `n° ${x.note.numero}${x.note.date ? ` du ${x.note.date}` : ''}`
+              : '',
             x.salaire?.statut ?? '',
             x.salaire?.matricule ?? '',
             x.salaire?.indice ?? '',
@@ -1229,7 +1313,7 @@ export class SuiviIntegrationService {
                   `${s.taux.integration} % du registre`,
                 ],
                 [
-                  'Affectés (note d’affectation retrouvée)',
+                  'Affectés (en poste dans une structure)',
                   T.affectes,
                   `${s.taux.affectation} % des recrutés`,
                 ],
@@ -1319,9 +1403,20 @@ export class SuiviIntegrationService {
               `Registre de la bourse : ${sources.registre} fiches · textes reçus : ${sources.textes} recrues · notes signées dans le système : ${sources.notesSignees} · base du personnel : ${sources.personnelPaye} fonctionnaires et contractuels (dont ${sources.personnelSansMatricule} sans matricule) · fichiers de la Solde chargés : ${sources.moisSolde} mois.`,
               { taille: 18 },
             ),
-            p(
-              'Règle : une personne est « payée » si elle a un matricule solde, ou le statut de fonctionnaire ou de contractuel.',
-              { taille: 18, ital: true },
+            p('Comment lire ce document', {
+              gras: true,
+              taille: 22,
+              avant: 240,
+            }),
+            ...DEFINITIONS.map(
+              ([mot, explication]) =>
+                new Paragraph({
+                  spacing: { after: 60 },
+                  children: [
+                    t(`${mot} : `, { gras: true, taille: 18 }),
+                    t(explication, { taille: 18 }),
+                  ],
+                }),
             ),
           ],
         },
