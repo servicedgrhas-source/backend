@@ -653,6 +653,10 @@ export class BourseService {
           : `base des recrutés, feuille « ${a.feuille} »`,
       );
     for (const x of calculs) {
+      // Déjà sorti du registre (la décision est prise) : payé jusqu'à sa date de sortie selon la
+      // règle du motif, il n'est plus à signaler (15/11/2026 : les « déjà recrutés » sortis au
+      // 01/10 restaient signalés dans l'état de septembre)
+      if (x.v.statut === 'SORTI') continue;
       const r = recrutes.probables(x.v.nomComplet, x.v.dateNaissance);
       if (r.length)
         signaler(

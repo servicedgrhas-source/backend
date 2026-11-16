@@ -105,6 +105,8 @@ export const RUBRIQUES_API: Record<string, string[]> = {
   ],
   '/enrolement/bottin': ['enrolement/bottin'],
   '/enrolement/bourse': ['enrolement/bourse'],
+  // Suivi de l'intégration (Banque mondiale, 16/11/2026) : lecture seule
+  '/enrolement/suivi-integration': ['enrolement/suivi-integration'],
   '/enrolement/mise-en-route': ['enrolement/mises-en-route'],
   '/enrolement/regularisations': ['enrolement/regularisations'],
   '/enrolement/tableau': ['enrolement/tableau', 'enrolement/guide'],
