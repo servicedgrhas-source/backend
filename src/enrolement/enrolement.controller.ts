@@ -36,10 +36,25 @@ import {
   SPECIALITES_ENROLEMENT,
   type EnroleDto,
 } from './enrolement.service';
+import {
+  OriginesEnrolementService,
+  voitOrigine,
+} from './origines-enrolement.service';
+
+/** La fiche d'un enrôlé sans son origine (comptes hors DGRHAS). */
+function masquerOrigine<T>(f: T): T {
+  const x = f as unknown as Record<string, unknown> | undefined;
+  return x && typeof x === 'object' && 'origineBrute' in x
+    ? ({ ...x, origineBrute: null } as T)
+    : f;
+}
 
 @Controller('enrolement')
 export class EnrolementController {
-  constructor(private readonly service: EnrolementService) {}
+  constructor(
+    private readonly service: EnrolementService,
+    private readonly origines: OriginesEnrolementService,
+  ) {}
 
   @Roles(...ROLES_TRAITEMENT)
   @Get('diplomes')
@@ -161,26 +176,40 @@ export class EnrolementController {
 
   @Roles(...ROLES_TRAITEMENT)
   @Get('dossiers')
-  dossiers(
+  async dossiers(
+    @Utilisateur() u: UtilisateurConnecte,
     @Query('campagne', ParseIntPipe) campagne: number,
     @Query('etat') etat?: string,
     @Query('recherche') recherche?: string,
     @Query('diplome') diplome?: string,
     @Query('departement') departement?: string,
+    @Query('origine') origine?: string,
   ) {
-    return this.service.liste({
+    const liste = await this.service.liste({
       campagneId: campagne,
       etat: etat || undefined,
       recherche,
       diplome: diplome || undefined,
       departementId: Number(departement) || undefined,
     });
+    // L'origine (qui a recommandé) : pour la DGRHAS seulement (DG, 16/11/2026)
+    if (!voitOrigine(u))
+      return liste.map((e) => ({ ...e, origineBrute: null, origine: null }));
+    const parEnrole = await this.origines.libellesParEnrole(campagne);
+    return liste
+      .map((e) => ({ ...e, origine: parEnrole.get(e.id) ?? null }))
+      .filter(
+        (e) =>
+          !origine ||
+          (origine === 'SANS' ? !e.origine : e.origine?.cle === origine),
+      );
   }
 
   @Roles(...ROLES_TRAITEMENT)
   @Get('dossiers/:id/fiche')
-  fiche(@Param('id') id: string) {
-    return this.service.fiche(id);
+  async fiche(@Utilisateur() u: UtilisateurConnecte, @Param('id') id: string) {
+    const f = await this.service.fiche(id);
+    return voitOrigine(u) ? f : masquerOrigine(f);
   }
 
   @Roles(...ROLES_TRAITEMENT)
@@ -625,6 +654,10 @@ export class EnrolementController {
       campagneId: campagne,
       etat: etat || undefined,
     });
+    const avecOrigine = voitOrigine(u);
+    const parEnrole = avecOrigine
+      ? await this.origines.libellesParEnrole(campagne)
+      : new Map<string, { libelle: string }>();
     const titre = `BASE DES ENRÔLÉS — ENRÔLEMENT ${c.annee} (${c.anneeScolaire})`;
     const tampon = await classeurEnroles(
       liste.map((e) => ({
@@ -640,7 +673,8 @@ export class EnrolementController {
         retenu: e.departementRetenu,
         etablissement: e.etablissement,
         telephone: e.telephone,
-        origine: e.origineBrute,
+        origine: avecOrigine ? (parEnrole.get(e.id)?.libelle ?? null) : null,
+        origineEcrite: avecOrigine ? e.origineBrute : null,
         membre: e.membre,
         etat: e.etat,
         observation: e.observation,

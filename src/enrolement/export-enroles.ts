@@ -22,6 +22,8 @@ export interface LigneEnrole {
   etablissement: string | null;
   telephone: string | null;
   origine: string | null;
+  /** L’origine telle qu’écrite dans le fichier. */
+  origineEcrite?: string | null;
   membre: string | null;
   etat: string;
   observation: string | null;
@@ -72,7 +74,13 @@ const COLONNES: {
   { titre: 'Département retenu', cle: 'retenu', largeur: 18 },
   { titre: 'Établissement', cle: 'etablissement', largeur: 24, aLaLigne: true },
   { titre: 'Téléphone', cle: 'telephone', largeur: 14 },
-  { titre: 'Origine', cle: 'origine', largeur: 16, aLaLigne: true },
+  { titre: 'Origine', cle: 'origine', largeur: 18, aLaLigne: true },
+  {
+    titre: 'Origine (telle qu’écrite)',
+    cle: 'origineEcrite',
+    largeur: 20,
+    aLaLigne: true,
+  },
   {
     titre: 'Membre de la commission',
     cle: 'membre',
