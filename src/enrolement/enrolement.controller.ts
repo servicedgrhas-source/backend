@@ -312,6 +312,7 @@ export class EnrolementController {
   @Roles(...ROLES_TRAITEMENT)
   @Get('listes/:quoi/:format')
   async listeEnrolement(
+    @Utilisateur() u: UtilisateurConnecte,
     @Param('quoi') quoi: string,
     @Param('format') format: string,
     @Query('campagne', ParseIntPipe) campagne: number,
@@ -319,7 +320,21 @@ export class EnrolementController {
   ) {
     if (quoi !== 'retenus' && quoi !== 'ecartes')
       throw new BadRequestException('Liste inconnue.');
-    const l = await this.service.listeEnrolement(campagne, quoi);
+    const brut = await this.service.listeEnrolement(campagne, quoi);
+    // L'origine (qui a recommandé) : pour la DGRHAS seulement (DG, 16/11/2026)
+    const avecOrigine = voitOrigine(u);
+    const parEnrole = avecOrigine
+      ? await this.origines.libellesParEnrole(campagne)
+      : new Map<string, { libelle: string }>();
+    const l = {
+      ...brut,
+      lignes: (brut.lignes as { id?: string }[]).map((x) => ({
+        ...x,
+        origine: avecOrigine
+          ? ((x.id && parEnrole.get(x.id)?.libelle) ?? null)
+          : undefined,
+      })),
+    };
     if (format === 'json') return res.json(l);
     if (format !== 'excel' && format !== 'word')
       throw new BadRequestException('Format inconnu.');
@@ -341,6 +356,9 @@ export class EnrolementController {
           ['Département', 'departement', 16],
           ['Correspondance', 'correspondance', 13],
           ['Motif', 'motif', 26],
+          ...(avecOrigine
+            ? ([['Origine', 'origine', 18]] as [string, string, number][])
+            : []),
         ]
       : [
           ['N°', 'n', 6],
@@ -352,6 +370,9 @@ export class EnrolementController {
           ['Cycle · spécialité', 'cycle', 22],
           ['Département retenu', 'departement', 18],
           ['Établissement', 'etablissement', 26],
+          ...(avecOrigine
+            ? ([['Origine', 'origine', 18]] as [string, string, number][])
+            : []),
         ];
     const colAge = colonnes.findIndex(([, k]) => k === 'age');
     const liste: ListeExportee = {

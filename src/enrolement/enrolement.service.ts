@@ -1558,6 +1558,7 @@ export class EnrolementService implements OnApplicationBootstrap {
     if (quoi === 'retenus') {
       const lignes = (await this.liste({ campagneId, etat: 'RETENU' })).map(
         (e) => ({
+          id: e.id,
           nom: e.nomComplet,
           naissance: jour(e.dateNaissance),
           ...this.ageDe(e.dateNaissance, c.annee),
