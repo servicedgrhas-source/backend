@@ -16,6 +16,7 @@ import {
   VerticalAlign,
   WidthType,
 } from 'docx';
+import { CalculMemorise } from '../common/calcul-memorise';
 import { IndexNoms } from '../common/index-noms';
 import { moisEnClair } from '../common/mois';
 import { Volontaire } from '../entities';
@@ -160,20 +161,47 @@ type Groupe = {
 
 @Injectable()
 export class SuiviIntegrationService {
+  /**
+   * Le calcul est lourd (tout le registre et toute la base du personnel) : il est gardé tant que
+   * les tables qu'il lit n'ont pas changé, refait en arrière-plan quand elles changent, et préparé
+   * au démarrage du serveur (voir CalculMemorise).
+   */
+  private readonly memoire: CalculMemorise<{
+    lignes: LigneSuivi[];
+    sources: Record<string, number>;
+    choix: { vagues: number[]; annees: string[] };
+  }>;
+
   constructor(
     private readonly ds: DataSource,
     private readonly config: ConfigEnrolementService,
-  ) {}
-
-  /** Le calcul est lourd (tout le registre et toute la base du personnel) : gardé deux minutes. */
-  private cache: {
-    le: number;
-    lignes: LigneSuivi[];
-    sources: Record<string, number>;
-  } | null = null;
+  ) {
+    this.memoire = new CalculMemorise(
+      ds,
+      [
+        'volontaire',
+        'agent_recense',
+        'agent',
+        'affectation',
+        'note_service',
+        'reference_note',
+        'ligne_bottin',
+        'structure',
+        'departement',
+        'parametre',
+      ],
+      () => this.calculer(),
+      'Suivi de l’intégration',
+    );
+    this.memoire.prechauffer();
+  }
 
   private async toutes() {
-    if (this.cache && Date.now() - this.cache.le < 120_000) return this.cache;
+    const r = await this.memoire.lire();
+    return { ...r.donnees, le: r.le, aJour: r.aJour };
+  }
+
+  private async calculer() {
     const c = this.config.get();
     const q = <T>(sql: string, p: unknown[] = []) => this.ds.query<T[]>(sql, p);
     const deps = new Map(
@@ -181,7 +209,24 @@ export class SuiviIntegrationService {
         await q<{ id: number; nom: string }>(`SELECT id, nom FROM departement`)
       ).map((d) => [d.id, d.nom]),
     );
-    const vols = await this.ds.getRepository(Volontaire).find();
+    const vols = await this.ds.getRepository(Volontaire).find({
+      select: [
+        'id',
+        'nomComplet',
+        'dateNaissance',
+        'population',
+        'statut',
+        'motifSortie',
+        'dateSortie',
+        'premierMois',
+        'datePriseService',
+        'dateNote',
+        'vagueNumero',
+        'departementId',
+        'categorie',
+        'cycleBrut',
+      ],
+    });
     // Les recrues des textes reçus de la Fonction Publique, leur affectation et leur note
     const agents = await q<{
       id: string;
@@ -243,7 +288,8 @@ export class SuiviIntegrationService {
               nullif(trim(a.donnees->>'LIEU_SERVICE'), '') AS lieu,
               s.nom AS structure, coalesce(s."departementId", a."departementId") AS "departementId"
          FROM agent_recense a LEFT JOIN structure s ON s.id = a."structureId"
-        WHERE coalesce(a.contentieux->>'etat', 'CONFIRME') = 'CONFIRME'`,
+        WHERE coalesce(a.contentieux->>'etat', 'CONFIRME') = 'CONFIRME'
+          AND a.statut IN ('FONCTIONNAIRE', 'CONTRACTUEL')`,
     );
     // Le premier mois de salaire, d'après les fichiers de la Solde déjà chargés (bottin)
     const bottinMatricule = new Map<string, string>();
@@ -273,6 +319,11 @@ export class SuiviIntegrationService {
     const indexAgents = new IndexNoms<(typeof agents)[number]>();
     for (const a of agents) indexAgents.ajouter(a.nomComplet, a.naissance, a);
     const agentsPris = new Set<string>();
+    const agentParFiche = new Map(
+      agents
+        .filter((x) => x.agentRecenseId !== null)
+        .map((x) => [x.agentRecenseId!, x]),
+    );
     const categories = [
       ...this.config.categoriesDe('VOLONTAIRE'),
       ...this.config.categoriesDe('COMMUNAUTAIRE'),
@@ -322,14 +373,10 @@ export class SuiviIntegrationService {
       // 1. La fiche du personnel. Sûre : le lien enregistré vers une fiche de fonctionnaire ou de
       // contractuel, ou le même nom et la même date de naissance. Le même nom sans date (la plupart
       // des volontaires n'ont pas de date) n'est qu'une piste : « à vérifier », jamais compté.
-      const lie = parVolontaire.get(v.id) ?? null;
+      // (le personnel lu ne contient que les fonctionnaires et les contractuels)
       let p: (typeof personnel)[number] | null =
-        lie && fc(lie.statut) ? lie : null;
-      let rapprochement: LigneSuivi['rapprochement'] = p
-        ? 'LIEN'
-        : lie
-          ? 'LIEN'
-          : null;
+        parVolontaire.get(v.id) ?? null;
+      let rapprochement: LigneSuivi['rapprochement'] = p ? 'LIEN' : null;
       let piste: (typeof personnel)[number] | null = null;
       if (!p) {
         const cand = indexFC.probables(v.nomComplet, v.dateNaissance)[0];
@@ -343,7 +390,7 @@ export class SuiviIntegrationService {
       }
       // 2. Le texte d'intégration : recrue des textes (lien, puis même nom et même date ; le même
       // nom sans date est une piste), sinon le texte de recrutement de la fiche du fonctionnaire
-      let a = p ? agents.find((x) => x.agentRecenseId === p?.id) : undefined;
+      let a = p ? agentParFiche.get(p.id) : undefined;
       let texteIncertain = false;
       if (!a) {
         const cand = indexAgents
@@ -526,9 +573,31 @@ export class SuiviIntegrationService {
         ],
       });
     }
-    this.cache = {
-      le: Date.now(),
+    // Triée une fois pour toutes (les filtres gardent l'ordre) : les situations les plus parlantes
+    // d'abord (recrutés, affectés, payés), dans l'ordre du parcours
+    const fr = new Intl.Collator('fr');
+    const rang = new Map(ORDRE_SITUATIONS.map((s, i) => [s, i]));
+    lignes.sort(
+      (a, b) =>
+        rang.get(a.situation)! - rang.get(b.situation)! ||
+        a.population.localeCompare(b.population) ||
+        fr.compare(a.departement, b.departement) ||
+        fr.compare(a.nom, b.nom),
+    );
+    return {
       lignes,
+      choix: {
+        vagues: [
+          ...new Set(
+            lignes.map((l) => l.vague).filter((x): x is number => x !== null),
+          ),
+        ].sort((a, b) => a - b),
+        annees: [
+          ...new Set(
+            lignes.map((l) => l.anneeTexte).filter((x): x is string => !!x),
+          ),
+        ].sort(),
+      },
       sources: {
         registre: vols.length,
         textes: agents.length,
@@ -548,7 +617,6 @@ export class SuiviIntegrationService {
           )[0]?.n ?? 0,
       },
     };
-    return this.cache;
   }
 
   private filtrer(lignes: LigneSuivi[], f: FiltresSuivi) {
@@ -590,7 +658,12 @@ export class SuiviIntegrationService {
     });
     const regrouper = (cle: (l: LigneSuivi) => string): Groupe[] => {
       const m = new Map<string, LigneSuivi[]>();
-      for (const l of registre) m.set(cle(l), [...(m.get(cle(l)) ?? []), l]);
+      for (const l of registre) {
+        const k = cle(l);
+        const liste = m.get(k);
+        if (liste) liste.push(l);
+        else m.set(k, [l]);
+      }
       return [...m.entries()]
         .map(([libelle, liste]) => ({ libelle, ...compter(liste) }))
         .sort((a, b) => a.libelle.localeCompare(b.libelle, 'fr'));
@@ -648,7 +721,7 @@ export class SuiviIntegrationService {
 
   /** La page : synthèse, une page de la liste, et de quoi remplir les filtres. */
   async suivi(f: FiltresSuivi, page = 1, taille = 50) {
-    const { lignes: toutes, sources } = await this.toutes();
+    const { lignes: toutes, sources, choix, le, aJour } = await this.toutes();
     const lignes = this.filtrer(toutes, f);
     const debut = (Math.max(1, page) - 1) * taille;
     return {
@@ -657,31 +730,13 @@ export class SuiviIntegrationService {
       total: lignes.length,
       page: Math.max(1, page),
       taille,
-      // Les situations les plus parlantes d'abord (recrutés, affectés, payés), dans l'ordre du parcours
-      lignes: [...lignes]
-        .sort(
-          (a, b) =>
-            ORDRE_SITUATIONS.indexOf(a.situation) -
-              ORDRE_SITUATIONS.indexOf(b.situation) ||
-            a.population.localeCompare(b.population) ||
-            a.departement.localeCompare(b.departement, 'fr') ||
-            a.nom.localeCompare(b.nom, 'fr'),
-        )
-        .slice(debut, debut + taille),
-      choix: {
-        vagues: [
-          ...new Set(
-            toutes.map((l) => l.vague).filter((x): x is number => x !== null),
-          ),
-        ].sort((a, b) => a - b),
-        annees: [
-          ...new Set(
-            toutes.map((l) => l.anneeTexte).filter((x): x is string => !!x),
-          ),
-        ].sort(),
-      },
+      // Déjà triée au calcul : situations les plus parlantes d'abord, dans l'ordre du parcours
+      lignes: lignes.slice(debut, debut + taille),
+      choix,
       situations: SITUATIONS,
-      calculeLe: new Date(this.cache!.le).toISOString(),
+      calculeLe: new Date(le).toISOString(),
+      /** Faux : des données ont changé, une mise à jour se fait en arrière-plan. */
+      aJour,
     };
   }
 

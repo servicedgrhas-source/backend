@@ -7,6 +7,7 @@ import {
 import { DataSource } from 'typeorm';
 import ExcelJS from 'exceljs';
 import { ROLES_CONTROLE, type UtilisateurConnecte } from '../auth/auth';
+import { CalculMemorise } from '../common/calcul-memorise';
 import { sansAccents } from '../common/texte';
 import { JournalService } from '../core/core.service';
 import { DecisionEcole } from '../entities';
@@ -175,15 +176,37 @@ interface Calcul {
 
 @Injectable()
 export class EffectifsEcolesService {
+  /**
+   * Le calcul (tout le registre, toute la base du personnel, l'organigramme) est gardé tant que
+   * les tables qu'il lit n'ont pas changé ; refait en arrière-plan sinon ; préparé au démarrage.
+   */
+  private readonly memoire: CalculMemorise<Calcul>;
+
   constructor(
     private readonly ds: DataSource,
     private readonly journal: JournalService,
-  ) {}
+  ) {
+    this.memoire = new CalculMemorise(
+      ds,
+      [
+        'volontaire',
+        'agent_recense',
+        'structure',
+        'departement',
+        'decision_ecole',
+      ],
+      () => this.calculer(),
+      'Effectifs par école',
+    );
+    this.memoire.prechauffer(40_000);
+  }
 
-  private cache: Calcul | null = null;
+  private async calcul(): Promise<Calcul & { aJour: boolean }> {
+    const r = await this.memoire.lire();
+    return { ...r.donnees, le: r.le, aJour: r.aJour };
+  }
 
-  private async calcul(): Promise<Calcul> {
-    if (this.cache && Date.now() - this.cache.le < 120_000) return this.cache;
+  private async calculer(): Promise<Calcul> {
     const q = <T>(sql: string, p: unknown[] = []) => this.ds.query<T[]>(sql, p);
     const deps = await q<{
       id: number;
@@ -584,7 +607,7 @@ export class EffectifsEcolesService {
         }
     }
     ressemblances.sort((a, b) => b.score - a.score || a.a.localeCompare(b.a));
-    this.cache = {
+    return {
       le: Date.now(),
       ecoles: liste,
       ressemblances,
@@ -606,7 +629,6 @@ export class EffectifsEcolesService {
         ),
       deps: deps.map(({ id, nom, ordre }) => ({ id, nom, ordre })),
     };
-    return this.cache;
   }
 
   private filtrer(c: Calcul, f: FiltresEcoles) {
@@ -720,6 +742,8 @@ export class EffectifsEcolesService {
         .slice((page - 1) * taille, page * taille)
         .map((e) => this.publique(e)),
       departements: c.deps.map(({ id, nom }) => ({ id, nom })),
+      calculeLe: new Date(c.le).toISOString(),
+      aJour: c.aJour,
     };
   }
 
@@ -908,7 +932,7 @@ export class EffectifsEcolesService {
       cycle: ligne.cycle,
       motif,
     });
-    this.cache = null;
+    this.memoire.oublier();
     return { id: ligne.id };
   }
 
@@ -929,7 +953,7 @@ export class EffectifsEcolesService {
       cle: d.cle,
       autreCle: d.autreCle || null,
     });
-    this.cache = null;
+    this.memoire.oublier();
     return { ok: true };
   }
 
