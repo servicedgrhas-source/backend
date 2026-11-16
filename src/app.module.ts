@@ -16,6 +16,8 @@ import { DetectionDoublonsService } from './dossiers/detection-doublons.service'
 import { EnrolementController } from './enrolement/enrolement.controller';
 import { EnrolementService } from './enrolement/enrolement.service';
 import { BourseService } from './enrolement/bourse.service';
+import { ComparaisonFichierController } from './enrolement/comparaison-fichier.controller';
+import { ComparaisonFichierService } from './enrolement/comparaison-fichier.service';
 import { EffectifsEcolesController } from './enrolement/effectifs-ecoles.controller';
 import { EffectifsEcolesService } from './enrolement/effectifs-ecoles.service';
 import { SuiviIntegrationController } from './enrolement/suivi-integration.controller';
@@ -156,6 +158,7 @@ import { ReferentielsService } from './referentiels/referentiels.service';
     VolontairesController,
     SuiviIntegrationController,
     EffectifsEcolesController,
+    ComparaisonFichierController,
     GestionEnrolementController,
     RepartitionController,
     AmorcageController,
@@ -204,6 +207,7 @@ import { ReferentielsService } from './referentiels/referentiels.service';
     BourseService,
     SuiviIntegrationService,
     EffectifsEcolesService,
+    ComparaisonFichierService,
     BottinService,
     RegularisationsService,
     MiseEnRouteService,
