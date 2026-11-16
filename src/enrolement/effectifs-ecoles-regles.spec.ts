@@ -5,6 +5,7 @@ import {
   faute,
   estHorsEcole,
   nomAffiche,
+  ressemblance,
 } from './effectifs-ecoles-regles';
 
 describe('Nom affiché d’une école', () => {
@@ -23,6 +24,21 @@ describe('Nom affiché d’une école', () => {
 
   it('lit « NKAYI I » comme « NKAYI 1 »', () => {
     expect(cleEcole('CEP NKAYI I')).toBe('NKAYI 1');
+  });
+
+  it('sépare la lettre de groupe collée au nombre', () => {
+    expect(cleEcole('EP 31 JUILLET 1968B')).toBe('31 JUILLET 1968 B');
+  });
+
+  it.each([
+    ["CENTRE D'ECADION PRESCOLAIRE DE LINZOLO", 'LINZOLO'],
+    ['CENTRE PRESCOLIARE DE LOUINGUI', 'LOUINGUI'],
+    ["CETRE D'EDUCATION PRESCOLAIRE DE MOSSENDJO", 'MOSSENDJO'],
+    ['CEP PRECOLAIRE DE KINTELE', 'KINTELE'],
+    ["CENTRE D'DUCATION PRESCOLAIRE EVANGELIQUE CITE", 'EVANGELIQUE CITE'],
+  ])('reconnaît le libellé mal écrit : %s', (nom, cle) => {
+    expect(cycleDuNom(nom)).toBe('PRESCOLAIRE');
+    expect(cleEcole(nom)).toBe(cle);
   });
 });
 
@@ -97,5 +113,28 @@ describe('Écoles écrites à la main (Banque mondiale, 16/11/2026)', () => {
     expect(faute('MOUNGALI 2', 'MOUNGALI 3')).toBe(false);
     expect(faute('NKAYI', 'NKAY')).toBe(false);
     expect(faute('LOUDIMA GARE', 'LOUDIMA POSTE')).toBe(false);
+  });
+});
+
+describe('Écoles qui se ressemblent', () => {
+  it.each([
+    ['ALPHANCE MASSAMBA DEBAT DIATA', 'ALPHONSE MASSAMBA DEBAT', true],
+    ['MASSAMBA DEBAT', 'ALPHONSE MASSAMBA DEBAT', true],
+    ['KINSOUNDI', 'KISOUNDI', true],
+    ['MOUNGALI 2', 'MOUNGALI 3', false],
+    ['LIBERTE A', 'LIBERTE B', false],
+    ['IGNIE A', 'IGNIE B', false],
+    ['MADINGOU', 'MOUYONDZI', false],
+    ['NKAYI', 'LOUDIMA', false],
+    ['PRESCOLAIRE', 'CENTRE D ECADION PRESCOLAIRE DE LINZOLO', false],
+    ['31 AOUT 1968 A', '31 JUILLET 1968 B', false],
+    ['31 AOUT 1968', '31 JUILLET 1968', false],
+    [
+      'CATHOLIQUE CONVENTIONNEE SAINT LOUIS B',
+      'CONVENTIONNEE CATHOLIQUE SAINT LOUIS B',
+      true,
+    ],
+  ])('%s / %s → %s', (a, b, proche) => {
+    expect(ressemblance(a, b) >= 0.75).toBe(proche);
   });
 });

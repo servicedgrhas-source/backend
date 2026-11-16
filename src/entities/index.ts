@@ -803,6 +803,32 @@ export class DoublonDistinct {
   @CreateDateColumn() creeLe: Date;
 }
 
+/**
+ * Décision sur une école des « Effectifs par école » (Banque mondiale, 16/11/2026), comme pour les
+ * doublons de personnes. Une école y est désignée par sa clé « DEPPSA|cycle|nom » (le nom sans le
+ * libellé du cycle, sans accents) : la plupart des écoles ne sont connues que par le nom écrit
+ * dans les fichiers. Rien n'est modifié dans les fichiers ni dans les fiches : la décision
+ * s'applique au comptage, et peut être annulée.
+ * - JUMELEE : la même école que autreCle (ses effectifs y sont ajoutés) ;
+ * - DIFFERENTES : pas la même école que autreCle (la paire n'est plus proposée) ;
+ * - ECARTEE : pas une école (mairie, centre de santé…) ou école fermée : plus comptée ;
+ * - MISE_A_JOUR : nom, DEPPSA ou cycle corrigés.
+ */
+@Entity('decision_ecole')
+export class DecisionEcole {
+  @PrimaryGeneratedColumn({ primaryKeyConstraintName: 'PK_decision_ecole' })
+  id: number;
+  @Index('IDX_decision_ecole_cle') @Column() cle: string;
+  @Column() type: string;
+  @Column({ default: '' }) autreCle: string;
+  @Column({ type: 'varchar', nullable: true }) nom: string | null;
+  @Column({ type: 'int', nullable: true }) departementId: number | null;
+  @Column({ type: 'varchar', nullable: true }) cycle: string | null;
+  @Column({ type: 'text', nullable: true }) motif: string | null;
+  @Column({ type: 'varchar', nullable: true }) par: string | null;
+  @CreateDateColumn() creeLe: Date;
+}
+
 /** Répartition automatique du quota « Autres » sans département, validée par le DG. */
 @Entity('repartition')
 export class Repartition {
@@ -2025,6 +2051,7 @@ export const ENTITES = [
   BesoinPersonnel,
   Nomination,
   DoublonDistinct,
+  DecisionEcole,
   DemandePrestation,
   PiecePrestation,
 ];

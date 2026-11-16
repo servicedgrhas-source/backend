@@ -65,15 +65,26 @@ const MOTS: Record<string, string> = {
 
 /** Majuscules, sans accents, la ponctuation remplacée par des espaces. */
 function aPlat(nom: string) {
-  return sansAccents(dateEnClair(nom))
-    .toUpperCase()
-    .replace(/N°\s*/g, ' ')
-    .replace(/[^A-Z0-9]+/g, ' ')
-    .replace(/PRE ?SCOLAIRE(?!S )(?=[A-Z])/g, 'PRESCOLAIRE ')
-    .replace(/([A-Z]{2,})(\d)/g, '$1 $2')
-    .replace(/(\d)([A-Z]{3,})/g, '$1 $2')
-    .replace(/\s+/g, ' ')
-    .trim();
+  return (
+    sansAccents(dateEnClair(nom))
+      .toUpperCase()
+      .replace(/N°\s*/g, ' ')
+      .replace(/[^A-Z0-9]+/g, ' ')
+      // Les fautes courantes dans le libellé du cycle (« PRECOLAIRE », « CETRE D'ECADION »)
+      .replace(/\bPRE ?S?COL(?:AI|IA)O?RE/g, 'PRESCOLAIRE')
+      .replace(/\b(?:CETRE|CENTE|CNTRE|CENRE)\b/g, 'CENTRE')
+      .replace(
+        /\b(?:ECADION|DUCATION|EDUCATIO|EDCUATION|EDUACTION)\b/g,
+        'EDUCATION',
+      )
+      .replace(/PRE ?SCOLAIRE(?!S )(?=[A-Z])/g, 'PRESCOLAIRE ')
+      .replace(/([A-Z]{2,})(\d)/g, '$1 $2')
+      .replace(/(\d)([A-Z]{3,})/g, '$1 $2')
+      // Une lettre de groupe collée au nombre : « 1968B » = « 1968 B »
+      .replace(/(\d{3,})([A-Z])\b/g, '$1 $2')
+      .replace(/\s+/g, ' ')
+      .trim()
+  );
 }
 
 /** Le cycle d'après le début du nom, ou null. */
@@ -89,17 +100,29 @@ export function estHorsEcole(nom: string | null | undefined) {
 }
 
 /**
+ * Le nom sans le libellé du cycle, ôté jusqu'à deux fois (« CEP PRESCOLAIRE DE KINTELE » →
+ * « DE KINTELE ») ; texte déjà à plat.
+ */
+function sansLibelle(plat: string) {
+  let t = plat;
+  for (let n = 0; n < 2; n++) {
+    const d = DEBUTS.find(([, re]) => re.test(t));
+    if (!d) break;
+    const reste = t.replace(d[1], '').trim();
+    if (!reste) break;
+    t = reste;
+  }
+  return t;
+}
+
+/**
  * La clé d'une école : le nom sans le libellé du cycle, ni les articles du début ; les nombres sans
  * zéro devant, les chiffres romains en chiffres (« DOLISIE II » = « DOLISIE 2 »). Vide : pas de nom.
  */
 export function cleEcole(nom: string | null | undefined) {
-  let t = aPlat(nom ?? '');
-  for (const [, re] of DEBUTS)
-    if (re.test(t)) {
-      t = t.replace(re, '').trim();
-      break;
-    }
-  const mots = t.split(' ').filter(Boolean);
+  const mots = sansLibelle(aPlat(nom ?? ''))
+    .split(' ')
+    .filter(Boolean);
   while (
     mots.length > 1 &&
     ['DE', 'DU', 'D', 'DES', 'LA', 'LE', 'L'].includes(mots[0])
@@ -136,9 +159,7 @@ export function nomAffiche(nom: string, cycle: CycleEcole | null) {
   if (!cycle) return n;
   const a = ABREVIATIONS[cycle];
   const plat = aPlat(n);
-  const re = DEBUTS.find(([c]) => c === cycle)?.[1];
-  const m = re?.exec(plat);
-  const mots = (m ? plat.slice(m[0].length) : plat).split(' ').filter(Boolean);
+  const mots = sansLibelle(plat).split(' ').filter(Boolean);
   while (
     mots.length > 1 &&
     ['DE', 'DU', 'D', 'DES', 'LA', 'LE', 'L'].includes(mots[0])
@@ -190,4 +211,102 @@ export function faute(a: string, b: string) {
   if (a === b || a.length < 6 || b.length < 6) return false;
   const nombres = (x: string) => (x.match(/\d+/g) ?? []).join(' ');
   return nombres(a) === nombres(b) && distance(a, b) === 1;
+}
+
+const MOIS_EN_LETTRES = new Set([
+  'JANVIER',
+  'FEVRIER',
+  'MARS',
+  'AVRIL',
+  'MAI',
+  'JUIN',
+  'JUILLET',
+  'AOUT',
+  'SEPTEMBRE',
+  'OCTOBRE',
+  'NOVEMBRE',
+  'DECEMBRE',
+]);
+
+const GENERIQUES = new Set([
+  'PRESCOLAIRE',
+  'CENTRE',
+  'ECOLE',
+  'ECOLES',
+  'PRIMAIRE',
+  'PRIMAIRES',
+  'EDUCATION',
+  'COMMUNE',
+  'PUBLIQUE',
+  'PRIVE',
+  'PRIVEE',
+]);
+
+/** Les paires de lettres d'un texte (sans espaces), pour comparer deux noms. */
+export function paires(cle: string) {
+  const t = cle.replace(/ /g, '');
+  const p = new Map<string, number>();
+  for (let i = 0; i < t.length - 1; i++) {
+    const x = t.slice(i, i + 2);
+    p.set(x, (p.get(x) ?? 0) + 1);
+  }
+  return p;
+}
+
+/**
+ * Ressemblance de deux clés d'école, de 0 à 1 (Banque mondiale, 16/11/2026) : la part des paires de
+ * lettres communes, ou 0,85 quand les mots du nom le plus court sont tous dans l'autre (« MASSAMBA
+ * DEBAT » / « ALPHONSE MASSAMBA DEBAT »). Jamais rapprochées : des nombres différents (« MOUNGALI 2
+ * » / « MOUNGALI 3 ») ou des lettres de groupe différentes (« LIBERTE A » / « LIBERTE B »).
+ */
+export function ressemblance(
+  a: string,
+  b: string,
+  pa: Map<string, number> = paires(a),
+  pb: Map<string, number> = paires(b),
+) {
+  if (a === b) return 1;
+  const nombres = (x: string) => (x.match(/\d+/g) ?? []).join(' ');
+  if (nombres(a) !== nombres(b)) return 0;
+  const ma = a.split(' ').filter(Boolean);
+  const mb = b.split(' ').filter(Boolean);
+  const lettres = (m: string[]) =>
+    m
+      .filter((x) => /^[A-Z]$/.test(x))
+      .sort()
+      .join('');
+  const la = lettres(ma);
+  const lb = lettres(mb);
+  if (la && lb && la !== lb) return 0;
+  // Des dates différentes (« 31 AOUT 1968 » / « 31 JUILLET 1968 ») : deux écoles
+  const mois = (m: string[]) =>
+    m
+      .filter((x) => MOIS_EN_LETTRES.has(x))
+      .sort()
+      .join(' ');
+  if (mois(ma) !== mois(mb) && mois(ma) && mois(mb)) return 0;
+  let communes = 0;
+  let total = 0;
+  for (const [x, n] of pa) {
+    communes += Math.min(n, pb.get(x) ?? 0);
+    total += n;
+  }
+  for (const n of pb.values()) total += n;
+  let s = total ? (2 * communes) / total : 0;
+  // Les mots qui ne désignent pas une école en particulier ne comptent pas pour « contenu dans »
+  const longs = (m: string[]) =>
+    m.filter((x) => x.length > 1 && !GENERIQUES.has(x));
+  const [court, long] =
+    longs(ma).length <= longs(mb).length
+      ? [longs(ma), longs(mb)]
+      : [longs(mb), longs(ma)];
+  const trouves = court.filter((m) =>
+    long.some((x) => x === m || faute(x, m)),
+  ).length;
+  if (court.join('').length >= 5 && trouves === court.length)
+    s = Math.max(s, 0.85);
+  // Un seul mot différent sur trois ou plus (« ALPHANCE MASSAMBA DEBAT » / « ALPHONSE … »)
+  else if (court.length >= 3 && trouves === court.length - 1)
+    s = Math.max(s, 0.8);
+  return Math.round(s * 100) / 100;
 }

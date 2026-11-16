@@ -1,6 +1,15 @@
-import { Injectable } from '@nestjs/common';
+import {
+  BadRequestException,
+  ForbiddenException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { DataSource } from 'typeorm';
 import ExcelJS from 'exceljs';
+import { ROLES_CONTROLE, type UtilisateurConnecte } from '../auth/auth';
+import { sansAccents } from '../common/texte';
+import { JournalService } from '../core/core.service';
+import { DecisionEcole } from '../entities';
 import {
   cleEcole,
   cycleDeCategorie,
@@ -10,6 +19,8 @@ import {
   estHorsEcole,
   faute,
   nomAffiche,
+  paires,
+  ressemblance,
 } from './effectifs-ecoles-regles';
 
 /**
@@ -49,15 +60,90 @@ const LIBELLES: Record<Effectif, string> = {
 const NOUVEAUX_DEPARTEMENTS = ['CONGO_OUBANGUI', 'DJOUE_LEFINI', 'NKENI_ALIMA'];
 
 export interface LigneEcole extends Record<Effectif, number> {
+  /** Clé de l'école : « DEPPSA|cycle|nom » (nom sans libellé du cycle ni accents). */
+  id: string;
   departementId: number | null;
   departement: string;
   cycle: CycleEcole | null;
   nom: string;
+  /** Le nom a été corrigé par une décision (mise à jour). */
+  nomCorrige: boolean;
   /** L'école existe dans l'organigramme (Établissements). */
   organigramme: boolean;
   total: number;
   /** Nombre d'écritures différentes du nom rencontrées. */
   ecritures: number;
+  /** Nombre d'écoles jumelées avec celle-ci (décisions « même école »). */
+  jumelees: number;
+  /** L'école dont le nom se rapproche le plus (dans la même DEPPSA), s'il y en a une. */
+  proche: { id: string; nom: string; score: number } | null;
+}
+
+interface EcoleCalculee extends LigneEcole {
+  cle: string;
+  variantes: Map<string, number>;
+}
+
+export type TypeDecisionEcole =
+  'JUMELEE' | 'DIFFERENTES' | 'ECARTEE' | 'MISE_A_JOUR';
+
+interface LigneDecision {
+  id: number;
+  cle: string;
+  type: TypeDecisionEcole;
+  autreCle: string;
+  nom: string | null;
+  departementId: number | null;
+  cycle: string | null;
+  motif: string | null;
+  par: string | null;
+  creeLe: string;
+}
+
+/** À partir de cette ressemblance (0 à 1), deux écoles sont proposées comme peut-être la même. */
+const SEUIL_RESSEMBLANCE = 0.75;
+
+/** Une paire d'écoles, dans le même ordre quel que soit le sens. */
+const paireCle = (a: string, b: string) => (a < b ? `${a}§${b}` : `${b}§${a}`);
+
+/** Les décisions, prêtes pour le comptage. */
+function lireDecisions(lignes: LigneDecision[]) {
+  const jumelage = new Map<string, string>();
+  const majs = new Map<string, LigneDecision>();
+  const ecartees = new Set<string>();
+  const differentes = new Set<string>();
+  for (const d of lignes)
+    if (d.type === 'JUMELEE') jumelage.set(d.cle, d.autreCle);
+    else if (d.type === 'MISE_A_JOUR') majs.set(d.cle, d);
+    else if (d.type === 'ECARTEE') ecartees.add(d.cle);
+    else if (d.type === 'DIFFERENTES')
+      differentes.add(paireCle(d.cle, d.autreCle));
+  /** L'école où une école jumelée est comptée (en suivant les jumelages successifs). */
+  const racine = (k: string) => {
+    let x = k;
+    const vues = new Set<string>();
+    while (jumelage.has(x) && !vues.has(x)) {
+      vues.add(x);
+      x = jumelage.get(x)!;
+    }
+    return x;
+  };
+  const sources = new Map<string, number>();
+  for (const k of jumelage.keys()) {
+    const r = racine(k);
+    sources.set(r, (sources.get(r) ?? 0) + 1);
+  }
+  return { racine, majs, ecartees, differentes, sources };
+}
+
+export interface DecisionEcoleDto {
+  type: TypeDecisionEcole;
+  cle: string;
+  autreCle?: string;
+  nom?: string;
+  departementId?: number;
+  cycle?: string;
+  motif?: string;
 }
 
 export interface FiltresEcoles {
@@ -70,7 +156,10 @@ export interface FiltresEcoles {
 
 interface Calcul {
   le: number;
-  ecoles: (LigneEcole & { variantes: Map<string, number> })[];
+  ecoles: EcoleCalculee[];
+  /** Les paires d'écoles qui se ressemblent (pas encore tranchées), de la plus proche à la moins. */
+  ressemblances: { a: string; b: string; score: number }[];
+  decisions: LigneDecision[];
   /** Personnes sans école : rien d'écrit, ou un lieu qui n'est pas une école (inspection…). */
   sansEcole: {
     departementId: number | null;
@@ -78,6 +167,7 @@ interface Calcul {
     effectif: Effectif;
     sans: number;
     administration: number;
+    ecartees: number;
   }[];
   reclassees: { de: string; vers: string; ecole: string; n: number }[];
   deps: { id: number; nom: string; ordre: number }[];
@@ -85,7 +175,10 @@ interface Calcul {
 
 @Injectable()
 export class EffectifsEcolesService {
-  constructor(private readonly ds: DataSource) {}
+  constructor(
+    private readonly ds: DataSource,
+    private readonly journal: JournalService,
+  ) {}
 
   private cache: Calcul | null = null;
 
@@ -141,6 +234,10 @@ export class EffectifsEcolesService {
       `SELECT id, population, "departementId", etablissement, categorie
          FROM volontaire WHERE statut = 'EN_POSTE'`,
     );
+    const decisions = await q<LigneDecision>(
+      `SELECT id, cle, type, "autreCle", nom, "departementId", cycle, motif, par, "creeLe"
+         FROM decision_ecole ORDER BY id`,
+    );
 
     // La fiche du personnel d'une personne du registre ; devenue fonctionnaire ou contractuel, elle
     // est comptée une seule fois, avec le personnel
@@ -155,8 +252,10 @@ export class EffectifsEcolesService {
       cle: string;
       ecrit: string;
       structureId: number | null;
+      /** L'école où la personne est comptée (après les décisions). */
+      groupe?: string;
     }
-    type Resultat = Lieu | 'SANS' | 'ADMINISTRATION';
+    type Resultat = Lieu | 'SANS' | 'ADMINISTRATION' | 'ECARTEE';
     const lieuDe = (
       departementId: number | null,
       structureId: number | null,
@@ -320,28 +419,43 @@ export class EffectifsEcolesService {
         g.r.cle = versCle.get(k) ?? g.r.cle;
       }
 
+    // Les décisions prises sur les écoles : jumelées (comptées avec une autre), écartées (pas une
+    // école), mises à jour (nom, DEPPSA ou cycle corrigés)
+    const dec = lireDecisions(decisions);
+    for (const g of gens)
+      if (typeof g.r === 'object') {
+        const k = dec.racine(
+          `${g.r.departementId ?? ''}|${g.r.cycle ?? ''}|${g.r.cle}`,
+        );
+        if (dec.ecartees.has(k)) g.r = 'ECARTEE';
+        else g.r.groupe = k;
+      }
+
     const ecoles = new Map<
       string,
-      LigneEcole & {
-        variantes: Map<string, number>;
-        structureId: number | null;
-      }
+      EcoleCalculee & { structureId: number | null }
     >();
     const sans = new Map<string, Calcul['sansEcole'][number]>();
     for (const g of gens) {
       if (typeof g.r !== 'object') continue;
       const r = g.r;
-      const k = `${r.departementId ?? ''}|${r.cycle ?? ''}|${r.cle}`;
+      const k = r.groupe ?? '';
       let e = ecoles.get(k);
       if (!e) {
+        const [d0, c0, ...n0] = k.split('|');
+        const maj = dec.majs.get(k);
+        const departementId = maj?.departementId ?? (d0 ? Number(d0) : null);
         e = {
-          departementId: r.departementId,
+          id: k,
+          cle: n0.join('|'),
+          departementId,
           departement:
-            r.departementId === null
+            departementId === null
               ? 'DEPPSA non renseignée'
-              : (nomDep.get(r.departementId) ?? '?'),
-          cycle: r.cycle,
-          nom: '',
+              : (nomDep.get(departementId) ?? '?'),
+          cycle: ((maj?.cycle ?? c0) || null) as CycleEcole | null,
+          nom: maj?.nom ?? '',
+          nomCorrige: !!maj?.nom,
           organigramme: false,
           volontaires: 0,
           communautaires: 0,
@@ -349,6 +463,8 @@ export class EffectifsEcolesService {
           fonctionnaires: 0,
           total: 0,
           ecritures: 0,
+          jumelees: dec.sources.get(k) ?? 0,
+          proche: null,
           variantes: new Map(),
           structureId: null,
         };
@@ -377,8 +493,15 @@ export class EffectifsEcolesService {
         effectif: g.effectif,
         sans: 0,
         administration: 0,
+        ecartees: 0,
       };
-      x[g.r === 'SANS' ? 'sans' : 'administration']++;
+      x[
+        g.r === 'SANS'
+          ? 'sans'
+          : g.r === 'ECARTEE'
+            ? 'ecartees'
+            : 'administration'
+      ]++;
       sans.set(k, x);
     }
     for (const p of personnel) {
@@ -395,14 +518,22 @@ export class EffectifsEcolesService {
         effectif: g.effectif,
         sans: 0,
         administration: 0,
+        ecartees: 0,
       };
-      x[g.r === 'SANS' ? 'sans' : 'administration']++;
+      x[
+        g.r === 'SANS'
+          ? 'sans'
+          : g.r === 'ECARTEE'
+            ? 'ecartees'
+            : 'administration'
+      ]++;
       sans.set(k, x);
     }
 
-    // Le nom affiché : celui de l'organigramme, sinon l'écriture la plus fréquente, abrégée
+    // Le nom affiché : le nom corrigé, sinon celui de l'organigramme, sinon l'écriture la plus
+    // fréquente, abrégée
     const ordreDep = new Map(deps.map((d) => [d.id, d.ordre]));
-    const liste = [...ecoles.values()].map((e) => {
+    const liste: EcoleCalculee[] = [...ecoles.values()].map((e) => {
       const s = e.structureId ? structures.get(e.structureId) : undefined;
       const frequente = [...e.variantes.entries()].sort(
         (a, b) => b[1] - a[1] || a[0].localeCompare(b[0]),
@@ -411,7 +542,7 @@ export class EffectifsEcolesService {
       void structureId;
       return {
         ...reste,
-        nom: nomAffiche(s?.nom ?? frequente, e.cycle),
+        nom: e.nom || nomAffiche(s?.nom ?? frequente, e.cycle),
         organigramme: !!s,
         ecritures: new Set([...e.variantes.keys()].map((x) => x.toUpperCase()))
           .size,
@@ -426,9 +557,38 @@ export class EffectifsEcolesService {
         rangCycle(a.cycle) - rangCycle(b.cycle) ||
         a.nom.localeCompare(b.nom, 'fr', { sensitivity: 'base' }),
     );
+
+    // Les écoles qui se ressemblent, dans la même DEPPSA et le même cycle (ou un cycle inconnu),
+    // sauf celles déclarées différentes ; pour chaque école, la plus proche
+    const ressemblances: Calcul['ressemblances'] = [];
+    const parDep = new Map<string, EcoleCalculee[]>();
+    for (const e of liste) {
+      const k = String(e.departementId ?? '');
+      parDep.set(k, [...(parDep.get(k) ?? []), e]);
+    }
+    for (const groupe of parDep.values()) {
+      const p = groupe.map((e) => paires(e.cle));
+      for (let a = 0; a < groupe.length; a++)
+        for (let b = a + 1; b < groupe.length; b++) {
+          const x = groupe[a];
+          const y = groupe[b];
+          if (x.cycle && y.cycle && x.cycle !== y.cycle) continue;
+          if (dec.differentes.has(paireCle(x.id, y.id))) continue;
+          const score = ressemblance(x.cle, y.cle, p[a], p[b]);
+          if (score < SEUIL_RESSEMBLANCE) continue;
+          ressemblances.push({ a: x.id, b: y.id, score });
+          if (!x.proche || score > x.proche.score)
+            x.proche = { id: y.id, nom: y.nom, score };
+          if (!y.proche || score > y.proche.score)
+            y.proche = { id: x.id, nom: x.nom, score };
+        }
+    }
+    ressemblances.sort((a, b) => b.score - a.score || a.a.localeCompare(b.a));
     this.cache = {
       le: Date.now(),
       ecoles: liste,
+      ressemblances,
+      decisions,
       sansEcole: [...sans.values()].sort(
         (a, b) =>
           (ordreDep.get(a.departementId ?? -1) ?? 99) -
@@ -450,17 +610,30 @@ export class EffectifsEcolesService {
   }
 
   private filtrer(c: Calcul, f: FiltresEcoles) {
-    const r = f.recherche
-      ? f.recherche.normalize('NFD').replace(/[̀-ͯ]/g, '').toUpperCase()
-      : '';
+    const r = f.recherche ? sansAccents(f.recherche).toUpperCase() : '';
     return c.ecoles.filter(
       (e) =>
         (!f.cycle || (f.cycle === 'SANS' ? !e.cycle : e.cycle === f.cycle)) &&
         (!f.departementId || e.departementId === f.departementId) &&
         (!f.sousSeuil || e.fonctionnaires < f.seuil) &&
-        (!r ||
-          e.nom.normalize('NFD').replace(/[̀-ͯ]/g, '').toUpperCase().includes(r)),
+        (!r || sansAccents(e.nom).toUpperCase().includes(r)),
     );
+  }
+
+  /** Une école pour l'écran : sans ses données de calcul. */
+  private publique(e: EcoleCalculee): LigneEcole {
+    const { variantes, cle, ...x } = e;
+    void variantes;
+    void cle;
+    return x;
+  }
+
+  /** Les paires d'écoles qui se ressemblent, dans les écoles filtrées. */
+  private pairesFiltrees(c: Calcul, f: FiltresEcoles) {
+    const ids = new Set(
+      this.filtrer(c, { ...f, sousSeuil: false }).map((e) => e.id),
+    );
+    return c.ressemblances.filter((p) => ids.has(p.a) || ids.has(p.b));
   }
 
   /** Par DEPPSA : nombre d'écoles, écoles sous le seuil, effectifs. */
@@ -520,31 +693,244 @@ export class EffectifsEcolesService {
     const sansEcole = c.sansEcole.filter(
       (s) => !f.departementId || s.departementId === f.departementId,
     );
+    const somme = (
+      k: Effectif,
+      champ: 'sans' | 'administration' | 'ecartees',
+    ) =>
+      sansEcole
+        .filter((s) => s.effectif === k)
+        .reduce((n, s) => n + s[champ], 0);
     return {
       totaux,
       parDeppsa: parDep,
       sansEcole: EFFECTIFS.map((k) => ({
         effectif: k,
         libelle: LIBELLES[k],
-        sans: sansEcole
-          .filter((s) => s.effectif === k)
-          .reduce((n, s) => n + s.sans, 0),
-        administration: sansEcole
-          .filter((s) => s.effectif === k)
-          .reduce((n, s) => n + s.administration, 0),
+        sans: somme(k, 'sans'),
+        administration: somme(k, 'administration'),
+        ecartees: somme(k, 'ecartees'),
       })),
       reclassees: c.reclassees.reduce((n, r) => n + r.n, 0),
       aHarmoniser: tout.filter((e) => e.ecritures > 1).length,
       horsOrganigramme: tout.filter((e) => !e.organigramme).length,
+      ressemblances: this.pairesFiltrees(c, f).length,
+      decisions: c.decisions.length,
       total: lignes.length,
       ecoles: lignes
         .slice((page - 1) * taille, page * taille)
-        .map(({ variantes, ...e }) => {
-          void variantes;
-          return e;
-        }),
+        .map((e) => this.publique(e)),
       departements: c.deps.map(({ id, nom }) => ({ id, nom })),
     };
+  }
+
+  /** Le nom lisible d'une école désignée par sa clé (même si elle n'est plus comptée seule). */
+  private libelle(c: Calcul, id: string) {
+    const e = c.ecoles.find((x) => x.id === id);
+    if (e)
+      return { id, nom: e.nom, departement: e.departement, cycle: e.cycle };
+    const [d0, c0, ...n0] = id.split('|');
+    const cycle = (c0 || null) as CycleEcole | null;
+    return {
+      id,
+      nom: nomAffiche(n0.join('|'), cycle),
+      departement: d0
+        ? (c.deps.find((d) => d.id === Number(d0))?.nom ?? '?')
+        : 'DEPPSA non renseignée',
+      cycle,
+    };
+  }
+
+  /** Une école avec ses écritures (pour la comparer à une autre). */
+  private detail(e: EcoleCalculee) {
+    return {
+      ...this.publique(e),
+      variantes: [...e.variantes.entries()]
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 8)
+        .map(([ecrit, n]) => ({ ecrit, n })),
+    };
+  }
+
+  /** Les écoles qui se ressemblent, deux par deux, à trancher. */
+  async ressemblances(f: FiltresEcoles, page = 1, taille = 20) {
+    const c = await this.calcul();
+    const toutes = this.pairesFiltrees(c, f);
+    const parId = new Map(c.ecoles.map((e) => [e.id, e]));
+    return {
+      total: toutes.length,
+      paires: toutes.slice((page - 1) * taille, page * taille).map((p) => ({
+        score: p.score,
+        a: this.detail(parId.get(p.a)!),
+        b: this.detail(parId.get(p.b)!),
+      })),
+    };
+  }
+
+  /** Une école : ses écritures, les écoles les plus proches et les décisions qui la concernent. */
+  async ecole(id: string) {
+    const c = await this.calcul();
+    const e = c.ecoles.find((x) => x.id === id);
+    if (!e)
+      throw new NotFoundException('École introuvable (décision changée ?).');
+    const p = paires(e.cle);
+    const proches = c.ecoles
+      .filter(
+        (x) =>
+          x.id !== id &&
+          x.departementId === e.departementId &&
+          (!x.cycle || !e.cycle || x.cycle === e.cycle),
+      )
+      .map((x) => ({ x, score: ressemblance(e.cle, x.cle, p) }))
+      .filter((y) => y.score >= 0.5)
+      .sort((a, b) => b.score - a.score)
+      .slice(0, 8)
+      .map(({ x, score }) => ({ ...this.publique(x), score }));
+    return {
+      ecole: this.detail(e),
+      proches,
+      decisions: c.decisions
+        .filter((d) => d.cle === id || d.autreCle === id)
+        .map((d) => this.decisionLisible(c, d)),
+    };
+  }
+
+  private decisionLisible(c: Calcul, d: LigneDecision) {
+    return {
+      id: d.id,
+      type: d.type,
+      ecole: this.libelle(c, d.cle),
+      autre: d.autreCle ? this.libelle(c, d.autreCle) : null,
+      nom: d.nom,
+      departement: d.departementId
+        ? (c.deps.find((x) => x.id === d.departementId)?.nom ?? null)
+        : null,
+      cycle: d.cycle,
+      motif: d.motif,
+      par: d.par,
+      le: d.creeLe,
+    };
+  }
+
+  /** Toutes les décisions prises, de la plus récente à la plus ancienne. */
+  async decisions() {
+    const c = await this.calcul();
+    return [...c.decisions].reverse().map((d) => this.decisionLisible(c, d));
+  }
+
+  /**
+   * Trancher : même école (jumelée avec une autre), deux écoles différentes, pas une école
+   * (écartée), ou nom, DEPPSA et cycle corrigés. Écarter est réservé au contrôle.
+   */
+  async decider(u: UtilisateurConnecte, d: DecisionEcoleDto) {
+    const CLE = /^\d*\|[A-Z_]*\|[A-Z0-9 ]{1,200}$/;
+    if (!CLE.test(d.cle)) throw new BadRequestException('École inconnue.');
+    if (
+      d.type === 'ECARTEE' &&
+      u.role !== 'ADMIN' &&
+      !ROLES_CONTROLE.includes(u.role)
+    )
+      throw new ForbiddenException(
+        'Écarter une école est réservé au contrôle (chef de service, directeur, bureau d’études, DG).',
+      );
+    const autre = d.autreCle ?? '';
+    if (
+      (d.type === 'JUMELEE' || d.type === 'DIFFERENTES') &&
+      (!CLE.test(autre) || autre === d.cle)
+    )
+      throw new BadRequestException('Choisissez l’autre école.');
+    const repo = this.ds.getRepository(DecisionEcole);
+    const existantes = await repo.find({ order: { id: 'ASC' } });
+    if (d.type === 'JUMELEE') {
+      const dec = lireDecisions(
+        existantes.filter(
+          (x) => !(x.type === 'JUMELEE' && x.cle === d.cle),
+        ) as unknown as LigneDecision[],
+      );
+      if (dec.racine(autre) === d.cle)
+        throw new BadRequestException(
+          'Cette école est déjà comptée avec celle-ci : impossible de les jumeler dans l’autre sens.',
+        );
+    }
+    if (d.type === 'MISE_A_JOUR') {
+      if (!d.nom?.trim() && !d.departementId && !d.cycle)
+        throw new BadRequestException('Rien à mettre à jour.');
+      if (
+        d.departementId &&
+        !(
+          await this.ds.query<unknown[]>(
+            `SELECT 1 FROM departement WHERE id = $1`,
+            [d.departementId],
+          )
+        ).length
+      )
+        throw new BadRequestException('DEPPSA inconnue.');
+      if (d.cycle && !(d.cycle in CYCLES_ECOLE))
+        throw new BadRequestException('Cycle inconnu.');
+    }
+    // Une seule décision de chaque sorte par école : la nouvelle remplace l'ancienne ; jumeler
+    // efface « deux écoles différentes » pour la même paire
+    const memePaire = (x: DecisionEcole) =>
+      paireCle(x.cle, x.autreCle) === paireCle(d.cle, autre);
+    const remplacees = existantes.filter((x) =>
+      d.type === 'DIFFERENTES'
+        ? x.type === 'DIFFERENTES' && memePaire(x)
+        : d.type === 'JUMELEE'
+          ? (x.type === 'JUMELEE' && x.cle === d.cle) ||
+            (x.type === 'DIFFERENTES' && memePaire(x))
+          : x.type === d.type && x.cle === d.cle,
+    );
+    if (remplacees.length) await repo.delete(remplacees.map((x) => x.id));
+    const motif = d.motif?.trim().slice(0, 500) || null;
+    const maj = d.type === 'MISE_A_JOUR';
+    const ligne = await repo.save(
+      repo.create({
+        cle: d.cle,
+        type: d.type,
+        autreCle: d.type === 'JUMELEE' || d.type === 'DIFFERENTES' ? autre : '',
+        nom: maj ? d.nom?.trim().slice(0, 150) || null : null,
+        departementId: maj ? (d.departementId ?? null) : null,
+        cycle: maj ? d.cycle || null : null,
+        motif,
+        par: u.nom,
+      }),
+    );
+    const ACTIONS: Record<TypeDecisionEcole, string> = {
+      JUMELEE: 'ECOLE_JUMELEE',
+      DIFFERENTES: 'ECOLES_DIFFERENTES',
+      ECARTEE: 'ECOLE_ECARTEE',
+      MISE_A_JOUR: 'ECOLE_MISE_A_JOUR',
+    };
+    await this.journal.log(u, ACTIONS[d.type], 'decision_ecole', ligne.id, {
+      cle: ligne.cle,
+      autreCle: ligne.autreCle || null,
+      nom: ligne.nom,
+      departementId: ligne.departementId,
+      cycle: ligne.cycle,
+      motif,
+    });
+    this.cache = null;
+    return { id: ligne.id };
+  }
+
+  /** Annuler une décision : l'école est de nouveau comptée comme avant. */
+  async annuler(u: UtilisateurConnecte, id: number) {
+    const repo = this.ds.getRepository(DecisionEcole);
+    const d = await repo.findOne({ where: { id } });
+    if (!d) throw new NotFoundException('Décision introuvable.');
+    if (
+      d.type === 'ECARTEE' &&
+      u.role !== 'ADMIN' &&
+      !ROLES_CONTROLE.includes(u.role)
+    )
+      throw new ForbiddenException('Réservé au contrôle.');
+    await repo.delete(id);
+    await this.journal.log(u, 'ECOLE_DECISION_ANNULEE', 'decision_ecole', id, {
+      type: d.type,
+      cle: d.cle,
+      autreCle: d.autreCle || null,
+    });
+    this.cache = null;
+    return { ok: true };
   }
 
   async excel(f: FiltresEcoles): Promise<{ nom: string; contenu: Buffer }> {
@@ -818,12 +1204,13 @@ export class EffectifsEcolesService {
     );
 
     // 3. Les personnes qu'on ne peut pas placer dans une école
-    const ws3 = feuille('Sans école', [22, 16, 18, 22, 10]);
+    const ws3 = feuille('Sans école', [22, 16, 18, 22, 16, 10]);
     const e3 = [
       'DEPPSA',
       'Effectif',
       'École non renseignée',
       'Administration (inspection, direction…)',
+      'École écartée (pas une école)',
       'Total',
     ];
     entete(ws3, e3.length, 'PERSONNES SANS ÉCOLE CONNUE');
@@ -838,7 +1225,8 @@ export class EffectifsEcolesService {
         LIBELLES[s.effectif],
         s.sans,
         s.administration,
-        s.sans + s.administration,
+        s.ecartees,
+        s.sans + s.administration + s.ecartees,
       ]);
     ligne(
       ws3,
@@ -848,7 +1236,8 @@ export class EffectifsEcolesService {
         '',
         s3.reduce((x, s) => x + s.sans, 0),
         s3.reduce((x, s) => x + s.administration, 0),
-        s3.reduce((x, s) => x + s.sans + s.administration, 0),
+        s3.reduce((x, s) => x + s.ecartees, 0),
+        s3.reduce((x, s) => x + s.sans + s.administration + s.ecartees, 0),
       ],
       true,
       'FFD9EAD3',
@@ -858,7 +1247,7 @@ export class EffectifsEcolesService {
       ws3,
       l,
       e3.length,
-      'Ces personnes ne sont dans aucune école du tableau : leur école (ou lieu de service) n’est pas renseignée, ou elles travaillent dans une inspection, une direction ou un cabinet. Toutes DEPPSA et tous cycles confondus.',
+      'Ces personnes ne sont dans aucune école du tableau : leur école (ou lieu de service) n’est pas renseignée, ou elles travaillent dans une inspection, une direction ou un cabinet, ou leur « école » a été écartée (décision : pas une école). Toutes DEPPSA et tous cycles confondus.',
     );
 
     // 4. Les noms d'une même école écrits de plusieurs façons
@@ -897,6 +1286,47 @@ export class EffectifsEcolesService {
       l,
       e4.length,
       'Chaque école réunit les écritures que le système a reconnues comme la même école (même DEPPSA, même nom une fois ôtés le libellé du cycle, les accents, la ponctuation et les articles). À corriger dans les fichiers d’origine pour n’en garder qu’une.',
+    );
+
+    // 4 bis. Les écoles qui se ressemblent, à trancher (même école ou deux écoles)
+    const e6 = [
+      'DEPPSA',
+      'Cycle',
+      'École',
+      'Personnes',
+      'Ressemble à',
+      'Personnes',
+      'Ressemblance',
+    ];
+    const ws6 = feuille(
+      'Écoles qui se ressemblent',
+      [20, 14, 34, 11, 34, 11, 13],
+      true,
+    );
+    entete(ws6, e6.length, 'ÉCOLES QUI SE RESSEMBLENT (À TRANCHER)');
+    titres(ws6, 13, e6);
+    l = 14;
+    const parId = new Map(c.ecoles.map((e) => [e.id, e]));
+    for (const p of this.pairesFiltrees(c, f)) {
+      const a = parId.get(p.a);
+      const b = parId.get(p.b);
+      if (!a || !b) continue;
+      ligne(ws6, l++, [
+        a.departement,
+        a.cycle ? CYCLES_ECOLE[a.cycle] : '—',
+        a.nom,
+        a.total,
+        b.nom,
+        b.total,
+        `${Math.round(p.score * 100)} %`,
+      ]);
+    }
+    l++;
+    note(
+      ws6,
+      l,
+      e6.length,
+      'Deux écoles de la même DEPPSA dont les noms se ressemblent : peut-être la même école écrite autrement, peut-être deux écoles. À trancher dans le système (Effectifs par école › Écoles qui se ressemblent) : « même école » les compte ensemble, « deux écoles différentes » ne les propose plus.',
     );
 
     // 5. Reclassements dans les nouvelles DEPPSA
