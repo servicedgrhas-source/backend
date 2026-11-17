@@ -497,6 +497,25 @@ export class RecensementController {
     return this.effectifs.tableau();
   }
 
+  /** Les fiches à passer dans leur nouvelle DEPPSA (centre de contrôle). */
+  @Roles(...ROLES_TRAITEMENT)
+  @Get('tableau/effectifs/nouvelle-deppsa')
+  nouvelleDeppsa() {
+    return this.rec.agentsNouvelleDeppsa();
+  }
+
+  @Roles(...ROLES_TRAITEMENT)
+  @Post('tableau/effectifs/nouvelle-deppsa')
+  passerNouvelleDeppsa(
+    @Utilisateur() u: UtilisateurConnecte,
+    @Body() b: { ids?: unknown },
+  ) {
+    const ids = Array.isArray(b?.ids)
+      ? b.ids.filter((x): x is number => Number.isInteger(x)).slice(0, 5000)
+      : [];
+    return this.rec.passerNouvelleDeppsa(u, ids);
+  }
+
   /* ---------------- Échelons en retard (commission administrative paritaire) ---------------- */
 
   private filtresRetards(

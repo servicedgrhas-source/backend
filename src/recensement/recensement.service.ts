@@ -1881,6 +1881,73 @@ export class RecensementService {
     }
   }
 
+  /**
+   * Les fiches à passer dans leur nouvelle DEPPSA (centre de contrôle), avec le nom de l'agent.
+   */
+  async agentsNouvelleDeppsa() {
+    const liste = await this.ecolesReclassement();
+    const noms = new Map(
+      (liste.length
+        ? await this.agents.query<
+            {
+              id: number;
+              nom: string;
+              numeroFiche: string | null;
+              statut: string;
+            }[]
+          >(
+            `SELECT id, "nomComplet" AS nom, "numeroFiche", statut FROM agent_recense WHERE id = ANY($1)`,
+            [liste.map((x) => x.agentId)],
+          )
+        : []
+      ).map((x) => [x.id, x]),
+    );
+    const fr = new Intl.Collator('fr');
+    return liste
+      .map((x) => ({ ...x, ...noms.get(x.agentId) }))
+      .filter((x) => x.nom)
+      .sort((a, b) => fr.compare(a.vers, b.vers) || fr.compare(a.nom!, b.nom!));
+  }
+
+  private ecolesReclassement() {
+    return this.effectifs.agentsAReclasser();
+  }
+
+  /**
+   * Passer des fiches dans leur nouvelle DEPPSA (DG, 17/11/2026) : seulement celles que le calcul
+   * désigne encore, chacune comme une modification ordinaire de la fiche (journal).
+   */
+  async passerNouvelleDeppsa(u: UtilisateurConnecte, ids: number[]) {
+    const liste = new Map(
+      (await this.ecolesReclassement()).map((x) => [x.agentId, x]),
+    );
+    const codes = new Map(
+      (
+        await this.agents.query<{ id: number; code: string }[]>(
+          `SELECT id, code FROM departement`,
+        )
+      ).map((d) => [d.id, d.code]),
+    );
+    let faits = 0;
+    const erreurs: { id: number; message: string }[] = [];
+    for (const id of [...new Set(ids)]) {
+      const x = liste.get(id);
+      const code = x ? codes.get(x.versId) : undefined;
+      if (!x || !code) {
+        erreurs.push({ id, message: 'N’est plus à reclasser.' });
+        continue;
+      }
+      try {
+        await this.modifier(u, id, { donnees: { DEPARTEMENT: code } });
+        faits++;
+      } catch (e) {
+        erreurs.push({ id, message: (e as Error).message });
+      }
+    }
+    this.effectifs.oublierEcoles();
+    return { faits, erreurs };
+  }
+
   /* ------------------------------ Contrôles et tableau de bord ------------------------------ */
 
   /** Contrôles sur les agents du périmètre : doublons, âges, téléphone partagé, valeurs et règles à vérifier. */

@@ -4,6 +4,7 @@ import { CalculMemorise } from '../common/calcul-memorise';
 import { IndexNoms } from '../common/index-noms';
 import { normaliser } from '../common/texte';
 import { ConfigEnrolementService } from '../enrolement/configuration';
+import { EffectifsEcolesService } from '../enrolement/effectifs-ecoles.service';
 
 /**
  * Centre de contrôle des effectifs (DG, 16/11/2026) : chaque fiche de la base du personnel est
@@ -128,6 +129,18 @@ export const CATEGORIES_EFFECTIFS: Record<
   },
 };
 
+/**
+ * Les points à corriger sur les fiches, en plus des catégories (une fiche peut y être en plus de sa
+ * catégorie) : filtre « effectif » de la liste des agents comme les catégories.
+ */
+export const POINTS_A_CORRIGER = {
+  DEPARTEMENT_NOUVELLE_DEPPSA: {
+    libelle: 'Département à mettre à jour : école dans une nouvelle DEPPSA',
+    explication:
+      'Fonctionnaires et contractuels dont la fiche porte encore l’ancien département (par exemple Plateaux), alors que leur école n’existe que dans une nouvelle DEPPSA (Congo-Oubangui, Djoué-Léfini, Nkéni-Alima), d’après l’organigramme et le registre. À vérifier, puis à passer dans la nouvelle DEPPSA.',
+  },
+} as const;
+
 const GROUPES = {
   FC: 'Fonctionnaires et contractuels',
   VC: 'Volontaires et communautaires',
@@ -168,6 +181,7 @@ export class ControleEffectifsService {
   constructor(
     private readonly ds: DataSource,
     private readonly config: ConfigEnrolementService,
+    private readonly ecoles: EffectifsEcolesService,
   ) {
     this.memoire = new CalculMemorise(
       ds,
@@ -289,8 +303,20 @@ export class ControleEffectifsService {
 
   /** Les ids d'une catégorie (filtre « effectif » de la liste des agents). */
   async ids(code: string) {
+    if (code === 'DEPARTEMENT_NOUVELLE_DEPPSA')
+      return (await this.ecoles.agentsAReclasser()).map((x) => x.agentId);
     const { donnees } = await this.memoire.lire();
     return donnees.fiches.filter((f) => f.code === code).map((f) => f.id);
+  }
+
+  /** Les fiches à passer dans leur nouvelle DEPPSA (calcul des écoles). */
+  agentsAReclasser() {
+    return this.ecoles.agentsAReclasser();
+  }
+
+  /** Après une correction : le calcul des écoles est refait. */
+  oublierEcoles() {
+    this.ecoles.oublier();
   }
 
   libelle(code: string) {
@@ -378,6 +404,13 @@ export class ControleEffectifsService {
       aTraiter: fiches.filter((f) => CATEGORIES_EFFECTIFS[f.code].aTraiter)
         .length,
       groupes,
+      aCorriger: [
+        {
+          code: 'DEPARTEMENT_NOUVELLE_DEPPSA',
+          ...POINTS_A_CORRIGER.DEPARTEMENT_NOUVELLE_DEPPSA,
+          n: (await this.ecoles.agentsAReclasser()).length,
+        },
+      ],
       parDepartement: [...parDep.entries()]
         .map(([id, x]) => ({
           departementId: id,

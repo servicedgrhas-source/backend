@@ -171,6 +171,13 @@ interface Calcul {
     ecartees: number;
   }[];
   reclassees: { de: string; vers: string; ecole: string; n: number }[];
+  /** Chaque fiche reclassée : son département (fiche), la nouvelle DEPPSA, l'école qui le justifie. */
+  agentsReclasses: {
+    agentId: number;
+    deId: number | null;
+    versId: number;
+    ecole: string;
+  }[];
   deps: { id: number; nom: string; ordre: number }[];
 }
 
@@ -234,6 +241,7 @@ export class EffectifsEcolesService {
       ).map((s) => [s.id, s]),
     );
     const personnel = await q<{
+      id: number;
       statut: string;
       departementId: number | null;
       structureId: number | null;
@@ -241,7 +249,7 @@ export class EffectifsEcolesService {
       cycle: string | null;
       volontaireId: string | null;
     }>(
-      `SELECT statut, "departementId", "structureId", donnees->>'LIEU_SERVICE' AS lieu,
+      `SELECT id, statut, "departementId", "structureId", donnees->>'LIEU_SERVICE' AS lieu,
               donnees->>'CYCLE' AS cycle, "volontaireId"
          FROM agent_recense
         WHERE coalesce(contentieux->>'etat', 'CONFIRME') = 'CONFIRME'
@@ -315,7 +323,12 @@ export class EffectifsEcolesService {
       };
     };
 
-    const gens: { effectif: Effectif; r: Resultat; fc: boolean }[] = [];
+    const gens: {
+      effectif: Effectif;
+      r: Resultat;
+      fc: boolean;
+      agentId?: number;
+    }[] = [];
     for (const v of registre) {
       const fiche = ficheDe.get(v.id);
       if (fiche && fc(fiche.statut)) continue;
@@ -343,6 +356,7 @@ export class EffectifsEcolesService {
           p.statut === 'CONTRACTUEL' ? 'contractuels' : 'fonctionnaires',
         r: lieuDe(p.departementId, p.structureId, p.lieu, cycle),
         fc: true,
+        agentId: p.id,
       });
     }
 
@@ -385,6 +399,7 @@ export class EffectifsEcolesService {
 
     // Reclassement dans les nouvelles DEPPSA
     const reclasse = new Map<string, number>();
+    const agentsReclasses: Calcul['agentsReclasses'] = [];
     for (const g of gens) {
       if (!g.fc || typeof g.r !== 'object' || g.r.structureId) continue;
       const r = g.r;
@@ -397,6 +412,13 @@ export class EffectifsEcolesService {
       if (!nouveaux.has(vers) || vers === r.departementId) continue;
       const k = `${r.departementId === null ? 'Non renseignée' : (nomDep.get(r.departementId) ?? '?')}|${nomDep.get(vers) ?? '?'}|${nomAffiche(r.ecrit, r.cycle)}`;
       reclasse.set(k, (reclasse.get(k) ?? 0) + 1);
+      if (g.agentId)
+        agentsReclasses.push({
+          agentId: g.agentId,
+          deId: r.departementId,
+          versId: vers,
+          ecole: nomAffiche(r.ecrit, r.cycle),
+        });
       r.departementId = vers;
     }
 
@@ -645,8 +667,28 @@ export class EffectifsEcolesService {
           (a, b) =>
             a.vers.localeCompare(b.vers) || a.ecole.localeCompare(b.ecole),
         ),
+      agentsReclasses,
       deps: deps.map(({ id, nom, ordre }) => ({ id, nom, ordre })),
     };
+  }
+
+  /**
+   * Les fonctionnaires et contractuels dont la fiche porte un ancien département alors que leur
+   * école n'existe que dans une nouvelle DEPPSA : à corriger dans la base du personnel.
+   */
+  async agentsAReclasser() {
+    const c = await this.calcul();
+    const nom = new Map(c.deps.map((d) => [d.id, d.nom]));
+    return c.agentsReclasses.map((x) => ({
+      ...x,
+      de: x.deId === null ? 'Non renseigné' : (nom.get(x.deId) ?? '?'),
+      vers: nom.get(x.versId) ?? '?',
+    }));
+  }
+
+  /** Après une correction des fiches : le prochain calcul est refait tout de suite. */
+  oublier() {
+    this.memoire.oublier();
   }
 
   private filtrer(c: Calcul, f: FiltresEcoles) {

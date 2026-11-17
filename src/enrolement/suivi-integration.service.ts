@@ -74,7 +74,7 @@ export const SITUATIONS: Record<CodeSituation, string> = {
 export const DEFINITIONS: [string, string][] = [
   [
     'Registre de la bourse',
-    'toutes les personnes payées un jour en bourse : les volontaires (finalistes enrôlés) et les communautaires (recrutés autrefois par les écoles), encore en poste ou déjà sortis.',
+    'toutes les personnes payées au moins un mois en bourse : les volontaires (finalistes enrôlés) et les communautaires (recrutés autrefois par les écoles), encore en poste ou déjà sortis.',
   ],
   [
     'Recruté',
@@ -173,7 +173,8 @@ export const ETAPES: Record<
   { libelle: string; garder: (l: LigneSuivi) => boolean }
 > = {
   registre: {
-    libelle: 'Payés en bourse un jour (registre de la bourse)',
+    libelle:
+      'Inscrits au registre de la bourse (payés au moins un mois en bourse)',
     garder: (l) => l.registre !== 'ABSENT',
   },
   recrutes: {
@@ -1177,7 +1178,11 @@ export class SuiviIntegrationService {
     l++;
     const T = s.total;
     for (const [lib, n, tx] of [
-      ['Payés en bourse un jour (registre de la bourse)', T.base, ''],
+      [
+        'Inscrits au registre de la bourse (payés au moins un mois en bourse)',
+        T.base,
+        '',
+      ],
       [
         'Recrutés (fonctionnaire ou contractuel, texte reçu, ou sortie « recruté »)',
         T.recrutes,
@@ -1688,7 +1693,11 @@ export class SuiviIntegrationService {
             tab(
               ['Étape', 'Personnes', 'Taux'],
               [
-                ['Payés en bourse un jour (registre de la bourse)', T.base, ''],
+                [
+                  'Inscrits au registre de la bourse (payés au moins un mois en bourse)',
+                  T.base,
+                  '',
+                ],
                 [
                   'Recrutés (fonctionnaire ou contractuel, texte reçu, ou sortie « recruté »)',
                   T.recrutes,
