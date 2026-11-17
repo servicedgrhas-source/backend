@@ -134,7 +134,7 @@ export class RapprochementRapportsController {
     return this.rap.ajouter(u, id, b?.statut || undefined);
   }
 
-  /** Plusieurs lignes d'un coup : CONFIRMER, COMPLETER, AJOUTER, ABSENT. */
+  /** Plusieurs lignes d'un coup : CONFIRMER, COMPLETER, AJOUTER, ABSENT, ANNULER. */
   @Post(':id/lot')
   lot(
     @Utilisateur() u: UtilisateurConnecte,

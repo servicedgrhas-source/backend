@@ -1006,7 +1006,7 @@ export class RapprochementRapportsService {
     action: string,
     ids: number[],
   ) {
-    if (!['CONFIRMER', 'COMPLETER', 'AJOUTER', 'ABSENT'].includes(action))
+    if (!['CONFIRMER', 'COMPLETER', 'AJOUTER', 'ABSENT', 'ANNULER'].includes(action))
       throw new BadRequestException('Action inconnue.');
     const uniques = [...new Set(ids.filter((x) => Number.isInteger(x)))];
     if (!uniques.length) throw new BadRequestException('Cochez au moins une personne.');
@@ -1024,6 +1024,15 @@ export class RapprochementRapportsService {
         await repo.update(
           a.map((l) => l.id),
           { decision: 'CONFIRME', decidePar: u.nom, decideLe: maintenant },
+        );
+      faits = a.length;
+    } else if (action === 'ANNULER') {
+      // La ligne revient « à traiter » ; une fiche ajoutée depuis le rapport n'est pas défaite ici
+      const a = lignes.filter((l) => l.decision && l.decision !== 'AJOUTE');
+      if (a.length)
+        await repo.update(
+          a.map((l) => l.id),
+          { decision: null, decidePar: null, decideLe: null },
         );
       faits = a.length;
     } else if (action === 'ABSENT') {
@@ -1074,7 +1083,7 @@ export class RapprochementRapportsService {
       erreurs: erreurs.length,
     });
     // Confirmer ou déclarer absent ne change pas la recherche : seules les fiches touchées sont refaites
-    if (action === 'AJOUTER' || action === 'COMPLETER')
+    if (action === 'AJOUTER' || action === 'COMPLETER' || action === 'ANNULER')
       await this.rapprocher(rapportId, uniques);
     return { faits, erreurs };
   }
