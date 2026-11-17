@@ -487,10 +487,12 @@ export class RapprochementRapportsService {
       const parNom = new Set<Fiche>();
       for (const m of mots)
         if (m.length >= 3) for (const f of b.parMot.get(m) ?? []) parNom.add(f);
-      const complets = [...parNom]
+      const tousComplets = [...parNom]
         .filter((f) => communes(lettres, f.lettres) >= 0.4)
         .map((f) => ({ f, n: compareNoms(mots, f.mots) }))
-        .filter((x) => x.n.complet && anneeOk(x.f))
+        .filter((x) => x.n.complet);
+      const complets = tousComplets
+        .filter((x) => anneeOk(x.f))
         .sort(
           (x, y) =>
             Number(!!(y.f.annee && y.f.annee === l.anneeNaissance)) -
@@ -505,6 +507,24 @@ export class RapprochementRapportsService {
         methode = 'NOM';
       }
       autres = complets.map((x) => x.f).filter((f) => f !== choisie);
+      // Le même nom (tous les mots identiques) mais une autre année de naissance : probablement la
+      // même personne, année mal écrite d'un côté (17/11/2026 : sinon « Ajouter » crée un doublon)
+      if (!choisie) {
+        const memeNom = tousComplets
+          .filter((x) => !anneeOk(x.f) && x.n.score === 1)
+          .sort(
+            (x, y) =>
+              Number(y.f.departementId === rapport.departementId) -
+                Number(x.f.departementId === rapport.departementId) ||
+              Number(y.f.type === 'PERSONNEL') - Number(x.f.type === 'PERSONNEL'),
+          );
+        if (memeNom.length) {
+          choisie = memeNom[0].f;
+          methode = 'NOM_AUTRE_ANNEE';
+          probable = true;
+          autres = memeNom.slice(1, 4).map((x) => x.f);
+        }
+      }
       // 3. Un nom proche (fautes), même année de naissance
       if (!choisie) {
         const memeAnnee = l.anneeNaissance
@@ -1104,66 +1124,70 @@ export class RapprochementRapportsService {
   /* ----------------------------------- Excel ----------------------------------- */
 
   /**
-   * L'export demandé (DG, 17/11/2026) : pour chaque personne du rapport, le nom, le lieu de
-   * service, la date de naissance, le matricule, la date de prise de service et le département,
-   * d'après le rapport puis d'après la base ; le résultat, les écarts, la décision.
+   * L'export demandé (DG, 17/11/2026) : une ligne par personne, une seule valeur par colonne — nom,
+   * lieu de service, date de naissance, matricule, date de prise de service, département, statut.
+   * La valeur retenue est celle de la base quand la personne y a une fiche (contrôlée, corrigée par
+   * « Appliquer le rapport »), sinon celle du rapport. La même personne sur plusieurs listes du
+   * rapport (directeur et enseignant) n'a qu'une ligne.
    */
   async excel(id: number) {
     const { rapport, lignes } = await this.detail(id);
+    const SECTEURS: Record<string, string> = {
+      PUBLIC: 'Public',
+      CONVENTIONNE: 'Conventionné',
+      PRIVE: 'Privé',
+    };
+    const STATUT_TITRE: Record<string, string> = {
+      FONCTIONNAIRE: 'Fonctionnaire',
+      CONTRACTUEL: 'Contractuel',
+      VOLONTAIRE: 'Volontaire',
+      COMMUNAUTAIRE: 'Communautaire',
+    };
+    const ou = (...v: (string | number | null | undefined)[]) =>
+      v.find((x) => x !== null && x !== undefined && String(x).trim() !== '') ?? '';
+    // Une personne = une fiche (personnel ou registre) ; sans fiche : son nom et son année
+    const vues = new Set<string>();
+    const personnes = lignes.filter((l) => {
+      const k = l.agentId
+        ? `P${l.agentId}`
+        : l.volontaireId
+          ? `V${l.volontaireId}`
+          : `R${l.nomNormalise}|${l.anneeNaissance ?? ''}`;
+      if (vues.has(k)) return false;
+      vues.add(k);
+      return true;
+    });
     const wb = new ExcelJS.Workbook();
     wb.creator = 'SIGRHAS-MEPPSA';
-    const ws = wb.addWorksheet('Rapprochement', {
-      views: [{ state: 'frozen', xSplit: 2, ySplit: 4 }],
+    const ws = wb.addWorksheet('Personnel', {
+      views: [{ state: 'frozen', xSplit: 2, ySplit: 3 }],
     });
     const VERT = 'FF00692F';
     const bord = { style: 'thin' as const, color: { argb: 'FFD4D4D8' } };
     const cadre = { top: bord, left: bord, bottom: bord, right: bord };
     const cols: [string, number][] = [
-      ['N°', 5],
-      ['Secteur', 11],
-      ['Noms et prénoms', 30],
-      ['Lieu de service', 24],
-      ['Date de naissance', 11],
-      ['Matricule', 11],
-      ['Date de prise de service', 12],
-      ['Département', 13],
-      ['Noms et prénoms', 30],
-      ['Lieu de service', 28],
-      ['Date de naissance', 11],
-      ['Matricule', 11],
-      ['Date de prise de service', 12],
-      ['Département', 13],
-      ['Statut', 14],
-      ['Résultat', 15],
-      ['Écarts à vérifier', 60],
-      ['Décision', 16],
+      ['N°', 6],
+      ['Noms et prénoms', 34],
+      ['Lieu de service', 32],
+      ['Date de naissance', 13],
+      ['Matricule', 12],
+      ['Date de prise de service', 14],
+      ['Département', 14],
+      ['Statut', 15],
+      ['Secteur', 13],
     ];
     ws.columns = cols.map(([, w]) => ({ width: w }));
     ws.mergeCells(1, 1, 1, cols.length);
     const t = ws.getCell(1, 1);
-    t.value = `Rapprochement du rapport ${rapport.anneeScolaire || ''} — DDEPPSA ${rapport.departement ?? '?'}`;
+    t.value = `Personnel — DDEPPSA ${rapport.departement ?? '?'} — rapport ${rapport.anneeScolaire || ''}`;
     t.font = { size: 14, bold: true, color: { argb: 'FFFFFFFF' } };
     t.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: VERT } };
     t.alignment = { vertical: 'middle', indent: 1 };
     ws.getRow(1).height = 26;
     ws.mergeCells(2, 1, 2, cols.length);
-    ws.getCell(2, 1).value = `Fichier « ${rapport.nomFichier} », ${lignes.length} personne(s). Comparé à la base du personnel et au registre des volontaires et des communautaires le ${new Date().toLocaleDateString('fr-FR')}.`;
+    ws.getCell(2, 1).value = `${personnes.length} personne(s), situation au ${new Date().toLocaleDateString('fr-FR')}.`;
     ws.getCell(2, 1).font = { size: 10, italic: true, color: { argb: 'FF52525B' } };
-    const sous = ws.getRow(3);
-    for (const [de, a, txt, fond] of [
-      [1, 8, 'D’après le rapport de la DDEPPSA', 'FFE4E4E7'],
-      [9, 15, 'Dans la base (SIGRHAS-MEPPSA)', 'FFE9F7EF'],
-      [16, 18, 'Rapprochement', 'FFE4E4E7'],
-    ] as [number, number, string, string][]) {
-      ws.mergeCells(3, de, 3, a);
-      const c = sous.getCell(de);
-      c.value = txt;
-      c.font = { bold: true, size: 10 };
-      c.alignment = { horizontal: 'center' };
-      c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: fond } };
-      for (let k = de; k <= a; k++) sous.getCell(k).border = cadre;
-    }
-    const h = ws.getRow(4);
+    const h = ws.getRow(3);
     cols.forEach(([l], i) => {
       const c = h.getCell(i + 1);
       c.value = l;
@@ -1173,54 +1197,35 @@ export class RapprochementRapportsService {
       c.border = cadre;
     });
     h.height = 30;
-    const COULEURS: Record<string, [string, string]> = {
-      TROUVE: ['FFE9F7EF', VERT],
-      ECARTS: ['FFFDF6D2', 'FF8A6D00'],
-      PROBABLE: ['FFE0F2FE', 'FF0369A1'],
-      ABSENT: ['FFFBE3E2', 'FFB51D19'],
-    };
-    const SECTEURS: Record<string, string> = { PUBLIC: 'Public', CONVENTIONNE: 'Conventionné', PRIVE: 'Privé' };
-    lignes.forEach((l, i) => {
+    personnes.forEach((l, i) => {
       const f = l.base;
-      const row = ws.getRow(5 + i);
+      const row = ws.getRow(4 + i);
       row.values = [
-        l.numero ?? l.ordre,
+        i + 1,
+        ou(f?.nom, l.nomComplet),
+        ou(f?.lieu, l.ecole),
+        ou(dateFr(f?.dateNaissance), l.dateNaissance ? dateFr(l.dateNaissance) : l.anneeNaissance),
+        ou(f?.matricule, l.matricule),
+        ou(dateFr(f?.priseService), l.priseService),
+        ou(f?.departement, rapport.departement),
+        ou(f ? STATUT_TITRE[f.statut] : null, l.statut ? STATUT_TITRE[l.statut] : null),
         SECTEURS[l.secteur ?? ''] ?? '',
-        l.nomComplet,
-        l.ecole ?? '',
-        l.dateNaissance ? dateFr(l.dateNaissance) : (l.anneeNaissance ?? ''),
-        l.matricule ?? '',
-        l.priseService ?? '',
-        rapport.departement ?? '',
-        f?.nom ?? '',
-        f?.lieu ?? '',
-        dateFr(f?.dateNaissance),
-        f?.matricule ?? '',
-        dateFr(f?.priseService),
-        f?.departement ?? '',
-        f ? `${STATUTS[f.statut] ?? f.statut}${f.type === 'REGISTRE' ? ` (registre${f.etat === 'SORTI' ? ', sorti' : ''})` : ''}` : '',
-        RESULTATS[l.resultat] ?? l.resultat,
-        l.ecarts.map((e) => `• ${e}`).join('\n'),
-        l.decision ? DECISIONS[l.decision] : '',
       ];
       row.eachCell({ includeEmpty: true }, (c, k) => {
         if (k > cols.length) return;
         c.border = cadre;
-        c.font = { size: 10, bold: k === 3 || k === 9 };
-        c.alignment = { vertical: 'top', wrapText: true };
+        c.font = { size: 10, bold: k === 2 };
+        c.alignment = { vertical: 'middle', wrapText: true, horizontal: k === 1 ? 'center' : 'left' };
         if (i % 2) c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF4F4F5' } };
       });
-      const [fond, encre] = COULEURS[l.resultat] ?? COULEURS.ABSENT;
-      row.getCell(16).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: fond } };
-      row.getCell(16).font = { size: 10, bold: true, color: { argb: encre } };
     });
-    ws.autoFilter = { from: { row: 4, column: 1 }, to: { row: 4 + lignes.length, column: cols.length } };
-    ws.pageSetup = { paperSize: 9, orientation: 'landscape', fitToPage: true, fitToWidth: 1, fitToHeight: 0, printTitlesRow: '3:4' };
+    ws.autoFilter = { from: { row: 3, column: 1 }, to: { row: 3 + personnes.length, column: cols.length } };
+    ws.pageSetup = { paperSize: 9, orientation: 'landscape', fitToPage: true, fitToWidth: 1, fitToHeight: 0, printTitlesRow: '3:3' };
     ws.headerFooter = {
       oddFooter:
         '&L&8Document généré par le Système d’Information de gestion des ressources humaines et de l’administration scolaire (SIGRHAS-MEPPSA)&R&8Page &P / &N',
     };
-    const nom = `Rapprochement ${rapport.departement ?? 'DDEPPSA'} ${rapport.anneeScolaire || ''}`.trim();
+    const nom = `Personnel ${rapport.departement ?? 'DDEPPSA'} ${rapport.anneeScolaire || ''}`.trim();
     return { nom: `${nom}.xlsx`, contenu: Buffer.from(await wb.xlsx.writeBuffer()) };
   }
 
