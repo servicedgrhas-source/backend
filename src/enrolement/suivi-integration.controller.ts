@@ -1,6 +1,7 @@
 import { Controller, Get, Query, Res } from '@nestjs/common';
 import type { Response } from 'express';
 import { Roles, ROLES_TRAITEMENT } from '../auth/auth';
+import { ControleEffectifsService } from '../recensement/controle-effectifs.service';
 import {
   type FiltresSuivi,
   SuiviIntegrationService,
@@ -12,7 +13,25 @@ import {
  */
 @Controller('enrolement/suivi-integration')
 export class SuiviIntegrationController {
-  constructor(private readonly suivi: SuiviIntegrationService) {}
+  constructor(
+    private readonly suivi: SuiviIntegrationService,
+    private readonly effectifs: ControleEffectifsService,
+  ) {}
+
+  /**
+   * Fiches de volontaires et communautaires de la base du personnel sans lien avec le registre de
+   * la bourse : liste en lecture seule (le traitement se fait dans la base du personnel).
+   */
+  @Roles(...ROLES_TRAITEMENT)
+  @Get('sans-lien')
+  sansLien(@Query() q: Record<string, string | undefined>) {
+    return this.effectifs.sansLien(
+      q.cas?.slice(0, 40) || undefined,
+      q.recherche?.slice(0, 100) || undefined,
+      Math.max(1, Number(q.page) || 1),
+      50,
+    );
+  }
 
   private filtres(q: Record<string, string | undefined>): FiltresSuivi {
     const nombre = (x?: string) =>

@@ -31,6 +31,7 @@ import {
 } from '../entities';
 import { motsDuNom, ressemblance } from '../common/ressemblance';
 import { AffectationService } from '../affectation/affectation.service';
+import { ControleEffectifsService } from './controle-effectifs.service';
 import {
   ConfigRecensementService,
   type ConfigRecensement,
@@ -70,6 +71,8 @@ export interface FiltresAgents {
   anomalies?: boolean;
   /** Agents ajoutés au recensement : A_CONTROLER, A_DECIDER, ACCEPTES ou REJETES. */
   ajout?: string;
+  /** Une catégorie du centre de contrôle des effectifs (« En attente de matricule »…). */
+  effectif?: string;
   page?: number;
 }
 
@@ -135,6 +138,19 @@ export const enAttente = (c: { etat: string } | null | undefined) =>
 /** « Même personne probable » déjà calculé, par empreinte des fiches lues (voir `controles`). */
 const MEMES_PERSONNES = new Map<string, number[]>();
 
+/**
+ * Contrôles déjà calculés, par périmètre (DG, 17/11/2026 : le tableau de bord ne doit pas tout
+ * recalculer à chaque ouverture). Rendus seulement si l'empreinte exacte des lignes lues est la même
+ * (xmin change à chaque modification) : jamais de chiffre périmé après une correction.
+ */
+const CONTROLES_GARDES = new Map<
+  string,
+  { empreinte: string; resultat: Promise<ControlesCalcules> }
+>();
+type ControlesCalcules = Awaited<
+  ReturnType<RecensementService['calculerControles']>
+>;
+
 @Injectable()
 export class RecensementService {
   constructor(
@@ -150,6 +166,7 @@ export class RecensementService {
     private readonly stockage: StockageService,
     private readonly affectation: AffectationService,
     private readonly params: ParametresService,
+    private readonly effectifs: ControleEffectifsService,
   ) {}
 
   /* ------------------------------ Périmètre ------------------------------ */
@@ -380,6 +397,8 @@ export class RecensementService {
           );
       ajouter('a.id = ANY($X)', [...ids]);
     }
+    if (f.effectif)
+      ajouter('a.id = ANY($X)', await this.effectifs.ids(f.effectif));
     return { where: conds.join(' AND ') || 'TRUE', params, ctl };
   }
 
@@ -1865,7 +1884,29 @@ export class RecensementService {
   /* ------------------------------ Contrôles et tableau de bord ------------------------------ */
 
   /** Contrôles sur les agents du périmètre : doublons, âges, téléphone partagé, valeurs et règles à vérifier. */
-  async controles(u: UtilisateurConnecte) {
+  async controles(u: UtilisateurConnecte): Promise<ControlesCalcules> {
+    const fp = this.filtrePerimetre(await this.perimetre(u));
+    const cle = JSON.stringify([fp.sql, fp.params, jourIso()]);
+    const [{ e }] = await this.agents.query<{ e: string }[]>(
+      `SELECT concat_ws('|',
+              (SELECT md5(string_agg(id || ':' || xmin::text, ',' ORDER BY id)) FROM agent_recense),
+              (SELECT md5(string_agg(id::text || ':' || xmin::text, ',' ORDER BY id)) FROM volontaire),
+              (SELECT md5(string_agg(id::text || ':' || xmin::text, ',' ORDER BY id)) FROM referentiel),
+              (SELECT md5(string_agg(cle || ':' || xmin::text, ',' ORDER BY cle)) FROM parametre)) AS e`,
+    );
+    const garde = CONTROLES_GARDES.get(cle);
+    if (garde?.empreinte === e) return garde.resultat;
+    const resultat = this.calculerControles(u);
+    CONTROLES_GARDES.delete(cle);
+    CONTROLES_GARDES.set(cle, { empreinte: e, resultat });
+    resultat.catch(() => CONTROLES_GARDES.delete(cle));
+    const [ancienne] = CONTROLES_GARDES.keys();
+    if (CONTROLES_GARDES.size > 8 && ancienne)
+      CONTROLES_GARDES.delete(ancienne);
+    return resultat;
+  }
+
+  private async calculerControles(u: UtilisateurConnecte) {
     const c = this.config.get();
     const p = await this.perimetre(u);
     const fp = this.filtrePerimetre(p);

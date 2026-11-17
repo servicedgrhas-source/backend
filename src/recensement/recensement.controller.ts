@@ -25,6 +25,7 @@ import {
 import { StockageService } from '../common/stockage';
 import { JournalService } from '../core/core.service';
 import { CarriereService, type EvenementDto } from './carriere.service';
+import { ControleEffectifsService } from './controle-effectifs.service';
 import {
   RetardsEchelonsService,
   type FiltresRetards,
@@ -74,6 +75,7 @@ function filtres(q: Record<string, string | undefined>): FiltresAgents {
     controle: q.controle || undefined,
     anomalies: q.anomalies === '1' || undefined,
     ajout: q.ajout || undefined,
+    effectif: q.effectif?.slice(0, 40) || undefined,
     page: nombre(q.page),
   };
 }
@@ -88,6 +90,7 @@ export class RecensementController {
     private readonly stockage: StockageService,
     private readonly journal: JournalService,
     private readonly carriere: CarriereService,
+    private readonly effectifs: ControleEffectifsService,
     private readonly retards: RetardsEchelonsService,
   ) {}
 
@@ -485,6 +488,13 @@ export class RecensementController {
   @Get('tableau')
   tableau(@Utilisateur() u: UtilisateurConnecte) {
     return this.rec.tableau(u);
+  }
+
+  /** Centre de contrôle des effectifs : chaque fiche du système justifiée (DGRHAS, tout le pays). */
+  @Roles(...ROLES_TRAITEMENT)
+  @Get('tableau/effectifs')
+  tableauEffectifs() {
+    return this.effectifs.tableau();
   }
 
   /* ---------------- Échelons en retard (commission administrative paritaire) ---------------- */
