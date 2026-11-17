@@ -810,7 +810,9 @@ export class EffectifsEcolesService {
     const c = await this.calcul();
     const tout = this.filtrer(c, { ...f, sousSeuil: false });
     const lignes = this.filtrer(c, f);
-    const parDep = this.parDeppsa(tout, f.seuil);
+    // « Seulement les écoles de 3 fonctionnaires ou moins » coché : le tableau par DEPPSA et les
+    // compteurs ne comptent que ces écoles (17/11/2026)
+    const parDep = this.parDeppsa(f.sousSeuil ? lignes : tout, f.seuil);
     const totaux = parDep.reduce(
       (t, d) => {
         t.ecoles += d.ecoles;
@@ -1586,8 +1588,8 @@ export class EffectifsEcolesService {
       `En orange : les écoles qui ont ${f.seuil} fonctionnaires ou moins, contractuels compris (DG, 17/11/2026 : un contractuel compte comme un fonctionnaire). Volontaires et communautaires : registre de la bourse (en poste). Fonctionnaires et contractuels : base du personnel (en activité), école de l’organigramme ou « lieu de service » écrit. La même école écrite de plusieurs façons est comptée une seule fois (voir « Noms à harmoniser »).`,
     );
 
-    // 2. Par DEPPSA
-    const parDep = this.parDeppsa(tout, f.seuil);
+    // 2. Par DEPPSA (seulement les écoles prioritaires si le filtre est coché)
+    const parDep = this.parDeppsa(f.sousSeuil ? ecoles : tout, f.seuil);
     const e2 = [
       'DEPPSA',
       'Écoles',

@@ -49,8 +49,8 @@ describe('Valeurs du rapport', () => {
     ['Final', 'VOLONTAIRE'],
     ['Contractuel', 'CONTRACTUEL'],
     ['Cotr.', 'CONTRACTUEL'],
-    ['Bénév', null],
-    ['Bén', null],
+    ['Bénév', 'VOLONTAIRE'],
+    ['Bén', 'VOLONTAIRE'],
     ['Vol.', 'VOLONTAIRE'],
     ['/', null],
   ])('statut %s → %s', (brut, statut) => {

@@ -889,7 +889,8 @@ export class RapprochementRapportsService {
           statut,
           donnees,
           contentieux: mention,
-          forcer: true,
+          // Jamais forcé : une fiche au même nom et à la même naissance existe déjà → refus
+          forcer: false,
         });
         return a.id;
       } catch (e) {
@@ -939,7 +940,25 @@ export class RapprochementRapportsService {
     const repo = this.ds.getRepository(LigneRapportPersonnel);
     const ajoutes: number[] = [];
     const erreurs: { ligneId: number; nom: string; message: string }[] = [];
+    // La même personne sur plusieurs listes du rapport (directeur et enseignant de la même IEP) :
+    // une seule fiche. Les fiches déjà ajoutées depuis ce rapport servent aussi.
+    const memePersonne = (a: LigneRapportPersonnel, b: { nomNormalise: string; anneeNaissance: number | null }) =>
+      a.nomNormalise === b.nomNormalise &&
+      (!a.anneeNaissance || !b.anneeNaissance || a.anneeNaissance === b.anneeNaissance);
+    const dejaAjoutees = (await repo.find({ where: { rapportId: rapport.id, decision: 'AJOUTE' } })).filter((x) => x.agentId);
     for (const l of lignes) {
+      const jumelle = dejaAjoutees.find((x) => x.id !== l.id && memePersonne(l, x));
+      if (!l.agentId && jumelle) {
+        await repo.update(l.id, {
+          agentId: jumelle.agentId,
+          volontaireId: null,
+          methode: 'MEME_PERSONNE',
+          decision: 'CONFIRME',
+          decidePar: u.nom,
+          decideLe: new Date(),
+        });
+        continue;
+      }
       if (l.agentId || l.decision === 'AJOUTE') {
         erreurs.push({ ligneId: l.id, nom: l.nomComplet, message: 'A déjà une fiche dans la base du personnel.' });
         continue;
@@ -960,6 +979,7 @@ export class RapprochementRapportsService {
           decideLe: new Date(),
         });
         ajoutes.push(id);
+        dejaAjoutees.push(Object.assign(l, { agentId: id, decision: 'AJOUTE' }));
         await this.journal.log(u, 'RAPPORT_DDEPPSA_AJOUT', 'ligne_rapport_personnel', l.id, {
           rapportId: l.rapportId,
           agentId: id,
