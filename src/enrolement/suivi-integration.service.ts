@@ -19,6 +19,7 @@ import {
 import { CalculMemorise } from '../common/calcul-memorise';
 import { IndexNoms } from '../common/index-noms';
 import { moisEnClair } from '../common/mois';
+import { enTexte, normaliser } from '../common/texte';
 import { Volontaire } from '../entities';
 import { BourseService } from './bourse.service';
 import { ConfigEnrolementService } from './configuration';
@@ -151,7 +152,63 @@ export interface FiltresSuivi {
   situation?: string;
   recherche?: string;
   aRegler?: boolean;
+  /** Une étape du parcours (carte cliquée) : registre, recrutes, affectes, payes, attente. */
+  etape?: string;
 }
+
+/** Recruté : devenu fonctionnaire ou contractuel (statut, texte reçu ou sortie « recruté »). */
+const RECRUTES: CodeSituation[] = [
+  'PAYE_AFFECTE',
+  'PAYE_SANS_NOTE',
+  'ATTENTE_MATRICULE',
+  'ATTENTE_SALAIRE',
+  'ATTENTE_NOTE',
+  'RECRUTE_SANS_PIECE',
+];
+const estRecrute = (l: LigneSuivi) => RECRUTES.includes(l.situation);
+
+/** Les personnes d'une étape du parcours, comme les comptent les cartes. */
+export const ETAPES: Record<
+  string,
+  { libelle: string; garder: (l: LigneSuivi) => boolean }
+> = {
+  registre: {
+    libelle: 'Payés en bourse un jour (registre de la bourse)',
+    garder: (l) => l.registre !== 'ABSENT',
+  },
+  recrutes: {
+    libelle: 'Recrutés',
+    garder: (l) => l.registre !== 'ABSENT' && estRecrute(l),
+  },
+  affectes: {
+    libelle: 'Affectés',
+    garder: (l) => l.registre !== 'ABSENT' && estRecrute(l) && !!l.note,
+  },
+  payes: {
+    libelle: 'Payés (matricule solde)',
+    garder: (l) => l.registre !== 'ABSENT' && !!l.salaire?.matricule,
+  },
+  attente: {
+    libelle: 'En attente de matricule solde',
+    garder: (l) =>
+      l.registre !== 'ABSENT' && !!l.salaire && !l.salaire.matricule,
+  },
+};
+
+/** Les groupes de la base du personnel (cartes « Toute la base du personnel »). */
+export const GROUPES_PERSONNEL: Record<
+  string,
+  { libelle: string; sql: string }
+> = {
+  tous: { libelle: 'Fonctionnaires et contractuels', sql: 'TRUE' },
+  payes: { libelle: 'Payés (matricule solde)', sql: 'matricule IS NOT NULL' },
+  attente: {
+    libelle: 'En attente de matricule solde',
+    sql: 'matricule IS NULL',
+  },
+  structure: { libelle: 'Affectés, structure connue', sql: 'lieu IS NOT NULL' },
+  'sans-structure': { libelle: 'Structure à compléter', sql: 'lieu IS NULL' },
+};
 
 type Groupe = {
   libelle: string;
@@ -666,15 +723,6 @@ export class SuiviIntegrationService {
   /** La synthèse : le parcours en chiffres, les taux, les délais et les regroupements. */
   private synthese(lignes: LigneSuivi[]) {
     const registre = lignes.filter((l) => l.registre !== 'ABSENT');
-    const estRecrute = (l: LigneSuivi) =>
-      [
-        'PAYE_AFFECTE',
-        'PAYE_SANS_NOTE',
-        'ATTENTE_MATRICULE',
-        'ATTENTE_SALAIRE',
-        'ATTENTE_NOTE',
-        'RECRUTE_SANS_PIECE',
-      ].includes(l.situation);
     const compter = (liste: LigneSuivi[]): Omit<Groupe, 'libelle'> => ({
       base: liste.length,
       recrutes: liste.filter(estRecrute).length,
@@ -776,15 +824,20 @@ export class SuiviIntegrationService {
       (x) => !f.departementId || x.departementId === f.departementId,
     );
     const lignes = this.filtrer(toutes, f);
+    const etape = f.etape ? ETAPES[f.etape] : undefined;
+    const liste = etape ? lignes.filter(etape.garder) : lignes;
     const debut = (Math.max(1, page) - 1) * taille;
     return {
       synthese: this.synthese(lignes),
       sources,
-      total: lignes.length,
+      total: liste.length,
+      etapes: Object.fromEntries(
+        Object.entries(ETAPES).map(([k, x]) => [k, x.libelle]),
+      ),
       page: Math.max(1, page),
       taille,
       // Déjà triée au calcul : situations les plus parlantes d'abord, dans l'ordre du parcours
-      lignes: lignes.slice(debut, debut + taille),
+      lignes: liste.slice(debut, debut + taille),
       choix,
       situations: SITUATIONS,
       calculeLe: new Date(le).toISOString(),
@@ -792,6 +845,158 @@ export class SuiviIntegrationService {
       basePersonnel: this.basePersonnel(base),
       /** Faux : des données ont changé, une mise à jour se fait en arrière-plan. */
       aJour,
+    };
+  }
+
+  /**
+   * Toute la base du personnel, carte par carte (fonctionnaires et contractuels) : liste en lecture
+   * seule ; le traitement se fait dans la base du personnel.
+   */
+  async personnel(
+    groupe: string,
+    departementId: number | undefined,
+    recherche: string | undefined,
+    page = 1,
+    taille = 50,
+  ) {
+    const g = GROUPES_PERSONNEL[groupe] ?? GROUPES_PERSONNEL.tous;
+    const params: unknown[] = [];
+    const conditions = [g.sql];
+    if (departementId) {
+      params.push(departementId);
+      conditions.push(`"departementId" = $${params.length}`);
+    }
+    if (recherche?.trim()) {
+      params.push(`%${normaliser(recherche)}%`, `%${recherche.trim()}%`);
+      conditions.push(
+        `(cle LIKE $${params.length - 1} OR matricule ILIKE $${params.length})`,
+      );
+    }
+    const base = `
+      WITH p AS (
+        SELECT a.id, a."nomComplet" AS nom, a."nomNormalise" AS cle, a.statut, to_char(a."dateNaissance", 'DD/MM/YYYY') AS naissance,
+               coalesce(nullif(trim(a.matricule), ''), nullif(trim(a.donnees->>'MATRICULE_SOLDE'), '')) AS matricule,
+               coalesce(s.nom, nullif(trim(a.donnees->>'LIEU_SERVICE'), '')) AS lieu,
+               coalesce(s."departementId", a."departementId") AS "departementId",
+               a.donnees->>'GRADE' AS grade
+          FROM agent_recense a LEFT JOIN structure s ON s.id = a."structureId"
+         WHERE coalesce(a.contentieux->>'etat', 'CONFIRME') = 'CONFIRME'
+           AND a.statut IN ('FONCTIONNAIRE', 'CONTRACTUEL'))
+      SELECT p.*, d.nom AS departement FROM p LEFT JOIN departement d ON d.id = p."departementId"
+       WHERE ${conditions.join(' AND ')}`;
+    const [{ n }] = await this.ds.query<{ n: number }[]>(
+      `SELECT count(*)::int AS n FROM (${base}) x`,
+      params,
+    );
+    params.push(taille, (Math.max(1, page) - 1) * taille);
+    const lignes = await this.ds.query<
+      {
+        id: number;
+        nom: string;
+        statut: string;
+        naissance: string | null;
+        matricule: string | null;
+        lieu: string | null;
+        departement: string | null;
+        grade: string | null;
+      }[]
+    >(
+      `${base} ORDER BY nom LIMIT $${params.length - 1} OFFSET $${params.length}`,
+      params,
+    );
+    return {
+      groupe: groupe in GROUPES_PERSONNEL ? groupe : 'tous',
+      libelle: g.libelle,
+      groupes: Object.fromEntries(
+        Object.entries(GROUPES_PERSONNEL).map(([k, x]) => [k, x.libelle]),
+      ),
+      total: n,
+      lignes,
+    };
+  }
+
+  /** Une fiche du personnel, en lecture seule (modale de la liste). */
+  async fiche(id: number) {
+    const [a] = await this.ds.query<
+      {
+        id: number;
+        numeroFiche: string | null;
+        nom: string;
+        statut: string;
+        sexe: string | null;
+        naissance: string | null;
+        matricule: string | null;
+        telephone: string | null;
+        donnees: Record<string, unknown> | null;
+        structure: string | null;
+        departement: string | null;
+        volontaireId: string | null;
+      }[]
+    >(
+      `SELECT a.id, a."numeroFiche", a."nomComplet" AS nom, a.statut, a.donnees->>'SEXE' AS sexe,
+              to_char(a."dateNaissance", 'DD/MM/YYYY') AS naissance,
+              coalesce(nullif(trim(a.matricule), ''), nullif(trim(a.donnees->>'MATRICULE_SOLDE'), '')) AS matricule,
+              a.telephone, a.donnees, s.nom AS structure,
+              d.nom AS departement, a."volontaireId"
+         FROM agent_recense a
+         LEFT JOIN structure s ON s.id = a."structureId"
+         LEFT JOIN departement d ON d.id = coalesce(s."departementId", a."departementId")
+        WHERE a.id = $1`,
+      [id],
+    );
+    if (!a) return null;
+    const x = a.donnees ?? {};
+    const texte = (k: string) => {
+      const v = x[k];
+      return v === null || v === undefined || v === '' ? null : enTexte(v);
+    };
+    const [registre] = a.volontaireId
+      ? await this.ds.query<
+          {
+            population: string;
+            statut: string;
+            motif: string | null;
+            etablissement: string | null;
+          }[]
+        >(
+          `SELECT population, statut, "motifSortie" AS motif, etablissement FROM volontaire WHERE id = $1`,
+          [a.volontaireId],
+        )
+      : [];
+    return {
+      id: a.id,
+      numeroFiche: a.numeroFiche,
+      nom: a.nom,
+      statut: a.statut,
+      sexe: a.sexe,
+      naissance: a.naissance,
+      matricule: a.matricule,
+      telephone: a.telephone,
+      departement: a.departement,
+      lieu: a.structure ?? texte('LIEU_SERVICE'),
+      grade: texte('GRADE'),
+      categorie: texte('CATEGORIE'),
+      echelle: texte('ECHELLE'),
+      echelon: texte('ECHELON'),
+      indice: texte('INDICE_SOLDE'),
+      position: texte('POSITION'),
+      fonction: texte('FONCTION'),
+      dateRecrutement: texte('DATE_RECRUTEMENT'),
+      texteRecrutement:
+        [texte('NATURE_TEXTE_RECRUTEMENT'), texte('TEXTE_RECRUTEMENT')]
+          .filter(Boolean)
+          .join(' ') || null,
+      noteAffectation: texte('NOTE_AFFECTATION'),
+      registre: registre
+        ? {
+            population: registre.population,
+            statut: registre.statut,
+            motif: registre.motif
+              ? (this.config.motif(registre.motif)?.libelle ?? registre.motif)
+              : null,
+            etablissement: registre.etablissement,
+          }
+        : null,
     };
   }
 

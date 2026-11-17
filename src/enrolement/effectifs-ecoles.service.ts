@@ -454,6 +454,23 @@ export class EffectifsEcolesService {
         else g.r.groupe = k;
       }
 
+    // L'école de l'organigramme qui correspond à chaque clé (même DEPPSA, même cycle, même nom,
+    // après les fautes et les jumelages) : une école ajoutée à l'organigramme y est reconnue même
+    // si personne n'y est encore rattaché par sa fiche
+    const structureParEcole = new Map<string, number>();
+    for (const s of structures.values()) {
+      if (s.type !== 'ETABLISSEMENT') continue;
+      const cycle =
+        (s.cycle && s.cycle in CYCLES_ECOLE ? s.cycle : null) ??
+        cycleDuNom(s.nom) ??
+        '';
+      const groupe = `${s.departementId ?? ''}|${cycle}`;
+      const cle0 = cleEcole(s.nom);
+      const k = dec.racine(
+        `${groupe}|${versCle.get(`${groupe}|${cle0}`) ?? cle0}`,
+      );
+      if (!structureParEcole.has(k)) structureParEcole.set(k, s.id);
+    }
     const ecoles = new Map<
       string,
       EcoleCalculee & { structureId: number | null }
@@ -557,7 +574,8 @@ export class EffectifsEcolesService {
     // fréquente, abrégée
     const ordreDep = new Map(deps.map((d) => [d.id, d.ordre]));
     const liste: EcoleCalculee[] = [...ecoles.values()].map((e) => {
-      const s = e.structureId ? structures.get(e.structureId) : undefined;
+      const sid = e.structureId ?? structureParEcole.get(e.id);
+      const s = sid ? structures.get(sid) : undefined;
       const frequente = [...e.variantes.entries()].sort(
         (a, b) => b[1] - a[1] || a[0].localeCompare(b[0]),
       )[0][0];
@@ -773,6 +791,134 @@ export class EffectifsEcolesService {
         .slice(0, 8)
         .map(([ecrit, n]) => ({ ecrit, n })),
     };
+  }
+
+  /**
+   * Les écoles à contrôler (Structures scolaires, DG 17/11/2026) : écrites de plusieurs façons
+   * (« harmoniser ») ou absentes de l'organigramme (« hors-organigramme »), avec leurs écritures.
+   */
+  async aControler(
+    quoi: 'harmoniser' | 'hors-organigramme',
+    f: FiltresEcoles,
+    page = 1,
+    taille = 30,
+  ) {
+    const c = await this.calcul();
+    const toutes = this.filtrer(c, { ...f, sousSeuil: false }).filter((e) =>
+      quoi === 'harmoniser' ? e.ecritures > 1 : !e.organigramme,
+    );
+    // Les plus nombreuses d'abord : ce sont elles qui comptent le plus
+    toutes.sort((a, b) => b.total - a.total || a.nom.localeCompare(b.nom));
+    return {
+      total: toutes.length,
+      ecoles: toutes
+        .slice((page - 1) * taille, page * taille)
+        .map((e) => this.detail(e)),
+    };
+  }
+
+  /** Les inspections de l'organigramme, rangées par département puis par cycle. */
+  async inspections() {
+    const lignes = await this.ds.query<
+      {
+        id: number;
+        nom: string;
+        sigle: string;
+        cycle: string | null;
+        departementId: number | null;
+        departement: string | null;
+        ordre: number | null;
+      }[]
+    >(
+      `SELECT s.id, s.nom, s.sigle, s.cycle, s."departementId", d.nom AS departement, d.ordre
+         FROM structure s LEFT JOIN departement d ON d.id = s."departementId"
+        WHERE s.type = 'INSPECTION' AND s.actif
+        ORDER BY d.ordre NULLS LAST, s.cycle NULLS LAST, s.nom`,
+    );
+    const parDep = new Map<
+      string,
+      {
+        departementId: number | null;
+        departement: string;
+        inspections: {
+          id: number;
+          nom: string;
+          sigle: string;
+          cycle: string | null;
+        }[];
+      }
+    >();
+    for (const l of lignes) {
+      const k = String(l.departementId ?? '');
+      const g = parDep.get(k) ?? {
+        departementId: l.departementId,
+        departement: l.departement ?? 'Département non renseigné',
+        inspections: [],
+      };
+      g.inspections.push({
+        id: l.id,
+        nom: l.nom,
+        sigle: l.sigle,
+        cycle: l.cycle,
+      });
+      parDep.set(k, g);
+    }
+    return [...parDep.values()];
+  }
+
+  /**
+   * Ajouter à l'organigramme une école connue seulement par les fichiers : elle devient un
+   * établissement rattaché à son inspection. Si son nom, sa DEPPSA ou son cycle changent, l'école
+   * d'avant est comptée avec la nouvelle (jumelage, annulable).
+   */
+  async ajouterOrganigramme(
+    u: UtilisateurConnecte,
+    d: { cle: string; nom: string; cycle: string; inspectionId: number },
+    creer: (dto: {
+      type: string;
+      nom: string;
+      parentId: number;
+      departementId: number | null;
+      cycle: string;
+    }) => Promise<{ id: number }>,
+  ) {
+    const c = await this.calcul();
+    const e = c.ecoles.find((x) => x.id === d.cle);
+    if (!e)
+      throw new NotFoundException('École introuvable (décision changée ?).');
+    if (e.organigramme)
+      throw new BadRequestException(
+        'Cette école est déjà dans l’organigramme.',
+      );
+    if (!(d.cycle in CYCLES_ECOLE))
+      throw new BadRequestException('Choisissez le cycle.');
+    const nom = d.nom?.replace(/s+/g, ' ').trim();
+    if (!nom) throw new BadRequestException('Écrivez le nom de l’école.');
+    const [ins] = await this.ds.query<
+      { id: number; departementId: number | null }[]
+    >(
+      `SELECT id, "departementId" FROM structure WHERE id = $1 AND type = 'INSPECTION' AND actif`,
+      [d.inspectionId],
+    );
+    if (!ins) throw new BadRequestException('Choisissez l’inspection.');
+    const s = await creer({
+      type: 'ETABLISSEMENT',
+      nom,
+      parentId: ins.id,
+      departementId: ins.departementId,
+      cycle: d.cycle,
+    });
+    // La clé de la nouvelle école ; différente de l'ancienne : l'ancienne est comptée avec elle
+    const cle = `${ins.departementId ?? ''}|${d.cycle}|${cleEcole(nom)}`;
+    if (cle !== d.cle && cleEcole(nom))
+      await this.decider(u, {
+        type: 'JUMELEE',
+        cle: d.cle,
+        autreCle: cle,
+        motif: 'Ajoutée à l’organigramme',
+      });
+    this.memoire.oublier();
+    return { id: s.id };
   }
 
   /** Les écoles qui se ressemblent, deux par deux, à trancher. */

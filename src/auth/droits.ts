@@ -139,7 +139,8 @@ export const RUBRIQUES_API: Record<string, string[]> = {
   '/demandes/nouvelle': ['demandes', 'demandes-prestation/agents'],
   '/prestations': ['demandes-prestation'],
   '/structures': [],
-  '/ecoles': ['etablissements'],
+  // Écoles à contrôler (ressemblances, noms, hors organigramme) : dans Structures scolaires
+  '/ecoles': ['etablissements', 'ecoles-controle'],
   '/ecoles/besoins': ['etablissements/besoins'],
   '/enrolement/besoins': ['enrolement/besoins'],
   '/notes/affectation': ['notes', 'notes/preparer/affectation'],

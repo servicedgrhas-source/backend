@@ -21,7 +21,10 @@ import { OriginesEnrolementController } from './enrolement/origines-enrolement.c
 import { OriginesEnrolementService } from './enrolement/origines-enrolement.service';
 import { ComparaisonFichierController } from './enrolement/comparaison-fichier.controller';
 import { ComparaisonFichierService } from './enrolement/comparaison-fichier.service';
-import { EffectifsEcolesController } from './enrolement/effectifs-ecoles.controller';
+import {
+  ControleEcolesController,
+  EffectifsEcolesController,
+} from './enrolement/effectifs-ecoles.controller';
 import { EffectifsEcolesService } from './enrolement/effectifs-ecoles.service';
 import { SuiviIntegrationController } from './enrolement/suivi-integration.controller';
 import { SuiviIntegrationService } from './enrolement/suivi-integration.service';
@@ -161,6 +164,7 @@ import { ReferentielsService } from './referentiels/referentiels.service';
     VolontairesController,
     SuiviIntegrationController,
     EffectifsEcolesController,
+    ControleEcolesController,
     ComparaisonFichierController,
     OriginesEnrolementController,
     GestionEnrolementController,

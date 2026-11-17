@@ -11,7 +11,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import type { UtilisateurConnecte } from '../auth/auth';
 import { StockageService } from '../common/stockage';
-import { cleCompacte } from '../common/texte';
+import { ageRevolu, cleCompacte, codeCategorie } from '../common/texte';
 import { JournalService, ParametresService } from '../core/core.service';
 import { AgentRecense, EvenementCarriere, Referentiel } from '../entities';
 import type { ChampFiche } from './configuration';
@@ -785,8 +785,58 @@ export class CarriereService {
           }).filter((x) => x.date <= aujourdhui)
         : [];
     const echelle = ech;
+    // Départ à la retraite (DG, 17/11/2026) : fonctionnaires et contractuels, à l'âge de leur
+    // catégorie (Administration › Référentiels › Catégories d'agents), sinon à l'âge général de la
+    // configuration ; même règle que le contrôle « âge de la retraite »
+    let retraite: {
+      age: number;
+      date: string;
+      ageActuel: number;
+      source: 'CATEGORIE' | 'CONFIGURATION';
+      categorie: string | null;
+      atteinte: boolean;
+    } | null = null;
+    const naissance = a.dateNaissance
+      ? String(a.dateNaissance).slice(0, 10)
+      : null;
+    if (
+      naissance &&
+      /^\d{4}-\d{2}-\d{2}$/.test(naissance) &&
+      (a.statut === 'FONCTIONNAIRE' || a.statut === 'CONTRACTUEL')
+    ) {
+      const cat = codeCategorie(d.CATEGORIE);
+      const ref = cat
+        ? await this.refs.findOne({
+            where: { type: 'CATEGORIE_AGENT', code: cat, actif: true },
+          })
+        : null;
+      const ageCategorie = Number(
+        (ref?.donnees as { ageRetraite?: unknown } | null)?.ageRetraite,
+      );
+      const age = ageCategorie > 0 ? ageCategorie : conf.ageRetraite;
+      if (age) {
+        const [an, mo, jo] = naissance.split('-');
+        // Né un 29 février : le 1er mars de l'année de la retraite si elle n'est pas bissextile
+        const annee = Number(an) + age;
+        const bissextile =
+          (annee % 4 === 0 && annee % 100 !== 0) || annee % 400 === 0;
+        const date =
+          mo === '02' && jo === '29' && !bissextile
+            ? `${annee}-03-01`
+            : `${annee}-${mo}-${jo}`;
+        retraite = {
+          age,
+          date,
+          ageActuel: ageRevolu(naissance, aujourdhui),
+          source: ageCategorie > 0 ? 'CATEGORIE' : 'CONFIGURATION',
+          categorie: ref?.libelle ?? null,
+          atteinte: date <= aujourdhui,
+        };
+      }
+    }
     return {
       valeurs,
+      retraite,
       // Fonctionnaire : « date de dernière promotion » ; contractuel : « date du dernier avancement »
       avancement: av
         ? {

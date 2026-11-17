@@ -65,7 +65,10 @@ const TYPES_FICHIERS =
  * archive) ou un téléchargement est remplacée par un refus, quelle que soit l'adresse.
  */
 export function bloquerFichiers(res: Response) {
-  const setHeader = res.setHeader.bind(res);
+  const setHeader = res.setHeader.bind(res) as (
+    nom: string,
+    valeur: number | string | readonly string[],
+  ) => Response;
   const write = res.write.bind(res) as (...a: unknown[]) => boolean;
   const end = res.end.bind(res) as (...a: unknown[]) => Response;
   let bloque = false;

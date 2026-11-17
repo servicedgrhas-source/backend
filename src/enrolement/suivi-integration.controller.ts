@@ -1,4 +1,12 @@
-import { Controller, Get, Query, Res } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  NotFoundException,
+  Param,
+  ParseIntPipe,
+  Query,
+  Res,
+} from '@nestjs/common';
 import type { Response } from 'express';
 import { Roles, ROLES_TRAITEMENT } from '../auth/auth';
 import { ControleEffectifsService } from '../recensement/controle-effectifs.service';
@@ -33,6 +41,30 @@ export class SuiviIntegrationController {
     );
   }
 
+  /** Toute la base du personnel, carte par carte : liste en lecture seule. */
+  @Roles(...ROLES_TRAITEMENT)
+  @Get('personnel')
+  personnel(@Query() q: Record<string, string | undefined>) {
+    return this.suivi.personnel(
+      q.groupe?.slice(0, 20) ?? 'tous',
+      q.departementId && /^\d+$/.test(q.departementId)
+        ? Number(q.departementId)
+        : undefined,
+      q.recherche?.slice(0, 100) || undefined,
+      Math.max(1, Number(q.page) || 1),
+      50,
+    );
+  }
+
+  /** Une fiche du personnel, en lecture seule (modale). */
+  @Roles(...ROLES_TRAITEMENT)
+  @Get('personnel/:id')
+  async fiche(@Param('id', ParseIntPipe) id: number) {
+    const f = await this.suivi.fiche(id);
+    if (!f) throw new NotFoundException('Fiche introuvable.');
+    return f;
+  }
+
   private filtres(q: Record<string, string | undefined>): FiltresSuivi {
     const nombre = (x?: string) =>
       x && /^\d+$/.test(x) ? Number(x) : undefined;
@@ -48,6 +80,7 @@ export class SuiviIntegrationController {
       situation: q.situation || undefined,
       recherche: q.recherche?.slice(0, 100) || undefined,
       aRegler: q.aRegler === '1',
+      etape: q.etape?.slice(0, 20) || undefined,
     };
   }
 
