@@ -10,6 +10,8 @@ import {
   Res,
 } from '@nestjs/common';
 import {
+  ArrayMaxSize,
+  IsArray,
   IsIn,
   IsInt,
   IsOptional,
@@ -30,6 +32,10 @@ import {
   type FiltresEcoles,
   type TypeDecisionEcole,
 } from './effectifs-ecoles.service';
+import {
+  RANG_VRAISEMBLANCE,
+  type Vraisemblance,
+} from './effectifs-ecoles-regles';
 
 class DecisionEcoleBody {
   @IsIn(['JUMELEE', 'DIFFERENTES', 'ECARTEE', 'MISE_A_JOUR'])
@@ -41,6 +47,14 @@ class DecisionEcoleBody {
   @IsOptional() @IsString() @MaxLength(30) cycle?: string;
   @IsOptional() @IsString() @MaxLength(500) motif?: string;
 }
+
+class FusionBody {
+  @IsArray() @ArrayMaxSize(3000) paires: { a: string; b: string }[];
+}
+
+/** Le niveau de probabilité demandé (« TRES_PROBABLE »…), ou rien. */
+const niveauDe = (n?: string) =>
+  n && n in RANG_VRAISEMBLANCE ? (n as Vraisemblance) : undefined;
 
 class OrganigrammeBody {
   @IsString() @MaxLength(260) cle: string;
@@ -177,7 +191,20 @@ export class ControleEcolesController {
       this.filtres(q),
       Math.max(1, Number(q.page) || 1),
       Math.min(50, Number(q.taille) || 20),
+      niveauDe(q.niveau),
     );
+  }
+
+  /** Toutes les paires d'un niveau, pour les cocher d'un coup. */
+  @Get('ressemblances/toutes')
+  toutesLesPaires(@Query() q: Record<string, string | undefined>) {
+    return this.ecoles.toutesLesPaires(this.filtres(q), niveauDe(q.niveau));
+  }
+
+  /** Fusionner les paires cochées (décisions « même école » en série). */
+  @Post('decisions/fusion')
+  fusionner(@Utilisateur() u: UtilisateurConnecte, @Body() d: FusionBody) {
+    return this.ecoles.fusionner(u, d.paires);
   }
 
   @Get('liste/:quoi')

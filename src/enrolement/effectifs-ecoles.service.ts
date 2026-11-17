@@ -21,7 +21,10 @@ import {
   faute,
   nomAffiche,
   paires,
+  RANG_VRAISEMBLANCE,
   ressemblance,
+  vraisemblance,
+  type Vraisemblance,
 } from './effectifs-ecoles-regles';
 
 /**
@@ -104,6 +107,36 @@ interface LigneDecision {
 /** À partir de cette ressemblance (0 à 1), deux écoles sont proposées comme peut-être la même. */
 const SEUIL_RESSEMBLANCE = 0.75;
 
+interface PaireEcoles {
+  a: string;
+  b: string;
+  score: number;
+  niveau: Vraisemblance;
+  raison: string;
+  /** L'école dont le nom est gardé si on fusionne. */
+  garder: 'a' | 'b';
+}
+
+/**
+ * Laquelle de deux écoles garder quand on les fusionne : celle de l'organigramme, sinon un nom sans
+ * initiales (« Bernard Mountou Mavoungou » plutôt que « B. M Mavoungou »), sinon la plus nombreuse,
+ * sinon le nom le plus complet. Négatif : garder `x`.
+ */
+function preference(
+  x: { cle: string; nom: string; organigramme: boolean; total: number },
+  y: typeof x,
+) {
+  const initiales = (e: typeof x) =>
+    e.cle.split(' ').filter((m) => /^[A-Z]$/.test(m)).length;
+  return (
+    Number(y.organigramme) - Number(x.organigramme) ||
+    initiales(x) - initiales(y) ||
+    y.total - x.total ||
+    y.cle.length - x.cle.length ||
+    x.nom.localeCompare(y.nom)
+  );
+}
+
 /** Une paire d'écoles, dans le même ordre quel que soit le sens. */
 const paireCle = (a: string, b: string) => (a < b ? `${a}§${b}` : `${b}§${a}`);
 
@@ -158,8 +191,11 @@ export interface FiltresEcoles {
 interface Calcul {
   le: number;
   ecoles: EcoleCalculee[];
-  /** Les paires d'écoles qui se ressemblent (pas encore tranchées), de la plus proche à la moins. */
-  ressemblances: { a: string; b: string; score: number }[];
+  /**
+   * Les paires d'écoles qui se ressemblent (pas encore tranchées), de la plus probable à la moins :
+   * niveau, raison, et l'école dont on garderait le nom.
+   */
+  ressemblances: PaireEcoles[];
   decisions: LigneDecision[];
   /** Personnes sans école : rien d'écrit, ou un lieu qui n'est pas une école (inspection…). */
   sansEcole: {
@@ -639,14 +675,26 @@ export class EffectifsEcolesService {
           if (dec.differentes.has(paireCle(x.id, y.id))) continue;
           const score = ressemblance(x.cle, y.cle, p[a], p[b]);
           if (score < SEUIL_RESSEMBLANCE) continue;
-          ressemblances.push({ a: x.id, b: y.id, score });
+          ressemblances.push({
+            a: x.id,
+            b: y.id,
+            score,
+            ...vraisemblance(x, y),
+            garder: preference(x, y) <= 0 ? 'a' : 'b',
+          });
           if (!x.proche || score > x.proche.score)
             x.proche = { id: y.id, nom: y.nom, score };
           if (!y.proche || score > y.proche.score)
             y.proche = { id: x.id, nom: x.nom, score };
         }
     }
-    ressemblances.sort((a, b) => b.score - a.score || a.a.localeCompare(b.a));
+    // De la plus probable à la moins probable ; à niveau égal, la plus ressemblante
+    ressemblances.sort(
+      (a, b) =>
+        RANG_VRAISEMBLANCE[a.niveau] - RANG_VRAISEMBLANCE[b.niveau] ||
+        b.score - a.score ||
+        a.a.localeCompare(b.a),
+    );
     return {
       le: Date.now(),
       ecoles: liste,
@@ -964,17 +1012,166 @@ export class EffectifsEcolesService {
   }
 
   /** Les écoles qui se ressemblent, deux par deux, à trancher. */
-  async ressemblances(f: FiltresEcoles, page = 1, taille = 20) {
+  async ressemblances(
+    f: FiltresEcoles,
+    page = 1,
+    taille = 20,
+    niveau?: Vraisemblance,
+  ) {
     const c = await this.calcul();
-    const toutes = this.pairesFiltrees(c, f);
+    const filtrees = this.pairesFiltrees(c, f);
+    const niveaux = Object.fromEntries(
+      Object.keys(RANG_VRAISEMBLANCE).map((n) => [
+        n,
+        filtrees.filter((p) => p.niveau === n).length,
+      ]),
+    ) as Record<Vraisemblance, number>;
+    const toutes = niveau
+      ? filtrees.filter((p) => p.niveau === niveau)
+      : filtrees;
     const parId = new Map(c.ecoles.map((e) => [e.id, e]));
     return {
       total: toutes.length,
+      niveaux,
       paires: toutes.slice((page - 1) * taille, page * taille).map((p) => ({
         score: p.score,
+        niveau: p.niveau,
+        raison: p.raison,
+        garder: p.garder,
         a: this.detail(parId.get(p.a)!),
         b: this.detail(parId.get(p.b)!),
       })),
+    };
+  }
+
+  /** Toutes les paires d'un niveau (pour les cocher d'un coup), sans le détail des écoles. */
+  async toutesLesPaires(f: FiltresEcoles, niveau?: Vraisemblance) {
+    const c = await this.calcul();
+    return this.pairesFiltrees(c, f)
+      .filter((p) => !niveau || p.niveau === niveau)
+      .map((p) => ({ a: p.a, b: p.b }));
+  }
+
+  /**
+   * Fusionner d'un coup les paires cochées (17/11/2026) : des décisions « même école », comme une
+   * à une. Les paires qui se touchent forment un groupe (« B. M Mavoungou », « Bernard Mountou
+   * Mavoungou », « Bernard Moutou Mavougou ») : toutes ses écoles sont comptées sous une seule, celle
+   * de l'organigramme sinon le nom le plus complet. Un groupe qui contiendrait deux écoles de
+   * l'organigramme n'est pas fusionné. Chaque décision s'annule ensuite comme les autres.
+   */
+  async fusionner(u: UtilisateurConnecte, liste: { a: string; b: string }[]) {
+    if (u.role !== 'ADMIN' && !ROLES_CONTROLE.includes(u.role))
+      throw new ForbiddenException(
+        'Fusionner en série est réservé au contrôle (chef de service, directeur, bureau d’études, DG).',
+      );
+    if (!Array.isArray(liste) || !liste.length)
+      throw new BadRequestException('Cochez au moins une paire.');
+    if (liste.length > 3000)
+      throw new BadRequestException('Trop de paires d’un coup (3 000 au plus).');
+    const c = await this.calcul();
+    const parId = new Map(c.ecoles.map((e) => [e.id, e]));
+    // Les groupes : les paires cochées qui partagent une école
+    const pere = new Map<string, string>();
+    const chef = (x: string): string => {
+      let r = x;
+      while (pere.get(r) !== r) r = pere.get(r)!;
+      pere.set(x, r);
+      return r;
+    };
+    let ignorees = 0;
+    for (const p of liste) {
+      const a = String(p?.a ?? '');
+      const b = String(p?.b ?? '');
+      if (a === b || !parId.has(a) || !parId.has(b)) {
+        ignorees++;
+        continue;
+      }
+      for (const x of [a, b]) if (!pere.has(x)) pere.set(x, x);
+      pere.set(chef(a), chef(b));
+    }
+    const groupes = new Map<string, EcoleCalculee[]>();
+    for (const x of pere.keys()) {
+      const r = chef(x);
+      groupes.set(r, [...(groupes.get(r) ?? []), parId.get(x)!]);
+    }
+    const aCreer: { cle: string; autreCle: string }[] = [];
+    const refuses: { ecoles: string; raison: string }[] = [];
+    for (const membres of groupes.values()) {
+      const refuser = (raison: string) =>
+        refuses.push({ ecoles: membres.map((e) => e.nom).join(' / '), raison });
+      if (membres.filter((e) => e.organigramme).length > 1) {
+        refuser('deux écoles de l’organigramme');
+        continue;
+      }
+      // Plus de deux écoles reliées de proche en proche : chacune doit être la même que chacune des
+      // autres (« Nkouka M » ressemble à « Nkouka Mbouaba » et à « Nkouka Mpassi », qui sont deux
+      // écoles), et du même cycle (« CE de Bouansa » relie un CEP et un CEG)
+      if (membres.length > 2) {
+        const cycles = new Set(membres.map((e) => e.cycle).filter(Boolean));
+        if (cycles.size > 1) {
+          refuser('des cycles différents');
+          continue;
+        }
+        const douteuse = membres.some((x, i) =>
+          membres
+            .slice(i + 1)
+            .some(
+              (y) =>
+                RANG_VRAISEMBLANCE[vraisemblance(x, y).niveau] >
+                RANG_VRAISEMBLANCE.PROBABLE,
+            ),
+        );
+        if (douteuse) {
+          refuser('des écoles du groupe ne se ressemblent pas assez entre elles');
+          continue;
+        }
+      }
+      const [garde, ...autres] = [...membres].sort(preference);
+      for (const e of autres) aCreer.push({ cle: e.id, autreCle: garde.id });
+    }
+    if (!aCreer.length)
+      return { fusionnees: 0, groupes: 0, refuses, ignorees };
+    const sources = new Set(aCreer.map((x) => x.cle));
+    const paire = new Set(aCreer.map((x) => paireCle(x.cle, x.autreCle)));
+    const lignes = await this.ds.transaction(async (em) => {
+      const repo = em.getRepository(DecisionEcole);
+      // Comme une décision seule : la nouvelle remplace l'ancienne « même école » de l'école, et
+      // efface « deux écoles différentes » pour la même paire
+      const existantes = await repo.find();
+      const remplacees = existantes.filter(
+        (x) =>
+          (x.type === 'JUMELEE' && sources.has(x.cle)) ||
+          (x.type === 'DIFFERENTES' && paire.has(paireCle(x.cle, x.autreCle))),
+      );
+      if (remplacees.length) await repo.delete(remplacees.map((x) => x.id));
+      return repo.save(
+        aCreer.map((x) =>
+          repo.create({
+            cle: x.cle,
+            type: 'JUMELEE',
+            autreCle: x.autreCle,
+            nom: null,
+            departementId: null,
+            cycle: null,
+            motif: 'Fusion en série (écoles qui se ressemblent)',
+            par: u.nom,
+          }),
+        ),
+      );
+    });
+    for (const l of lignes)
+      await this.journal.log(u, 'ECOLE_JUMELEE', 'decision_ecole', l.id, {
+        cle: l.cle,
+        autreCle: l.autreCle,
+        motif: l.motif,
+        enSerie: true,
+      });
+    this.memoire.oublier();
+    return {
+      fusionnees: lignes.length,
+      groupes: groupes.size - refuses.length,
+      refuses,
+      ignorees,
     };
   }
 

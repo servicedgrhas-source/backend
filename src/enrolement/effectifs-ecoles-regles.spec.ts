@@ -6,6 +6,7 @@ import {
   estHorsEcole,
   nomAffiche,
   ressemblance,
+  vraisemblance,
 } from './effectifs-ecoles-regles';
 
 describe('Nom affiché d’une école', () => {
@@ -136,5 +137,39 @@ describe('Écoles qui se ressemblent', () => {
     ],
   ])('%s / %s → %s', (a, b, proche) => {
     expect(ressemblance(a, b) >= 0.75).toBe(proche);
+  });
+});
+
+describe('Probabilité que deux écoles soient la même', () => {
+  const e = (nom: string, organigramme = false, cycle: string | null = 'PRESCOLAIRE') => ({
+    cle: cleEcole(nom),
+    organigramme,
+    cycle,
+  });
+  it.each([
+    ['CEP B. M Mavoungou', 'CEP BERNARD MOUNTOU MAVOUNGOU', 'TRES_PROBABLE'],
+    ['CEP J. D. TCHIMBAKALA', 'CEP JEAN DENIS TCHIMBAKALA', 'TRES_PROBABLE'],
+    ['CEP CP KINKALA', 'CEP Kinkala', 'TRES_PROBABLE'],
+    ['EP BANGUISSA Gabriel', 'EP GABRIEL BANGUISSA', 'TRES_PROBABLE'],
+    ['CEP Etoumbi', 'CEP Etoumbi Centre', 'PROBABLE'],
+    ['CEP Moutabala', 'CEP Joseph Moutabala', 'PROBABLE'],
+    ['EP Abala', 'EP Obala', 'A_VERIFIER'],
+    ['CEP Mindouli', 'CEP Mindouli G', 'A_VERIFIER'],
+    ['CEP LOULOMBO', 'CEP Loulombo Gare', 'A_VERIFIER'],
+    ['EP Abala Centre', 'EP Abala-Ndolo', 'A_VERIFIER'],
+    ['EP Kayes-Centre B', 'EP BODISSA DE KAYES', 'A_VERIFIER'],
+    ['CEP Kinkala', 'INTERNAT DU LYCEE DE KINKALA', 'PEU_PROBABLE'],
+    ['CEP Sibiti', "L'INSPECTION DE L'ENSEIGNEMENT PRIMAIRE SIBITI A", 'PEU_PROBABLE'],
+    ['CEP Makola Caserne', 'CEP Makola Centre', 'PEU_PROBABLE'],
+    ['EP LIBERTE A', 'EP LIBERTE B', 'PEU_PROBABLE'],
+  ])('%s / %s → %s', (a, b, niveau) => {
+    const cycle = /^EP/.test(a) ? 'PRIMAIRE' : 'PRESCOLAIRE';
+    expect(vraisemblance(e(a, false, cycle), e(b, false, cycle)).niveau).toBe(niveau);
+  });
+  it('deux écoles de l’organigramme : peu probable', () => {
+    expect(vraisemblance(e('CEP Makola Centre', true), e('CEP Makola Village', true)).niveau).toBe('PEU_PROBABLE');
+  });
+  it('un CEG écrit en toutes lettres : la même école', () => {
+    expect(vraisemblance(e('CEG OUESSO', false, 'COLLEGE'), e("COLLEGE D'ENSEIGNEMENT GENERAL DE OUESSO", false, 'COLLEGE')).niveau).toBe('TRES_PROBABLE');
   });
 });
