@@ -10,6 +10,8 @@ export class EnroleDejaConnu1793600000000 implements MigrationInterface {
   }
 
   public async down(queryRunner: QueryRunner): Promise<void> {
-    await queryRunner.query(`ALTER TABLE "enrole" DROP COLUMN "dejaConnuVerifie"`);
+    await queryRunner.query(
+      `ALTER TABLE "enrole" DROP COLUMN "dejaConnuVerifie"`,
+    );
   }
 }

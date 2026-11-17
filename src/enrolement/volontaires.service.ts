@@ -4003,7 +4003,7 @@ export class VolontairesService implements OnModuleInit {
     aMettreAJour: Map<string, { nom: string; champs: Partial<Volontaire> }>,
   ) {
     const vide = (x: unknown) =>
-      x === null || x === undefined || String(x).trim() === '';
+      x === null || x === undefined || enTexte(x).trim() === '';
     const pareil = (k: string, a: unknown, b: unknown) =>
       k === 'telephone'
         ? String(a).replace(/\D/g, '').slice(-8) ===
@@ -4045,11 +4045,11 @@ export class VolontairesService implements OnModuleInit {
             nom: v.nomComplet,
             registre:
               k === 'departementId'
-                ? String(v.departementBrut ?? actuel)
+                ? enTexte(v.departementBrut ?? actuel)
                 : enTexte(actuel),
             fichier:
               k === 'departementId'
-                ? String(fichier.departementBrut ?? valeur)
+                ? enTexte(fichier.departementBrut ?? valeur)
                 : enTexte(valeur),
           });
         prendre = remplacer.has(k);

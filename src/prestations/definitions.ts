@@ -3166,8 +3166,18 @@ export const PRESTATIONS: DefinitionPrestation[] = [
     signataire: LE_DG,
     objet: 'Demande de certificat de cessation de paiement',
     champs: [
-      { cle: 'dateDeces', libelle: 'Date du décès', type: 'date', obligatoire: true },
-      { cle: 'lieuDeces', libelle: 'Lieu du décès', type: 'texte', exemple: 'Ex. CHU de Brazzaville' },
+      {
+        cle: 'dateDeces',
+        libelle: 'Date du décès',
+        type: 'date',
+        obligatoire: true,
+      },
+      {
+        cle: 'lieuDeces',
+        libelle: 'Lieu du décès',
+        type: 'texte',
+        exemple: 'Ex. CHU de Brazzaville',
+      },
       CIVILITE_AYANT_DROIT,
       {
         cle: 'ayantDroit',
@@ -3228,7 +3238,8 @@ export const PRESTATIONS: DefinitionPrestation[] = [
   {
     code: 'RCA_SOLDE',
     numero: 61,
-    libelle: 'Prise en compte de la reconstitution de carrière (RCA) à la solde',
+    libelle:
+      'Prise en compte de la reconstitution de carrière (RCA) à la solde',
     famille: 'SOLDE',
     pourQui:
       'Un agent dont la carrière a été reconstituée (arrêté de RCA signé) : la DGRHAS demande au Budget de l’appliquer sur la solde.',
@@ -3269,7 +3280,8 @@ export const PRESTATIONS: DefinitionPrestation[] = [
     acte: 'Soit-transmis au Budget',
     niveauDecision: 'DGRHAS',
     signataire: LE_DG,
-    objet: 'Demande de prise en compte de l’arrêté de dernière promotion à la solde',
+    objet:
+      'Demande de prise en compte de l’arrêté de dernière promotion à la solde',
     champs: [
       {
         cle: 'textePromotion',
@@ -3287,7 +3299,10 @@ export const PRESTATIONS: DefinitionPrestation[] = [
     acteModele: {
       ...LETTRE_FP,
       titre: 'Soit-transmis',
-      lettre: { ...AU_BUDGET, objet: 'Arrêté de dernière promotion à la solde' },
+      lettre: {
+        ...AU_BUDGET,
+        objet: 'Arrêté de dernière promotion à la solde',
+      },
       articles: [
         'J’ai l’honneur de vous faire parvenir, pour compétence, la demande de prise en compte de l’arrêté de dernière promotion à la solde de {agent}.',
       ],
@@ -3322,7 +3337,10 @@ export const PRESTATIONS: DefinitionPrestation[] = [
     acteModele: {
       ...LETTRE_FP,
       titre: 'Soit-transmis',
-      lettre: { ...AU_BUDGET, objet: 'Rétablissement de l’indemnité de fonction' },
+      lettre: {
+        ...AU_BUDGET,
+        objet: 'Rétablissement de l’indemnité de fonction',
+      },
       articles: [
         'J’ai l’honneur de vous faire parvenir, pour compétence, la demande de rétablissement de l’indemnité de fonction de {agent}{enService}, {f:nommé|nommée} par la note {champ:texteNomination}.',
       ],

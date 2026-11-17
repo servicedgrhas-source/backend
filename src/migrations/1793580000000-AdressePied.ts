@@ -9,7 +9,7 @@ export class AdressePied1793580000000 implements MigrationInterface {
 
   public async up(queryRunner: QueryRunner): Promise<void> {
     await queryRunner.query(
-      `UPDATE "parametre" SET "valeur" = regexp_replace("valeur", '^\s*Contacts?\s*:\s*', 'Adresse : ') WHERE "cle" = 'ADRESSE_PIED' AND "valeur" ~* '^\s*Contacts?\s*:'`,
+      `UPDATE "parametre" SET "valeur" = regexp_replace("valeur", '^\\s*Contacts?\\s*:\\s*', 'Adresse : ') WHERE "cle" = 'ADRESSE_PIED' AND "valeur" ~* '^\\s*Contacts?\\s*:'`,
     );
   }
 

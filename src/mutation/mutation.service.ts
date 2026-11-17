@@ -181,7 +181,7 @@ const CHAMPS_PERSONNEL: [keyof DemandeMutation, string][] = [
   ['datePriseService', 'Date de prise de service'],
 ];
 const videMut = (v: unknown) =>
-  v === null || v === undefined || String(v).trim() === '';
+  v === null || v === undefined || enTexte(v).trim() === '';
 /** Même valeur, écrite autrement : « IE 3 » = « Inst. 3 » ? non ; « 123456 A » = « 123456A » oui. */
 function pareilPersonnel(k: keyof DemandeMutation, a: unknown, b: unknown) {
   if (k === 'matricule') return cleCompacte(a) === cleCompacte(b);
@@ -562,7 +562,7 @@ export class MutationService {
     f: Parameters<MutationService['liste']>[0],
     u: UtilisateurConnecte,
   ) {
-    const ids = (await this.liste({ ...f, u })).map((d) => d.id as string);
+    const ids = (await this.liste({ ...f, u })).map((d) => d.id);
     const toutes = ids.length
       ? await this.repo.find({ where: { id: In(ids) } })
       : [];
@@ -1817,9 +1817,9 @@ export class MutationService {
     const lisible = (champ: keyof DemandeMutation, v: unknown) =>
       champ === 'departementOrigineId' || champ === 'departementSolliciteId'
         ? v
-          ? String(nomsDeps.get(v as number) ?? v)
+          ? enTexte(nomsDeps.get(v as number) ?? v)
           : ''
-        : String(v ?? '');
+        : enTexte(v);
     // Fichiers anciens : la date d'enregistrement n'est pas comparée
 
     // Lignes du fichier déjà retenues comme nouvelles demandes (noms proches dans le fichier)

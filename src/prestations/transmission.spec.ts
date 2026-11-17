@@ -138,7 +138,11 @@ describe('Soit-transmis des demandes de prestation (modèles de la DGRHAS)', () 
   });
 
   /** Phrase et objet d'une demande seule, pour comparer au modèle Word. */
-  const seule = (code: string, details: Record<string, unknown> = {}, genre: 'M' | 'F' = 'M') => {
+  const seule = (
+    code: string,
+    details: Record<string, unknown> = {},
+    genre: 'M' | 'F' = 'M',
+  ) => {
     const d = demande(code, 7, genre);
     Object.assign(d.details, details);
     return ecrireTransmission(definition(code)!, [d], ctxDe(code), P);
@@ -146,55 +150,118 @@ describe('Soit-transmis des demandes de prestation (modèles de la DGRHAS)', () 
 
   it('modèles « la demande de … » : domiciliation, rectificatif de nom, primes', () => {
     let l = seule('DOMICILIATION_SALAIRE', {}, 'F');
-    expect(l.objet).toEqual(['Transmission d’une (01) demande', 'de domiciliation de salaire.']);
+    expect(l.objet).toEqual([
+      'Transmission d’une (01) demande',
+      'de domiciliation de salaire.',
+    ]);
     expect(l.corps).toBe(
       'J’ai l’honneur de vous faire parvenir, pour compétence, la demande de domiciliation de salaire, formulée par madame ZZTESTFICTIF Agent 7, instituteur de 1er échelon, indice 488, matricule de solde n° 123457X, en service à école primaire fictive, département scolaire de Niari.',
     );
     l = seule('RECTIFICATIF_IDENTITE', { nature: 'NOM' });
-    expect(l.objet).toEqual(['Transmission d’une (01) demande', 'de rectificatif de nom sur le bulletin de solde.']);
-    expect(l.corps).toMatch(/^J’ai l’honneur de vous faire parvenir, pour compétence, la demande de rectificatif de nom sur le bulletin de solde, formulée par monsieur /);
+    expect(l.objet).toEqual([
+      'Transmission d’une (01) demande',
+      'de rectificatif de nom sur le bulletin de solde.',
+    ]);
+    expect(l.corps).toMatch(
+      /^J’ai l’honneur de vous faire parvenir, pour compétence, la demande de rectificatif de nom sur le bulletin de solde, formulée par monsieur /,
+    );
     l = seule('PRIME_RISQUE_SANTE');
-    expect(l.objet).toEqual(['Transmission d’une (01) demande', 'de mandatement des primes.']);
-    expect(l.corps).toMatch(/pour compétence, la demande de mandatement de la prime de risque et santé formulée par monsieur ZZTESTFICTIF Agent 7, /);
+    expect(l.objet).toEqual([
+      'Transmission d’une (01) demande',
+      'de mandatement des primes.',
+    ]);
+    expect(l.corps).toMatch(
+      /pour compétence, la demande de mandatement de la prime de risque et santé formulée par monsieur ZZTESTFICTIF Agent 7, /,
+    );
   });
 
   it('grade écrit en capitales dans la fiche : gardé tel quel (pas « cONTRACTUEL »)', () => {
     const d = demande('PRISE_EN_CHARGE_SOLDE', 8);
-    (d.agent as unknown as Record<string, string>).grade = 'CONTRACTUEL CATEG. C ECHELLE 8';
+    (d.agent as unknown as Record<string, string>).grade =
+      'CONTRACTUEL CATEG. C ECHELLE 8';
     (d.agent as unknown as Record<string, string>).statut = 'CONTRACTUEL';
-    const l = ecrireTransmission(definition('PRISE_EN_CHARGE_SOLDE')!, [d], ctxDe('PRISE_EN_CHARGE_SOLDE'), P);
-    expect(l.corps).toContain('monsieur ZZTESTFICTIF Agent 8, CONTRACTUEL CATEG. C ECHELLE 8 de 1er échelon, indice 488, engagé dans la fonction publique par');
+    const l = ecrireTransmission(
+      definition('PRISE_EN_CHARGE_SOLDE')!,
+      [d],
+      ctxDe('PRISE_EN_CHARGE_SOLDE'),
+      P,
+    );
+    expect(l.corps).toContain(
+      'monsieur ZZTESTFICTIF Agent 8, CONTRACTUEL CATEG. C ECHELLE 8 de 1er échelon, indice 488, engagé dans la fonction publique par',
+    );
   });
 
   it('mise en valeur : la demande en gras soulignée, le nom en gras ; introduction modifiée gardée', () => {
     let l = seule('PRISE_EN_CHARGE_SOLDE');
-    expect(l.miseEnValeur).toEqual({ grasSouligne: ['une (01) demande de prise en charge en solde'], gras: ['ZZTESTFICTIF Agent 7'] });
+    expect(l.miseEnValeur).toEqual({
+      grasSouligne: ['une (01) demande de prise en charge en solde'],
+      gras: ['ZZTESTFICTIF Agent 7'],
+    });
     expect(l.corps).toContain(l.miseEnValeur.grasSouligne[0]);
     const d = demande('PRISE_EN_CHARGE_SOLDE', 7);
-    l = ecrireTransmission(definition('PRISE_EN_CHARGE_SOLDE')!, [d], ctxDe('PRISE_EN_CHARGE_SOLDE'), { ...P, corps: 'Texte ZZ écrit à la main.' });
-    expect([l.corps, l.texteModifie]).toEqual(['Texte ZZ écrit à la main.', true]);
+    l = ecrireTransmission(
+      definition('PRISE_EN_CHARGE_SOLDE')!,
+      [d],
+      ctxDe('PRISE_EN_CHARGE_SOLDE'),
+      { ...P, corps: 'Texte ZZ écrit à la main.' },
+    );
+    expect([l.corps, l.texteModifie]).toEqual([
+      'Texte ZZ écrit à la main.',
+      true,
+    ]);
   });
 
   it('modèles à l’objet coupé : situation matrimoniale, fin de carrière, RCA, cessation de paiement', () => {
-    let l = seule('RECTIFICATIF_IDENTITE', { nature: 'SITUATION_MATRIMONIALE' });
-    expect(l.objet).toEqual(['Transmission d’une (01) demande de changement', 'de la situation matrimoniale sur le bulletin de solde.']);
-    expect(l.corps).toMatch(/pour compétence, une \(01\) demande de changement de la situation matrimoniale sur le bulletin de solde, formulée par /);
+    let l = seule('RECTIFICATIF_IDENTITE', {
+      nature: 'SITUATION_MATRIMONIALE',
+    });
+    expect(l.objet).toEqual([
+      'Transmission d’une (01) demande de changement',
+      'de la situation matrimoniale sur le bulletin de solde.',
+    ]);
+    expect(l.corps).toMatch(
+      /pour compétence, une \(01\) demande de changement de la situation matrimoniale sur le bulletin de solde, formulée par /,
+    );
     l = seule('INDEMNITE_FIN_CARRIERE', { dateRetraite: '2026-01-01' }, 'F');
-    expect(l.objet).toEqual(['Transmission d’une (01) demande de paiement', 'de l’indemnité de fin de carrière.']);
+    expect(l.objet).toEqual([
+      'Transmission d’une (01) demande de paiement',
+      'de l’indemnité de fin de carrière.',
+    ]);
     expect(l.corps).toBe(
       'J’ai l’honneur de vous faire parvenir, pour compétence, la demande de paiement de l’indemnité de fin de carrière, formulée par madame ZZTESTFICTIF Agent 7, instituteur, matricule de solde n° 123457X, admise à la retraite depuis le 01/01/2026.',
     );
     l = seule('RCA_SOLDE');
-    expect(l.objet).toEqual(['Transmission d’une (01) demande de prise en compte', 'de la reconstitution de la carrière administrative à la solde.']);
-    l = seule('CESSATION_PAIEMENT', { civiliteAyantDroit: 'MME', civiliteAyantDroitLibelle: 'Madame', ayantDroit: 'ZZTESTFICTIF Veuve', dateDeces: '2026-03-02', lieuDeces: 'CHU de Brazzaville' });
-    expect(l.objet).toEqual(['Transmission d’une (01) demande d’obtention', 'd’un certificat de cessation de paiement.']);
+    expect(l.objet).toEqual([
+      'Transmission d’une (01) demande de prise en compte',
+      'de la reconstitution de la carrière administrative à la solde.',
+    ]);
+    l = seule('CESSATION_PAIEMENT', {
+      civiliteAyantDroit: 'MME',
+      civiliteAyantDroitLibelle: 'Madame',
+      ayantDroit: 'ZZTESTFICTIF Veuve',
+      dateDeces: '2026-03-02',
+      lieuDeces: 'CHU de Brazzaville',
+    });
+    expect(l.objet).toEqual([
+      'Transmission d’une (01) demande d’obtention',
+      'd’un certificat de cessation de paiement.',
+    ]);
     expect(l.corps).toBe(
       'J’ai l’honneur de vous faire parvenir, pour compétence, la demande d’obtention d’un certificat de cessation de paiement, formulée par madame ZZTESTFICTIF Veuve, administratrice des biens de feu ZZTESTFICTIF Agent 7, précédemment instituteur, matricule de solde n° 123457X, décédé le 02/03/2026 au CHU de Brazzaville.',
     );
   });
 
   it('capital décès : comme le modèle (l’héritier, administrateur des biens de feu …)', () => {
-    const l = seule('CAPITAL_DECES', { civiliteAyantDroit: 'M', ayantDroit: 'ZZTESTFICTIF Veuf', dateDeces: '2026-03-02', lieuDeces: 'Brazzaville' }, 'F');
+    const l = seule(
+      'CAPITAL_DECES',
+      {
+        civiliteAyantDroit: 'M',
+        ayantDroit: 'ZZTESTFICTIF Veuf',
+        dateDeces: '2026-03-02',
+        lieuDeces: 'Brazzaville',
+      },
+      'F',
+    );
     expect(l.corps).toBe(
       'J’ai l’honneur de vous faire parvenir, pour compétence, la demande de paiement du capital décès, formulée par monsieur ZZTESTFICTIF Veuf, administrateur des biens de feue ZZTESTFICTIF Agent 7, précédemment instituteur, matricule de solde n° 123457X, décédée le 02/03/2026 à Brazzaville.',
     );
@@ -202,9 +269,19 @@ describe('Soit-transmis des demandes de prestation (modèles de la DGRHAS)', () 
 
   it('plusieurs primes : « six (06) demandes de mandatement de la prime … », objet « des primes »', () => {
     const ds = [1, 2, 3, 4, 5, 6].map((n) => demande('PRIME_DOCUMENTATION', n));
-    const l = ecrireTransmission(definition('PRIME_DOCUMENTATION')!, ds, ctxDe('PRIME_DOCUMENTATION'), P);
-    expect(l.objet).toEqual(['Transmission de six (06) demandes', 'de mandatement des primes.']);
-    expect(l.colonnes.map((c) => c.libelle).join('|')).toBe('Grade|Fonction|Date de prise de service|Matricule de solde|Structure|Département');
+    const l = ecrireTransmission(
+      definition('PRIME_DOCUMENTATION')!,
+      ds,
+      ctxDe('PRIME_DOCUMENTATION'),
+      P,
+    );
+    expect(l.objet).toEqual([
+      'Transmission de six (06) demandes',
+      'de mandatement des primes.',
+    ]);
+    expect(l.colonnes.map((c) => c.libelle).join('|')).toBe(
+      'Grade|Fonction|Date de prise de service|Matricule de solde|Structure|Département',
+    );
   });
 
   it.each(

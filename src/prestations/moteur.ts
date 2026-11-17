@@ -97,7 +97,7 @@ export function valeurRepere(repere: string, c: ContexteActe): string | null {
         ? 'intégrée'
         : 'intégré';
   if (repere === 'administrateurAyantDroit')
-    return ['MME', 'MLLE'].includes(String(c.details.civiliteAyantDroit ?? ''))
+    return ['MME', 'MLLE'].includes(enTexte(c.details.civiliteAyantDroit))
       ? 'administratrice'
       : 'administrateur';
   if (repere.startsWith('decideur.')) {

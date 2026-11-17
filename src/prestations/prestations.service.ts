@@ -1002,9 +1002,7 @@ export class PrestationsService {
         ? 'Direction générale du budget'
         : 'Fonction publique',
       etat: (d.retourEtat ?? 'EN_ATTENTE') as
-        | 'EN_ATTENTE'
-        | 'TRAITE'
-        | 'NON_TRAITE',
+        'EN_ATTENTE' | 'TRAITE' | 'NON_TRAITE',
       note: d.retourNote,
       par: d.retourPar,
       le: d.retourLe,
@@ -1087,7 +1085,11 @@ export class PrestationsService {
   }
 
   /** Dépose (ou remplace) le scan de l'acte signé : l'agent pourra le voir et l'imprimer. */
-  async deposerActeSigne(u: UtilisateurConnecte, id: string, fichiers: Fichier[]) {
+  async deposerActeSigne(
+    u: UtilisateurConnecte,
+    id: string,
+    fichiers: Fichier[],
+  ) {
     const d = await this.obtenir(u, id);
     if (d.decision !== 'ACCORDEE' || d.retiree)
       throw new BadRequestException(
@@ -1121,14 +1123,24 @@ export class PrestationsService {
       await this.pieces.delete(p.id);
       await this.stockage.supprimer('justificatifs', p.fichier);
     }
-    await this.journal.log(u, 'PRESTATION_ACTE_SIGNE', 'demande_prestation', id, {
-      remplace: anciens.length > 0,
-    });
+    await this.journal.log(
+      u,
+      'PRESTATION_ACTE_SIGNE',
+      'demande_prestation',
+      id,
+      {
+        remplace: anciens.length > 0,
+      },
+    );
     return this.fiche(u, id);
   }
 
   /** Paramètres d'un soit-transmis : à qui, qui envoie et signe, suffixe du n°. */
-  private parametresLettre(def: DefinitionPrestation, ctx: ContexteActe, d: DemandePrestation) {
+  private parametresLettre(
+    def: DefinitionPrestation,
+    ctx: ContexteActe,
+    d: DemandePrestation,
+  ) {
     const l = def.acteModele.lettre!;
     const cabinet = def.signataire.includes('SIGNATAIRE_LISTE');
     return {
@@ -1157,7 +1169,9 @@ export class PrestationsService {
     if (!this.toutVoir(u)) throw new ForbiddenException('Réservé à la DGRHAS.');
     const uniques = [...new Set(ids.filter((x) => /^[0-9a-f-]{36}$/i.test(x)))];
     if (!uniques.length)
-      throw new BadRequestException('Cochez les demandes à transmettre ensemble.');
+      throw new BadRequestException(
+        'Cochez les demandes à transmettre ensemble.',
+      );
     if (uniques.length > 200)
       throw new BadRequestException('200 demandes au plus dans un même envoi.');
     const demandes = await this.demandes.find({ where: { id: In(uniques) } });
@@ -1517,7 +1531,9 @@ export class PrestationsService {
         'Cette demande est transmise par la DGRHAS au service destinataire : il n’y a pas d’acte à imprimer. Suivez ici le retour du service.',
       );
     if (d.decision !== 'ACCORDEE' || d.retiree)
-      throw new BadRequestException('L’acte n’est remis qu’une fois la demande accordée.');
+      throw new BadRequestException(
+        'L’acte n’est remis qu’une fois la demande accordée.',
+      );
     const p = await this.acteSigneDe(d.id);
     if (!p)
       throw new BadRequestException(

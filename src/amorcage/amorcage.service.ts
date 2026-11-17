@@ -67,7 +67,8 @@ export class AmorcageService {
     const m = this.base.manager;
     const sansDate = <T extends object>(lignes: T[]) =>
       lignes.map((l) => {
-        const { creeLe: _c, ...reste } = l as T & { creeLe?: unknown };
+        const { creeLe, ...reste } = l as T & { creeLe?: unknown };
+        void creeLe;
         return reste as T;
       });
     return {

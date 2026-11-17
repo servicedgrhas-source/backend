@@ -10,6 +10,7 @@
  *   au tableau ci-après : », et le tableau des agents.
  */
 
+import { enTexte } from '../common/texte';
 import type { DemandePrestation } from '../entities';
 import type {
   ColonneTransmission,
@@ -37,7 +38,15 @@ const UNITES = [
   'quinze',
   'seize',
 ];
-const DIZAINES = ['', 'dix', 'vingt', 'trente', 'quarante', 'cinquante', 'soixante'];
+const DIZAINES = [
+  '',
+  'dix',
+  'vingt',
+  'trente',
+  'quarante',
+  'cinquante',
+  'soixante',
+];
 
 /** Nombre en lettres (jusqu'à 999), à la française : « vingt et un », « soixante-dix », « quatre-vingts ». */
 export function enLettres(n: number): string {
@@ -52,8 +61,10 @@ export function enLettres(n: number): string {
         ? `${DIZAINES[d]} et un`
         : `${DIZAINES[d]}-${UNITES[u]}`;
   }
-  if (n < 80) return n === 71 ? 'soixante et onze' : `soixante-${enLettres(n - 60)}`;
-  if (n < 100) return n === 80 ? 'quatre-vingts' : `quatre-vingt-${enLettres(n - 80)}`;
+  if (n < 80)
+    return n === 71 ? 'soixante et onze' : `soixante-${enLettres(n - 60)}`;
+  if (n < 100)
+    return n === 80 ? 'quatre-vingts' : `quatre-vingt-${enLettres(n - 80)}`;
   const c = Math.floor(n / 100);
   const r = n % 100;
   const cent = c === 1 ? 'cent' : `${UNITES[c]} cent${r === 0 ? 's' : ''}`;
@@ -85,8 +96,7 @@ const dateFr = (d: unknown) =>
     : typeof d === 'string'
       ? d
       : '';
-const texte = (v: unknown) =>
-  v === null || v === undefined ? '' : String(v).trim();
+const texte = (v: unknown) => enTexte(v).trim();
 /** Valeur d'une colonne pour une demande (la demande passe avant la fiche : elle est plus précise). */
 export function cellule(
   col: ColonneTransmission,
@@ -122,14 +132,18 @@ export function modeleDe(
   details: Record<string, unknown>,
 ): TransmissionModele {
   const t = def.acteModele.transmission!;
-  const v = t.selon ? t.selon.valeurs[String(details[t.selon.champ] ?? '')] : null;
+  const v = t.selon ? t.selon.valeurs[enTexte(details[t.selon.champ])] : null;
   return { ...t, ...(v ?? {}) };
 }
 
 /** « de paiement|de l’indemnité de fin de carrière » → les deux lignes et le texte suivi. */
 const coupure = (objet: string) => {
   const [avant, apres] = objet.includes('|') ? objet.split('|') : ['', objet];
-  return { avant: avant.trim(), apres: apres.trim(), suivi: `${avant.trim()} ${apres.trim()}`.trim() };
+  return {
+    avant: avant.trim(),
+    apres: apres.trim(),
+    suivi: `${avant.trim()} ${apres.trim()}`.trim(),
+  };
 };
 
 /**
@@ -168,7 +182,12 @@ export interface LettreTransmission {
   /** Le paragraphe a été modifié à la main (« Modifier l'introduction »). */
   texteModifie: boolean;
   colonnes: { cle: ColonneTransmission; libelle: string }[];
-  lignes: { numero: string; nomComplet: string; valeurs: string[]; reference: string }[];
+  lignes: {
+    numero: string;
+    nomComplet: string;
+    valeurs: string[];
+    reference: string;
+  }[];
   politesse: string;
   destinataire: string;
   /** Qui envoie (en haut à droite, avant « à ») et qui signe (son nom). */

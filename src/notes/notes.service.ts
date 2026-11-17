@@ -27,6 +27,7 @@ import {
 import {
   dateEnLettres,
   entierVersRomain,
+  enTexte,
   normaliser,
   siglesDesDirections,
   structureAbregee,
@@ -2455,7 +2456,7 @@ export class NotesService {
         throw new BadRequestException(
           `« ${nom} » : date de naissance illisible.`,
         );
-      const texte = (v: unknown) => String(v ?? '').trim() || null;
+      const texte = (v: unknown) => enTexte(v).trim() || null;
       const mutation =
         n.module === 'MUTATION'
           ? {
@@ -3929,7 +3930,7 @@ export class NotesService {
         };
         for (const [cle, champ] of champsLire)
           if (cle in avant && lire[champ] !== undefined)
-            nouvelle[cle] = (lire[champ] as string | null) ?? null;
+            nouvelle[cle] = lire[champ] ?? null;
         if (x.type === 'REMPLACEMENT') {
           // Ce que le rectificatif ne dit pas de la personne qui remplace reste vide (pas la
           // durée ou la justification de celle qui est remplacée)
@@ -3952,12 +3953,11 @@ export class NotesService {
           const ecarts = champsLire
             .filter(
               ([cle]) =>
-                cle in avant &&
-                String(avant[cle] ?? '') !== String(nouvelle[cle] ?? ''),
+                cle in avant && enTexte(avant[cle]) !== enTexte(nouvelle[cle]),
             )
             .map(
               ([cle]) =>
-                `${cle === 'nom' ? 'nom' : (colonnes.find((c) => c.cle === cle)?.libelle.replace('-', '') ?? cle)} : ${String(avant[cle] ?? '—')} → ${String(nouvelle[cle] ?? '—')}`,
+                `${cle === 'nom' ? 'nom' : (colonnes.find((c) => c.cle === cle)?.libelle.replace('-', '') ?? cle)} : ${enTexte(avant[cle] ?? '—')} → ${enTexte(nouvelle[cle] ?? '—')}`,
             );
           nouvelle.changements.push(
             `Rectifié (${nomR})${ecarts.length ? ` : ${ecarts.join(' ; ')}` : ''}`,
@@ -4064,7 +4064,7 @@ export class NotesService {
       if (s.titre) ws.addRow([s.titre]).font = { bold: true };
       for (const l of s.lignes)
         ws.addRow([
-          ...cles.map((k) => l[k] ?? ''),
+          ...cles.map((k): unknown => (l as Record<string, unknown>)[k] ?? ''),
           l.source,
           l.changements.join(' ; '),
         ]);

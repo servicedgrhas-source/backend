@@ -23,7 +23,9 @@ export class NotesEnrolementCadrage1793590000000 implements MigrationInterface {
     await queryRunner.query(
       `ALTER TABLE "note_service" DROP COLUMN "rectificatifDe"`,
     );
-    await queryRunner.query(`ALTER TABLE "note_service" DROP COLUMN "additifDe"`);
+    await queryRunner.query(
+      `ALTER TABLE "note_service" DROP COLUMN "additifDe"`,
+    );
     await queryRunner.query(
       `ALTER TABLE "note_service" DROP COLUMN "colonnesNote"`,
     );

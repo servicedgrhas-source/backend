@@ -11,10 +11,7 @@
  * « word » n'a pas, la phrase suit le modèle le plus proche (signalé « sans modèle »).
  */
 
-import type {
-  ColonneTransmission,
-  TransmissionModele,
-} from './definitions';
+import type { ColonneTransmission, TransmissionModele } from './definitions';
 
 /** La phrase commune des modèles : « , formulée par monsieur X, grade de … échelon, indice …,
  * matricule de solde n° …, en service à …, département scolaire de …. » */
@@ -188,8 +185,7 @@ export const MODELES_TRANSMISSION: Record<string, TransmissionModele> = {
   },
   // « Transmission de six(06) demandes de prise en compte de l'arrêté de dernière promotion à la solde »
   ARRETE_PROMOTION_SOLDE: {
-    objet:
-      'de prise en compte|de l’arrêté de dernière promotion à la solde',
+    objet: 'de prise en compte|de l’arrêté de dernière promotion à la solde',
     article: 'la',
     phrase: FORMULEE,
     colonnes: DERNIERE_PROMOTION,
