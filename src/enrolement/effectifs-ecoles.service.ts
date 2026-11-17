@@ -104,6 +104,15 @@ interface LigneDecision {
   creeLe: string;
 }
 
+/**
+ * Une école prioritaire (Banque mondiale ; DG, 17/11/2026) : au plus `seuil` fonctionnaires, les
+ * contractuels comptés avec eux (« un contractuel est presque fonctionnaire »), 3 compris.
+ */
+export const sousLeSeuil = (
+  e: { fonctionnaires: number; contractuels: number },
+  seuil: number,
+) => e.fonctionnaires + e.contractuels <= seuil;
+
 /** À partir de cette ressemblance (0 à 1), deux écoles sont proposées comme peut-être la même. */
 const SEUIL_RESSEMBLANCE = 0.75;
 
@@ -745,7 +754,7 @@ export class EffectifsEcolesService {
       (e) =>
         (!f.cycle || (f.cycle === 'SANS' ? !e.cycle : e.cycle === f.cycle)) &&
         (!f.departementId || e.departementId === f.departementId) &&
-        (!f.sousSeuil || e.fonctionnaires < f.seuil) &&
+        (!f.sousSeuil || sousLeSeuil(e, f.seuil)) &&
         (!r || sansAccents(e.nom).toUpperCase().includes(r)),
     );
   }
@@ -789,7 +798,7 @@ export class EffectifsEcolesService {
         total: 0,
       };
       x.ecoles++;
-      if (e.fonctionnaires < seuil) x.sousSeuil++;
+      if (sousLeSeuil(e, seuil)) x.sousSeuil++;
       for (const k of EFFECTIFS) x[k] += e[k];
       x.total += e.total;
       m.set(e.departement, x);
@@ -1354,7 +1363,7 @@ export class EffectifsEcolesService {
     const dep = f.departementId
       ? c.deps.find((d) => d.id === f.departementId)?.nom
       : null;
-    const sous = `${libCycle}${dep ? ` · DEPPSA ${dep}` : ' · toutes les DEPPSA'}${f.sousSeuil ? ` · écoles de moins de ${f.seuil} fonctionnaires` : ''} · situation au ${new Date().toLocaleDateString('fr-FR')}`;
+    const sous = `${libCycle}${dep ? ` · DEPPSA ${dep}` : ' · toutes les DEPPSA'}${f.sousSeuil ? ` · écoles de ${f.seuil} fonctionnaires ou moins (contractuels compris)` : ''} · situation au ${new Date().toLocaleDateString('fr-FR')}`;
 
     const wb = new ExcelJS.Workbook();
     wb.creator = 'SIGRHAS-MEPPSA';
@@ -1494,7 +1503,7 @@ export class EffectifsEcolesService {
       'Cycle',
       ...EFFECTIFS.map((k) => LIBELLES[k]),
       'Total',
-      `Moins de ${f.seuil} fonctionnaires`,
+      `${f.seuil} fonctionnaires ou moins (avec contractuels)`,
       'Dans l’organigramme',
     ];
     const ws = feuille(
@@ -1517,7 +1526,7 @@ export class EffectifsEcolesService {
           '',
           ...EFFECTIFS.map((k) => lignes.reduce((s, e) => s + e[k], 0)),
           lignes.reduce((s, e) => s + e.total, 0),
-          lignes.filter((e) => e.fonctionnaires < f.seuil).length,
+          lignes.filter((e) => sousLeSeuil(e, f.seuil)).length,
           '',
         ],
         true,
@@ -1533,7 +1542,7 @@ export class EffectifsEcolesService {
       }
       courant = e.departement;
       bloc.push(e);
-      const sous = e.fonctionnaires < f.seuil;
+      const sous = sousLeSeuil(e, f.seuil);
       ligne(
         ws,
         l,
@@ -1563,7 +1572,7 @@ export class EffectifsEcolesService {
         '',
         ...EFFECTIFS.map((k) => ecoles.reduce((s, e) => s + e[k], 0)),
         ecoles.reduce((s, e) => s + e.total, 0),
-        ecoles.filter((e) => e.fonctionnaires < f.seuil).length,
+        ecoles.filter((e) => sousLeSeuil(e, f.seuil)).length,
         '',
       ],
       true,
@@ -1574,7 +1583,7 @@ export class EffectifsEcolesService {
       ws,
       l,
       enTetes.length,
-      `En orange : les écoles qui ont moins de ${f.seuil} fonctionnaires. Volontaires et communautaires : registre de la bourse (en poste). Fonctionnaires et contractuels : base du personnel (en activité), école de l’organigramme ou « lieu de service » écrit. La même école écrite de plusieurs façons est comptée une seule fois (voir « Noms à harmoniser »).`,
+      `En orange : les écoles qui ont ${f.seuil} fonctionnaires ou moins, contractuels compris (DG, 17/11/2026 : un contractuel compte comme un fonctionnaire). Volontaires et communautaires : registre de la bourse (en poste). Fonctionnaires et contractuels : base du personnel (en activité), école de l’organigramme ou « lieu de service » écrit. La même école écrite de plusieurs façons est comptée une seule fois (voir « Noms à harmoniser »).`,
     );
 
     // 2. Par DEPPSA
@@ -1582,7 +1591,7 @@ export class EffectifsEcolesService {
     const e2 = [
       'DEPPSA',
       'Écoles',
-      `Écoles de moins de ${f.seuil} fonctionnaires`,
+      `Écoles de ${f.seuil} fonctionnaires ou moins (avec contractuels)`,
       ...EFFECTIFS.map((k) => LIBELLES[k]),
       'Total',
     ];

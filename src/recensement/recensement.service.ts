@@ -81,8 +81,11 @@ export interface FicheDto {
   structureId?: number | null;
   donnees?: Record<string, unknown>;
   forcer?: boolean;
-  /** Agent rencontré au recensement, absent des bases : la fiche est mise en contentieux. */
-  contentieux?: boolean;
+  /**
+   * Agent rencontré au recensement, absent des bases : la fiche est mise en contentieux (un texte :
+   * le motif, par exemple « Ajouté depuis le rapport de fin d’année … de la DDEPPSA … »).
+   */
+  contentieux?: boolean | string;
   /** Modification faite depuis le Recensement : elle part au contrôle (DG, 30/10/2026). */
   recensement?: boolean;
 }

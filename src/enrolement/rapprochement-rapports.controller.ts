@@ -124,6 +124,29 @@ export class RapprochementRapportsController {
     return this.rap.supprimer(u, id);
   }
 
+  /** Ajouter à la base du personnel une personne absente (statut du rapport, ou choisi). */
+  @Post('lignes/:id/ajouter')
+  ajouter(
+    @Utilisateur() u: UtilisateurConnecte,
+    @Param('id', ParseIntPipe) id: number,
+    @Body() b: { statut?: string },
+  ) {
+    return this.rap.ajouter(u, id, b?.statut || undefined);
+  }
+
+  /** Plusieurs lignes d'un coup : CONFIRMER, COMPLETER, AJOUTER, ABSENT. */
+  @Post(':id/lot')
+  lot(
+    @Utilisateur() u: UtilisateurConnecte,
+    @Param('id', ParseIntPipe) id: number,
+    @Body() b: { action?: string; ids?: unknown },
+  ) {
+    const ids = Array.isArray(b?.ids)
+      ? b.ids.filter((x): x is number => Number.isInteger(x)).slice(0, 20000)
+      : [];
+    return this.rap.lot(u, id, String(b?.action ?? ''), ids);
+  }
+
   /** Recopier dans la fiche du personnel les rubriques choisies du rapport. */
   @Post('lignes/:id/appliquer')
   appliquer(

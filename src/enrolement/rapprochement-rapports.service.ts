@@ -9,6 +9,7 @@ import type { UtilisateurConnecte } from '../auth/auth';
 import { lireDate, normaliser } from '../common/texte';
 import { JournalService } from '../core/core.service';
 import { LigneRapportPersonnel, RapportPersonnel } from '../entities';
+import { ConfigRecensementService } from '../recensement/configuration';
 import { RecensementService } from '../recensement/recensement.service';
 import { cleEcole, paires, ressemblance } from './effectifs-ecoles-regles';
 import {
@@ -57,6 +58,24 @@ interface Fiche {
   departement: string | null;
   lieu: string | null;
   priseService: string | null;
+  /** Les paires de lettres du nom (tri rapide avant la comparaison fine). */
+  lettres: Set<string>;
+}
+
+/** Les paires de lettres d'un nom (« MBAMA » → MB, BA, AM, MA). */
+function pairesDe(mots: string[]) {
+  const s = new Set<string>();
+  for (const m of mots)
+    for (let i = 0; i < m.length - 1; i++) s.add(m.slice(i, i + 2));
+  return s;
+}
+
+/** Part des paires de lettres communes à deux noms (0 à 1). */
+function communes(a: Set<string>, b: Set<string>) {
+  if (!a.size || !b.size) return 0;
+  let n = 0;
+  for (const x of a) if (b.has(x)) n++;
+  return (2 * n) / (a.size + b.size);
 }
 
 const STATUTS: Record<string, string> = {
@@ -77,6 +96,7 @@ export const DECISIONS: Record<string, string> = {
   CONFIRME: 'Confirmé',
   AUTRE_FICHE: 'Autre fiche choisie',
   ABSENT: 'Absent confirmé',
+  AJOUTE: 'Ajouté depuis le rapport',
 };
 
 /** Les rubriques de la fiche que l'on peut recopier depuis le rapport. */
@@ -100,6 +120,7 @@ export class RapprochementRapportsService {
     private readonly ds: DataSource,
     private readonly journal: JournalService,
     private readonly recensement: RecensementService,
+    private readonly configRecensement: ConfigRecensementService,
   ) {}
 
   /* ------------------------------ Lecture du fichier ------------------------------ */
@@ -344,6 +365,7 @@ export class RapprochementRapportsService {
         departement: a.departement,
         lieu: a.lieu,
         priseService: a.priseService,
+        lettres: new Set<string>(),
       })),
       ...registre.map((v) => ({
         cle: `V${v.id}`,
@@ -362,13 +384,17 @@ export class RapprochementRapportsService {
         departement: v.departement,
         lieu: v.lieu,
         priseService: v.priseService,
+        lettres: new Set<string>(),
       })),
     ];
+    for (const f of fiches) f.lettres = pairesDe(f.mots);
     // Index : par matricule, par mot du nom, par année de naissance
     const parCode = new Map<string, Fiche[]>();
     const parChiffres = new Map<string, Fiche[]>();
     const parMot = new Map<string, Fiche[]>();
     const parAnnee = new Map<number, Fiche[]>();
+    // Le registre sans date de naissance, par DDEPPSA (pour les noms proches)
+    const sansDateParDep = new Map<number | null, Fiche[]>();
     const ajouter = <K>(m: Map<K, Fiche[]>, k: K, f: Fiche) => {
       const l = m.get(k);
       if (l) l.push(f);
@@ -379,25 +405,33 @@ export class RapprochementRapportsService {
       if (f.chiffres.length >= 5) ajouter(parChiffres, f.chiffres, f);
       for (const m of new Set(f.mots)) if (m.length >= 3) ajouter(parMot, m, f);
       if (f.annee) ajouter(parAnnee, f.annee, f);
+      else if (f.type === 'REGISTRE') ajouter(sansDateParDep, f.departementId, f);
     }
-    return { fiches, parCode, parChiffres, parMot, parAnnee };
+    return { fiches, parCode, parChiffres, parMot, parAnnee, sansDateParDep };
   }
 
-  /** Rapprocher toutes les lignes d'un rapport (les décisions prises sont gardées). */
-  async rapprocher(rapportId: number) {
+  /**
+   * Rapprocher les lignes d'un rapport (toutes, ou seulement celles indiquées) ; les décisions
+   * prises sont gardées.
+   */
+  async rapprocher(rapportId: number, seulement?: number[]) {
     const rapport = await this.ds
       .getRepository(RapportPersonnel)
       .findOne({ where: { id: rapportId } });
     if (!rapport) throw new NotFoundException('Rapport introuvable.');
     const repo = this.ds.getRepository(LigneRapportPersonnel);
-    const lignes = await repo.find({ where: { rapportId }, order: { ordre: 'ASC' } });
+    const toutes = await repo.find({ where: { rapportId }, order: { ordre: 'ASC' } });
+    const garder = seulement ? new Set(seulement) : null;
+    const lignes = garder ? toutes.filter((l) => garder.has(l.id)) : toutes;
+    if (!lignes.length) return { lignes: 0 };
     const b = await this.base();
     const parCle = new Map(b.fiches.map((f) => [f.cle, f]));
     for (const l of lignes) Object.assign(l, this.rapprocherLigne(l, rapport, b, parCle));
     await repo.save(lignes, { chunk: 200 });
-    await this.ds
-      .getRepository(RapportPersonnel)
-      .update(rapportId, { calculeLe: new Date(), lignes: lignes.length });
+    if (!garder)
+      await this.ds
+        .getRepository(RapportPersonnel)
+        .update(rapportId, { calculeLe: new Date(), lignes: toutes.length });
     return { lignes: lignes.length };
   }
 
@@ -408,6 +442,7 @@ export class RapprochementRapportsService {
     parCle: Map<string, Fiche>,
   ): Partial<LigneRapportPersonnel> {
     const mots = motsDuNom(l.nomComplet);
+    const lettres = pairesDe(mots);
     const anneeOk = (f: Fiche) =>
       !l.anneeNaissance || !f.annee || f.annee === l.anneeNaissance;
     const ecarts: string[] = [];
@@ -418,7 +453,7 @@ export class RapprochementRapportsService {
 
     // Une fiche choisie ou confirmée à l'écran reste la fiche de la ligne
     const fixee =
-      l.decision === 'CONFIRME' || l.decision === 'AUTRE_FICHE'
+      l.decision === 'CONFIRME' || l.decision === 'AUTRE_FICHE' || l.decision === 'AJOUTE'
         ? parCle.get(
             l.agentId ? `P${l.agentId}` : l.volontaireId ? `V${l.volontaireId}` : '',
           )
@@ -453,6 +488,7 @@ export class RapprochementRapportsService {
       for (const m of mots)
         if (m.length >= 3) for (const f of b.parMot.get(m) ?? []) parNom.add(f);
       const complets = [...parNom]
+        .filter((f) => communes(lettres, f.lettres) >= 0.4)
         .map((f) => ({ f, n: compareNoms(mots, f.mots) }))
         .filter((x) => x.n.complet && anneeOk(x.f))
         .sort(
@@ -475,13 +511,9 @@ export class RapprochementRapportsService {
           ? (b.parAnnee.get(l.anneeNaissance) ?? [])
           : [];
         // Le registre n'a souvent pas la date de naissance : ses fiches de la même DDEPPSA aussi
-        const sansDate = b.fiches.filter(
-          (f) =>
-            f.type === 'REGISTRE' &&
-            !f.annee &&
-            f.departementId === rapport.departementId,
-        );
+        const sansDate = b.sansDateParDep.get(rapport.departementId) ?? [];
         const proches = [...memeAnnee, ...sansDate]
+          .filter((f) => communes(lettres, f.lettres) >= 0.5)
           .map((f) => ({ f, n: compareNoms(mots, f.mots) }))
           .filter((x) => x.n.score >= 0.8)
           .sort((x, y) => y.n.score - x.n.score);
@@ -739,6 +771,23 @@ export class RapprochementRapportsService {
     const repo = this.ds.getRepository(LigneRapportPersonnel);
     const l = await repo.findOne({ where: { id: ligneId } });
     if (!l) throw new NotFoundException('Ligne introuvable.');
+    const rubriques = await this.appliquerSansRecalcul(u, l, champs, forcer);
+    const rapport = await this.ds
+      .getRepository(RapportPersonnel)
+      .findOneOrFail({ where: { id: l.rapportId } });
+    const b = await this.base();
+    Object.assign(l, this.rapprocherLigne(l, rapport, b, new Map(b.fiches.map((f) => [f.cle, f]))));
+    await repo.save(l);
+    return { ok: true, rubriques };
+  }
+
+  /** Recopier des rubriques dans la fiche et le noter sur la ligne (sans refaire le rapprochement). */
+  private async appliquerSansRecalcul(
+    u: UtilisateurConnecte,
+    l: LigneRapportPersonnel,
+    champs: Record<string, unknown>,
+    forcer = false,
+  ) {
     if (!l.agentId)
       throw new BadRequestException(
         'Pas de fiche du personnel pour cette personne : choisissez d’abord la fiche.',
@@ -791,18 +840,223 @@ export class RapprochementRapportsService {
       l.decidePar = u.nom;
       l.decideLe = new Date();
     }
-    const rapport = await this.ds
-      .getRepository(RapportPersonnel)
-      .findOneOrFail({ where: { id: l.rapportId } });
-    const b = await this.base();
-    Object.assign(l, this.rapprocherLigne(l, rapport, b, new Map(b.fiches.map((f) => [f.cle, f]))));
-    await repo.save(l);
+    await this.ds.getRepository(LigneRapportPersonnel).save(l);
     await this.journal.log(u, 'RAPPORT_DDEPPSA_APPLIQUE', 'ligne_rapport_personnel', l.id, {
       rapportId: l.rapportId,
       agentId: l.agentId,
       rubriques: Object.keys(donnees),
     });
-    return { ok: true, rubriques: Object.keys(donnees) };
+    return Object.keys(donnees);
+  }
+
+  /**
+   * Ajouter à la base du personnel une personne du rapport qui n'y est pas (DG, 17/11/2026), avec
+   * la mention « Ajouté depuis le rapport de fin d'année … de la DDEPPSA … ». La fiche suit le
+   * circuit des agents ajoutés au recensement : à contrôler, puis décision du DG. Les rubriques mal
+   * écrites dans le rapport (genre, date…) sont laissées vides plutôt que de bloquer l'ajout.
+   */
+  private async creerDepuisLigne(
+    u: UtilisateurConnecte,
+    l: LigneRapportPersonnel,
+    rapport: RapportPersonnel & { departement?: string | null },
+    statut: string,
+    codeDep: string | null,
+  ) {
+    const iso = (v: string | null) =>
+      v && /^\d{4}-\d{2}-\d{2}$/.test(v)
+        ? v
+        : v && /^\d{1,2}[/.-]\d{1,2}[/.-]\d{4}$/.test(v)
+          ? naissanceDe(v).date
+          : null;
+    const genre = (l.donnees?.Genre ?? l.donnees?.Sexe ?? '').trim().toUpperCase();
+    const donnees: Record<string, unknown> = {
+      NOMS_PRENOMS: l.nomComplet,
+      ...(l.dateNaissance ? { DATE_NAISSANCE: l.dateNaissance } : {}),
+      ...(genre === 'F' || genre === 'M' ? { GENRE: genre } : {}),
+      ...(l.matricule ? { MATRICULE_SOLDE: l.matricule } : {}),
+      ...(l.ecole ? { LIEU_SERVICE: l.ecole } : {}),
+      ...(l.fonction ? { FONCTION: l.fonction } : {}),
+      ...(iso(l.priseService) ? { DATE_PRISE_SERVICE: iso(l.priseService) } : {}),
+      ...(codeDep ? { DEPARTEMENT: codeDep } : {}),
+    };
+    const mention = `Ajouté depuis le rapport de fin d’année ${rapport.anneeScolaire || ''} de la DDEPPSA ${rapport.departement ?? ''} (fichier « ${rapport.nomFichier} », n° ${l.numero ?? l.ordre}) : à vérifier`
+      .replace(/\s+/g, ' ')
+      .trim();
+    // Une rubrique refusée (mal écrite dans le rapport) est retirée, sauf le nom
+    for (let essai = 0; essai < 6; essai++) {
+      try {
+        const a = await this.recensement.creer(u, {
+          statut,
+          donnees,
+          contentieux: mention,
+          forcer: true,
+        });
+        return a.id;
+      } catch (e) {
+        const m = (e as Error).message;
+        const champ = this.recensementConfig()
+          .find((c) => m.startsWith(`${c.libelle} :`))?.code;
+        if (!champ || champ === 'NOMS_PRENOMS' || !(champ in donnees)) throw e;
+        delete donnees[champ];
+      }
+    }
+    throw new BadRequestException('Fiche impossible à créer depuis le rapport.');
+  }
+
+  /** Les rubriques de la fiche (libellés des messages d'erreur). */
+  private recensementConfig() {
+    return this.configRecensement.get().champs;
+  }
+
+  /** Ajouter une personne absente de la base (statut du rapport, ou choisi à l'écran). */
+  async ajouter(u: UtilisateurConnecte, ligneId: number, statutChoisi?: string) {
+    const repo = this.ds.getRepository(LigneRapportPersonnel);
+    const l = await repo.findOne({ where: { id: ligneId } });
+    if (!l) throw new NotFoundException('Ligne introuvable.');
+    const rapport = await this.rapportAvecDep(l.rapportId);
+    const r = await this.ajouterLignes(u, rapport, [l], statutChoisi);
+    if (r.erreurs.length) throw new BadRequestException(r.erreurs[0].message);
+    await this.rapprocher(l.rapportId, [l.id]);
+    return { ok: true, agentId: r.ajoutes[0] };
+  }
+
+  private async rapportAvecDep(id: number) {
+    const [r] = await this.ds.query<(RapportPersonnel & { departement: string | null; codeDep: string | null })[]>(
+      `SELECT r.*, d.nom AS departement, d.code AS "codeDep" FROM rapport_personnel r
+         LEFT JOIN departement d ON d.id = r."departementId" WHERE r.id = $1`,
+      [id],
+    );
+    if (!r) throw new NotFoundException('Rapport introuvable.');
+    return r;
+  }
+
+  private async ajouterLignes(
+    u: UtilisateurConnecte,
+    rapport: RapportPersonnel & { departement: string | null; codeDep: string | null },
+    lignes: LigneRapportPersonnel[],
+    statutChoisi?: string,
+  ) {
+    const repo = this.ds.getRepository(LigneRapportPersonnel);
+    const ajoutes: number[] = [];
+    const erreurs: { ligneId: number; nom: string; message: string }[] = [];
+    for (const l of lignes) {
+      if (l.agentId || l.decision === 'AJOUTE') {
+        erreurs.push({ ligneId: l.id, nom: l.nomComplet, message: 'A déjà une fiche dans la base du personnel.' });
+        continue;
+      }
+      const statut = statutChoisi ?? l.statut;
+      if (!statut || !(statut in STATUTS)) {
+        erreurs.push({ ligneId: l.id, nom: l.nomComplet, message: 'Statut non écrit dans le rapport : choisissez-le (ajout un par un).' });
+        continue;
+      }
+      try {
+        const id = await this.creerDepuisLigne(u, l, rapport, statut, rapport.codeDep);
+        await repo.update(l.id, {
+          agentId: id,
+          volontaireId: null,
+          methode: 'AJOUT',
+          decision: 'AJOUTE',
+          decidePar: u.nom,
+          decideLe: new Date(),
+        });
+        ajoutes.push(id);
+        await this.journal.log(u, 'RAPPORT_DDEPPSA_AJOUT', 'ligne_rapport_personnel', l.id, {
+          rapportId: l.rapportId,
+          agentId: id,
+        });
+      } catch (e) {
+        erreurs.push({ ligneId: l.id, nom: l.nomComplet, message: (e as Error).message });
+      }
+    }
+    return { ajoutes, erreurs };
+  }
+
+  /**
+   * Agir sur plusieurs lignes d'un coup (cochées à l'écran) :
+   * - CONFIRMER : la fiche trouvée est la bonne ;
+   * - COMPLETER : recopier dans la fiche les rubriques que la base n'a pas (lieu de service,
+   *   matricule, date de prise de service complète) — jamais celles qui diffèrent ;
+   * - AJOUTER : ajouter à la base les personnes absentes ;
+   * - ABSENT : déclarer absentes.
+   * La base n'est lue qu'une fois ; le rapport est rapproché à la fin.
+   */
+  async lot(
+    u: UtilisateurConnecte,
+    rapportId: number,
+    action: string,
+    ids: number[],
+  ) {
+    if (!['CONFIRMER', 'COMPLETER', 'AJOUTER', 'ABSENT'].includes(action))
+      throw new BadRequestException('Action inconnue.');
+    const uniques = [...new Set(ids.filter((x) => Number.isInteger(x)))];
+    if (!uniques.length) throw new BadRequestException('Cochez au moins une personne.');
+    const repo = this.ds.getRepository(LigneRapportPersonnel);
+    const lignes = (await repo.find({ where: { rapportId } })).filter((l) =>
+      uniques.includes(l.id),
+    );
+    const rapport = await this.rapportAvecDep(rapportId);
+    let faits = 0;
+    const erreurs: { ligneId: number; nom: string; message: string }[] = [];
+    const maintenant = new Date();
+    if (action === 'CONFIRMER') {
+      const a = lignes.filter((l) => (l.agentId || l.volontaireId) && !l.decision);
+      if (a.length)
+        await repo.update(
+          a.map((l) => l.id),
+          { decision: 'CONFIRME', decidePar: u.nom, decideLe: maintenant },
+        );
+      faits = a.length;
+    } else if (action === 'ABSENT') {
+      const a = lignes.filter((l) => l.decision !== 'AJOUTE');
+      if (a.length)
+        await repo.update(
+          a.map((l) => l.id),
+          { decision: 'ABSENT', decidePar: u.nom, decideLe: maintenant, agentId: null, volontaireId: null, resultat: 'ABSENT', methode: null, ecarts: [] },
+        );
+      faits = a.length;
+    } else if (action === 'AJOUTER') {
+      const r = await this.ajouterLignes(u, rapport, lignes.filter((l) => !l.agentId));
+      faits = r.ajoutes.length;
+      erreurs.push(...r.erreurs);
+    } else {
+      // Compléter : seulement ce qui manque dans la fiche
+      const fiches = await this.ds.query<{ id: number; donnees: Record<string, unknown> }[]>(
+        `SELECT id, donnees FROM agent_recense WHERE id = ANY($1)`,
+        [lignes.map((l) => l.agentId).filter((x): x is number => !!x)],
+      );
+      const parId = new Map(fiches.map((f) => [f.id, f.donnees ?? {}]));
+      for (const l of lignes) {
+        const d = l.agentId ? parId.get(l.agentId) : undefined;
+        if (!d) continue;
+        const vide = (k: string) => d[k] === undefined || d[k] === null || String(d[k]).trim() === '';
+        const priseIso =
+          l.priseService && /^\d{1,2}[/.-]\d{1,2}[/.-]\d{4}$|^\d{4}-\d{2}-\d{2}$/.test(l.priseService)
+            ? (naissanceDe(l.priseService).date ?? l.priseService)
+            : null;
+        const champs: Record<string, unknown> = {};
+        if (l.ecole && vide('LIEU_SERVICE')) champs.LIEU_SERVICE = l.ecole;
+        if (l.matricule && vide('MATRICULE_SOLDE')) champs.MATRICULE_SOLDE = l.matricule;
+        if (priseIso && vide('DATE_PRISE_SERVICE')) champs.DATE_PRISE_SERVICE = priseIso;
+        if (l.dateNaissance && vide('DATE_NAISSANCE')) champs.DATE_NAISSANCE = l.dateNaissance;
+        if (!Object.keys(champs).length) continue;
+        try {
+          await this.appliquerSansRecalcul(u, l, champs);
+          faits++;
+        } catch (e) {
+          erreurs.push({ ligneId: l.id, nom: l.nomComplet, message: (e as Error).message });
+        }
+      }
+    }
+    await this.journal.log(u, 'RAPPORT_DDEPPSA_LOT', 'rapport_personnel', rapportId, {
+      action,
+      lignes: uniques.length,
+      faits,
+      erreurs: erreurs.length,
+    });
+    // Confirmer ou déclarer absent ne change pas la recherche : seules les fiches touchées sont refaites
+    if (action === 'AJOUTER' || action === 'COMPLETER')
+      await this.rapprocher(rapportId, uniques);
+    return { faits, erreurs };
   }
 
   async supprimer(u: UtilisateurConnecte, id: number) {
@@ -941,20 +1195,144 @@ export class RapprochementRapportsService {
     return { nom: `${nom}.xlsx`, contenu: Buffer.from(await wb.xlsx.writeBuffer()) };
   }
 
-  /** Le modèle à remplir (ou que l'on produit à partir des photos des rapports). */
+  /**
+   * Le modèle à remplir (17/11/2026) : la feuille « Personnel » (une ligne de titres, une ligne par
+   * personne) et la feuille « Consignes » (ce qu'on prend dans le rapport, ce qu'on ne prend pas,
+   * comment écrire chaque colonne). Le même modèle sert à recopier les photos des rapports.
+   */
   async modele() {
     const wb = new ExcelJS.Workbook();
-    const ws = wb.addWorksheet('Personnel');
-    const titres = [
-      'Secteur', 'Cycle', 'Rubrique', 'N°', 'Noms et prénoms', 'Genre', 'Année naiss', 'Nat', 'G/E', 'Stat',
-      'Fonct', 'Ecole', 'Situat matri', 'Code serv', 'Ind', 'Mle solde', 'Acad', 'Prof', 'Recr',
-      'Dern. promo', 'Arrv départ',
+    wb.creator = 'SIGRHAS-MEPPSA';
+    const VERT = 'FF00692F';
+    const OR = 'FFFDF6D2';
+    const bord = { style: 'thin' as const, color: { argb: 'FFD4D4D8' } };
+    const cadre = { top: bord, left: bord, bottom: bord, right: bord };
+    // [titre, obligatoire, largeur, explication]
+    const COLS: [string, boolean, number, string][] = [
+      ['Département', false, 14, 'La DDEPPSA du rapport (sinon choisie à l’import).'],
+      ['Page', false, 6, 'La page du rapport (pour retrouver la ligne).'],
+      ['Secteur', true, 13, 'Public ou Conventionné (le privé n’est pas pris).'],
+      ['Cycle', true, 12, 'Préscolaire ou Primaire.'],
+      ['Rubrique', true, 13, 'Administratif ou Enseignant.'],
+      ['N°', false, 5, 'Le numéro de la ligne dans le rapport.'],
+      ['Noms et prénoms', true, 32, 'Comme écrit dans le rapport : NOM en majuscules, puis les prénoms. Ne pas corriger.'],
+      ['Genre', false, 7, 'F ou M.'],
+      ['Année naiss', true, 9, 'L’année (1987), ou la date complète (06/02/1987) si elle est écrite.'],
+      ['Nat', false, 6, 'Comme écrit (C, Cg…).'],
+      ['G/E', false, 9, 'Grade et échelon, comme écrits (IA 1er, IP 10e…).'],
+      ['Stat', true, 9, 'Fonct, Contr, Com (communautaire), Final (finaliste = volontaire).'],
+      ['Fonct', false, 18, 'La fonction (Directrice, Gestionnaire, Enseignant…).'],
+      ['Ecole', true, 22, 'L’école ou le lieu de service, comme écrit (CEP Indo, NDL A…).'],
+      ['Situat matri', false, 9, 'Comme écrit (C2, M…).'],
+      ['Code serv', false, 8, 'Comme écrit.'],
+      ['Ind', false, 7, 'L’indice, comme écrit.'],
+      ['Mle solde', true, 11, 'Le matricule de solde AVEC sa lettre (233792R). Vide si le rapport n’en donne pas.'],
+      ['Acad', false, 9, 'Diplôme académique.'],
+      ['Prof', false, 9, 'Diplôme professionnel.'],
+      ['Recr', false, 8, 'Année ou date de recrutement.'],
+      ['Dern. promo', false, 9, 'Année ou date de la dernière promotion.'],
+      ['Arrv départ', true, 10, 'Date (ou année) d’arrivée au poste = date de prise de service.'],
     ];
-    ws.addRow(titres);
-    ws.addRow(['Public', 'Préscolaire', 'Administratif', 1, 'NOM Prénom', 'F', 1987, 'C', 'IA 1er', 'Fonct', 'Directrice', 'CEP …', 'C2', 2370, 464, '000000X', 'CEPE', 'BET', 2020, 2022, 2020]);
-    ws.getRow(1).font = { bold: true, color: { argb: 'FFFFFFFF' } };
-    ws.getRow(1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF00692F' } };
-    ws.columns.forEach((c, i) => (c.width = i === 4 ? 32 : i === 10 || i === 11 ? 22 : 11));
+    const ws = wb.addWorksheet('Personnel', {
+      views: [{ state: 'frozen', ySplit: 1, xSplit: 7 }],
+    });
+    ws.columns = COLS.map(([, , w]) => ({ width: w }));
+    const h = ws.addRow(COLS.map(([titre]) => titre));
+    h.height = 32;
+    h.eachCell((c, k) => {
+      const [, oblig, , aide] = COLS[k - 1];
+      c.font = { bold: true, size: 10, color: { argb: 'FFFFFFFF' } };
+      c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: oblig ? VERT : 'FF71717A' } };
+      c.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true };
+      c.border = cadre;
+      c.note = aide;
+    });
+    const exemples = [
+      ['Lékoumou', 17, 'Public', 'Préscolaire', 'Administratif', 1, 'NOMEXEMPLE Prénom', 'F', 1987, 'C', 'IA 1er', 'Fonct', 'Directrice', 'CEP Indo', 'C2', 2370, 464, '000000R', 'CEPE', 'BET', 2020, 2022, 2020],
+      ['Lékoumou', 44, 'Conventionné', 'Primaire', 'Enseignant', 1, 'AUTRENOM Prénom Deuxième', 'M', 1968, 'Cg', '', 'Com', 'Enseignant', 'NDL B', 'C6', '', '', '', 'BEMG', '', 2004, '', 2004],
+      ['Lékoumou', 44, 'Conventionné', 'Primaire', 'Enseignant', 2, 'TROISIEME Prénom', 'F', 1997, 'C', '', 'Final', 'Enseignante', 'NDL A', 'C2', '', '', '', 'BAC', 'CFEEN', 2024, '', 2024],
+    ];
+    for (const e of exemples) {
+      const r = ws.addRow(e);
+      r.eachCell({ includeEmpty: true }, (c, k) => {
+        if (k > COLS.length) return;
+        c.border = cadre;
+        c.font = { size: 10, italic: true, color: { argb: 'FF71717A' } };
+      });
+    }
+
+    const wc = wb.addWorksheet('Consignes');
+    wc.columns = [{ width: 4 }, { width: 120 }];
+    let n = 1;
+    const titre = (txt: string) => {
+      const r = wc.getRow(n++);
+      wc.mergeCells(r.number, 1, r.number, 2);
+      r.getCell(1).value = txt;
+      r.getCell(1).font = { bold: true, size: 12, color: { argb: 'FFFFFFFF' } };
+      r.getCell(1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: VERT } };
+      r.height = 22;
+    };
+    const point = (txt: string, fond?: string) => {
+      const r = wc.getRow(n++);
+      r.getCell(1).value = '•';
+      r.getCell(2).value = txt;
+      r.getCell(2).alignment = { wrapText: true, vertical: 'top' };
+      r.getCell(1).alignment = { horizontal: 'right', vertical: 'top' };
+      if (fond)
+        for (const k of [1, 2])
+          r.getCell(k).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: fond } };
+    };
+    const blanc = () => n++;
+    const r0 = wc.getRow(n++);
+    wc.mergeCells(r0.number, 1, r0.number, 2);
+    r0.getCell(1).value =
+      'État nominatif du personnel — recopier un rapport de fin d’année de DDEPPSA (Banque mondiale)';
+    r0.getCell(1).font = { bold: true, size: 14 };
+    r0.height = 24;
+    blanc();
+    titre('1. La forme du fichier');
+    point('Un fichier par rapport de DDEPPSA. Tout dans la feuille « Personnel ».');
+    point('Une seule ligne de titres, tout en haut (ne pas changer les titres), puis UNE LIGNE PAR PERSONNE. Pas de cellules fusionnées, pas de ligne vide au milieu, pas de ligne de total.');
+    point('Colonnes en vert : obligatoires (à remplir quand le rapport les donne). Colonnes en gris : utiles, à remplir si le rapport les donne. Survolez un titre pour voir l’explication.');
+    point('Secteur, Cycle et Rubrique sont écrits sur CHAQUE ligne. (Une ligne seule avec un titre de partie du rapport, par exemple « A1 - Secteur public », est aussi comprise : elle vaut pour les lignes en dessous.)');
+    point('Une case vide dans le rapport (« / », « - », rien) : laissez la case vide.');
+    point('Les 3 lignes grises en italique de la feuille « Personnel » sont des exemples : effacez-les.');
+    blanc();
+    titre('2. Ce qu’on prend dans le rapport');
+    point('Les états nominatifs du PERSONNEL : personnel administratif ET personnel enseignant.', 'FFE9F7EF');
+    point('Du secteur PUBLIC et du secteur CONVENTIONNÉ.', 'FFE9F7EF');
+    point('Du PRÉSCOLAIRE et du PRIMAIRE.', 'FFE9F7EF');
+    point('Toutes les catégories : fonctionnaires, contractuels, communautaires, finalistes (= volontaires).', 'FFE9F7EF');
+    blanc();
+    titre('3. Ce qu’on NE prend PAS');
+    point('Le secteur PRIVÉ.', OR);
+    point('Les collèges et les lycées (pour l’instant).', OR);
+    point('Les tableaux qui ne sont pas des listes de personnes : effectifs d’élèves, classes, salles, tables-bancs, manuels, résultats d’examens, statistiques, tableaux de synthèse et totaux.', OR);
+    point('Les lignes de total ou de sous-total, les titres répétés en haut de page, le pied de page (« Rapport de fin d’année scolaire… », « Page 17 »).', OR);
+    point('Les marques ajoutées à la main sur le papier (coches ✓, traits, notes dans la marge).', OR);
+    point('Les lignes coupées en haut ou en bas d’une photo : prenez-les sur la photo de la page où elles sont entières.', OR);
+    blanc();
+    titre('4. Comment écrire');
+    point('RECOPIER EXACTEMENT ce qui est écrit, même s’il y a une faute (« TSOKO » et pas « NTSOKO ») : c’est le système qui fait le rapprochement et montre les écarts.');
+    point('Ne rien inventer, ne rien compléter de mémoire : une information absente reste vide.');
+    point('Matricule : avec sa lettre, sans espace (233792R). Une lettre illisible : écrivez les chiffres seuls.');
+    point('Année de naissance : quatre chiffres (1987). Si la date complète est écrite, recopiez-la (06/02/1987).');
+    point('Statut : Fonct, Contr, Com ou Final, comme dans le rapport.');
+    point('École : comme écrite, abréviations comprises (CEP Indo, NDL A, Isaac BALENDE).');
+    point('Un mot illisible : laissez la case vide plutôt que deviner, et notez le numéro de la ligne pour vérification.');
+    blanc();
+    titre('5. Les photos du rapport (si on n’a pas le fichier Word)');
+    point('Une photo par page, la page entière, bien droite, à plat, à la lumière du jour, sans reflet ni ombre : tout le tableau doit être lisible (nom, matricule, dates).');
+    point('Le mieux reste le fichier Word du rapport : demandez-le à la DDEPPSA (partie « personnel » seulement).');
+    blanc();
+    titre('6. Ensuite');
+    point('Dans le système : Volontaires et communautaires › Suivi et réglages › Rapprochement des rapports des DDEPPSA › « Importer un état nominatif ».');
+    point('Le système cherche chaque personne dans toute la base du personnel et le registre, montre les écarts, permet de confirmer, de compléter la fiche, ou d’ajouter la personne avec la mention « Ajouté depuis le rapport de la DDEPPSA ».');
+    wc.headerFooter = {
+      oddFooter:
+        '&L&8Document généré par le Système d’Information de gestion des ressources humaines et de l’administration scolaire (SIGRHAS-MEPPSA)',
+    };
+    wc.pageSetup = { paperSize: 9, orientation: 'portrait', fitToPage: true, fitToWidth: 1, fitToHeight: 0 };
     return Buffer.from(await wb.xlsx.writeBuffer());
   }
 
