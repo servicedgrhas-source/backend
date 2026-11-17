@@ -174,6 +174,12 @@ export class VolontairesController {
 
   /** Toute la liste filtrée (impression en PDF), avec les libellés. */
   @Roles(...ROLES_TRAITEMENT)
+  /** Recherche rapide par le nom (tableau de bord, « Retrouver un dossier »). */
+  @Get('volontaires/recherche')
+  recherche(@Query('q') q?: string) {
+    return this.volontaires.recherche(String(q ?? '').slice(0, 120));
+  }
+
   @Get('volontaires/complete')
   listeComplete(
     @Query('recherche') recherche?: string,

@@ -290,6 +290,46 @@ export class VolontairesService implements OnModuleInit {
     };
   }
 
+  /**
+   * Recherche rapide (« Retrouver un dossier » du tableau de bord, 17/11/2026) : volontaires et
+   * communautaires dont le nom contient tous les mots tapés, une seule requête, peu de colonnes.
+   */
+  async recherche(texte: string) {
+    const mots = normaliser(texte ?? '')
+      .split(/\s+/)
+      .filter((m) => m.length >= 2)
+      .slice(0, 6);
+    if (!mots.length) return { total: 0, lignes: [] };
+    const params = mots.map((m) => `%${m.replace(/[\\%_]/g, '\\$&')}%`);
+    const where = mots
+      .map((_, i) => `v."nomNormalise" LIKE $${i + 1}`)
+      .join(' AND ');
+    const lignes = await this.volontaires.query<
+      {
+        id: string;
+        nomComplet: string;
+        population: string;
+        statut: string;
+        dateNaissance: string | null;
+        etablissement: string | null;
+        departement: string | null;
+        total: number;
+      }[]
+    >(
+      `SELECT v.id, v."nomComplet", v.population, v.statut, v."dateNaissance", v.etablissement,
+              d.nom AS departement, count(*) OVER ()::int AS total
+         FROM volontaire v LEFT JOIN departement d ON d.id = v."departementId"
+        WHERE ${where}
+        ORDER BY (v.statut = 'EN_POSTE') DESC, v."nomNormalise"
+        LIMIT 8`,
+      params,
+    );
+    return {
+      total: lignes[0]?.total ?? 0,
+      lignes: lignes.map(({ total, ...l }) => (void total, l)),
+    };
+  }
+
   async fiche(id: string) {
     const v = await this.volontaires.findOne({ where: { id } });
     if (!v) throw new NotFoundException('Volontaire introuvable');

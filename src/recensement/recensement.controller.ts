@@ -142,6 +142,15 @@ export class RecensementController {
     return this.rec.liste(u, filtres(q));
   }
 
+  /** Recherche rapide par le nom, le matricule ou le n° de fiche (tableau de bord). */
+  @Get('agents/recherche')
+  rechercheRapide(
+    @Utilisateur() u: UtilisateurConnecte,
+    @Query('q') q?: string,
+  ) {
+    return this.rec.rechercheRapide(u, String(q ?? ''));
+  }
+
   /** Bottin imprimable : toute la liste filtrée, par ordre alphabétique. */
   @Get('bottin')
   bottin(

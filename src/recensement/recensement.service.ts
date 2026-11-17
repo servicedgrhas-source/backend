@@ -413,6 +413,57 @@ export class RecensementService {
     ).map((x) => x.id);
   }
 
+  /**
+   * Recherche rapide (« Retrouver un dossier » du tableau de bord, 17/11/2026) : le nom (tous les
+   * mots, dans n'importe quel ordre), le matricule ou le n° de fiche, dans le périmètre du compte.
+   * Sans le lieu de service (dans les rubriques de la fiche, long à lire) ; 8 fiches au plus.
+   */
+  async rechercheRapide(u: UtilisateurConnecte, texte: string) {
+    const brut = (texte ?? '').trim().slice(0, 120);
+    const mots = normaliser(brut)
+      .split(/[\s,;-]+/)
+      .filter((m) => m.length >= 2)
+      .slice(0, 6);
+    if (!mots.length) return { total: 0, lignes: [] };
+    const fp = this.filtrePerimetre(await this.perimetre(u));
+    const params: unknown[] = [...fp.params];
+    let perimetre = fp.sql;
+    fp.params.forEach((_, i) => (perimetre = perimetre.replace('$X', `$${i + 1}`)));
+    const p = (v: unknown) => {
+      params.push(v);
+      return `$${params.length}`;
+    };
+    const parNom = mots
+      .map((m) => `a."nomNormalise" LIKE ${p(`%${m.replace(/[\\%_]/g, '\\$&')}%`)}`)
+      .join(' AND ');
+    const code = p(`%${brut.toUpperCase().replace(/[\\%_]/g, '\\$&')}%`);
+    const lignes = await this.agents.query<
+      {
+        id: number;
+        nomComplet: string;
+        statut: string;
+        dateNaissance: string | null;
+        matricule: string | null;
+        structureNom: string | null;
+        total: number;
+      }[]
+    >(
+      `SELECT a.id, a."nomComplet", a.statut, a."dateNaissance", a.matricule, s.nom AS "structureNom",
+              count(*) OVER ()::int AS total
+         FROM agent_recense a LEFT JOIN structure s ON s.id = a."structureId"
+        WHERE ${perimetre}
+          AND ((${parNom}) OR upper(coalesce(a.matricule, '')) LIKE ${code}
+               OR upper(coalesce(a."numeroFiche", '')) LIKE ${code})
+        ORDER BY (${parNom}) DESC, a."nomNormalise", a.id
+        LIMIT 8`,
+      params,
+    );
+    return {
+      total: lignes[0]?.total ?? 0,
+      lignes: lignes.map(({ total, ...l }) => (void total, l)),
+    };
+  }
+
   async liste(u: UtilisateurConnecte, f: FiltresAgents) {
     const { where, params, ctl } = await this.filtres(u, f);
     const page = Math.max(1, f.page ?? 1);

@@ -829,6 +829,85 @@ export class DecisionEcole {
   @CreateDateColumn() creeLe: Date;
 }
 
+/**
+ * Rapport de fin d'année d'une DDEPPSA (Banque mondiale, 17/11/2026) : ses états nominatifs du
+ * personnel (fichier Excel : celui de la DDEPPSA, ou tiré des photos du rapport), rapprochés de
+ * toute la base du personnel et du registre des volontaires et des communautaires.
+ */
+@Entity('rapport_personnel')
+export class RapportPersonnel {
+  @PrimaryGeneratedColumn({ primaryKeyConstraintName: 'PK_rapport_personnel' })
+  id: number;
+  @Column({ type: 'int', nullable: true }) departementId: number | null;
+  /** Année scolaire du rapport (« 2025-2026 »). */
+  @Column({ default: '' }) anneeScolaire: string;
+  @Column({ default: '' }) nomFichier: string;
+  @Column({ type: 'int', default: 0 }) lignes: number;
+  @Column({ type: 'varchar', nullable: true }) importePar: string | null;
+  @CreateDateColumn() importeLe: Date;
+  /** Dernier rapprochement avec la base. */
+  @Column({ type: 'timestamp', nullable: true }) calculeLe: Date | null;
+}
+
+/**
+ * Une personne d'un rapport de DDEPPSA, telle qu'écrite, et son rapprochement avec la base :
+ * - resultat : TROUVE, ECARTS (trouvée, des informations diffèrent), PROBABLE (nom proche),
+ *   ABSENT ;
+ * - decision (prise à l'écran, gardée quand on recalcule) : CONFIRME (c'est bien cette fiche),
+ *   AUTRE_FICHE (une autre fiche choisie à la main), ABSENT (pas dans la base).
+ */
+@Entity('ligne_rapport_personnel')
+export class LigneRapportPersonnel {
+  @PrimaryGeneratedColumn({
+    primaryKeyConstraintName: 'PK_ligne_rapport_personnel',
+  })
+  id: number;
+  @Index('IDX_ligne_rapport_personnel_rapport')
+  @Column({ type: 'int' })
+  rapportId: number;
+  @Column({ type: 'int', default: 0 }) ordre: number;
+  /** ADMINISTRATIF ou ENSEIGNANT ; PRESCOLAIRE, PRIMAIRE… ; PUBLIC, CONVENTIONNE ou PRIVE. */
+  @Column({ type: 'varchar', nullable: true }) rubrique: string | null;
+  @Column({ type: 'varchar', nullable: true }) cycle: string | null;
+  @Column({ type: 'varchar', nullable: true }) secteur: string | null;
+  @Column({ type: 'varchar', nullable: true }) numero: string | null;
+  @Column() nomComplet: string;
+  @Column() nomNormalise: string;
+  @Column({ type: 'int', nullable: true }) anneeNaissance: number | null;
+  @Column({ type: 'date', nullable: true }) dateNaissance: string | null;
+  /** FONCTIONNAIRE, CONTRACTUEL, VOLONTAIRE (« finaliste »), COMMUNAUTAIRE, ou null. */
+  @Column({ type: 'varchar', nullable: true }) statut: string | null;
+  @Column({ type: 'varchar', nullable: true }) matricule: string | null;
+  @Column({ type: 'varchar', nullable: true }) ecole: string | null;
+  @Column({ type: 'varchar', nullable: true }) fonction: string | null;
+  /** Date (ou année) d'arrivée au poste, telle qu'écrite. */
+  @Column({ type: 'varchar', nullable: true }) priseService: string | null;
+  /** Toutes les colonnes du fichier, telles qu'écrites. */
+  @Column({ type: 'jsonb', default: {} }) donnees: Record<string, string>;
+  @Column({ default: 'ABSENT' }) resultat: string;
+  @Column({ type: 'varchar', nullable: true }) methode: string | null;
+  @Column({ type: 'int', nullable: true }) agentId: number | null;
+  @Column({ type: 'uuid', nullable: true }) volontaireId: string | null;
+  @Column({ type: 'jsonb', default: [] }) ecarts: string[];
+  /** Les autres fiches possibles (homonymes, noms proches). */
+  @Column({ type: 'jsonb', default: [] }) candidats: {
+    agentId?: number;
+    volontaireId?: string;
+    nom: string;
+    detail: string;
+  }[];
+  @Column({ type: 'varchar', nullable: true }) decision: string | null;
+  @Column({ type: 'varchar', nullable: true }) decidePar: string | null;
+  @Column({ type: 'timestamp', nullable: true }) decideLe: Date | null;
+  /** Ce que l'on a recopié du rapport dans la fiche du personnel (rubrique → avant, après). */
+  @Column({ type: 'jsonb', nullable: true }) applique: Record<
+    string,
+    { avant: unknown; apres: unknown }
+  > | null;
+  @Column({ type: 'varchar', nullable: true }) appliquePar: string | null;
+  @Column({ type: 'timestamp', nullable: true }) appliqueLe: Date | null;
+}
+
 /** Répartition automatique du quota « Autres » sans département, validée par le DG. */
 @Entity('repartition')
 export class Repartition {
@@ -2052,6 +2131,8 @@ export const ENTITES = [
   Nomination,
   DoublonDistinct,
   DecisionEcole,
+  RapportPersonnel,
+  LigneRapportPersonnel,
   DemandePrestation,
   PiecePrestation,
 ];

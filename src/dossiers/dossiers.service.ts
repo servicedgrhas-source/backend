@@ -626,15 +626,10 @@ export class DossiersService {
       )
       .orderBy('a.nomNormalise', 'ASC')
       .take(25);
-    const agents = await q.getMany();
-    const affs = agents.length
-      ? await this.affectations.find({
-          where: agents.map((a) => ({ agentId: a.id })),
-          loadEagerRelations: false,
-        })
-      : [];
-    const mutations = (
-      await this.mutations.find({
+    // Les trois recherches en même temps (chaque aller-retour vers la base compte)
+    const [agents, toutesMutations, notes] = await Promise.all([
+      q.getMany(),
+      this.mutations.find({
         select: [
           'id',
           'nomComplet',
@@ -643,18 +638,25 @@ export class DossiersService {
           'instructionMinistre',
           'retiree',
         ],
-      })
-    )
+      }),
+      this.notes
+        .createQueryBuilder('n')
+        .where('n.numero ILIKE :n', { n: `%${brut}%` })
+        .take(10)
+        .getMany(),
+    ]);
+    const affs = agents.length
+      ? await this.affectations.find({
+          where: agents.map((a) => ({ agentId: a.id })),
+          loadEagerRelations: false,
+        })
+      : [];
+    const mutations = toutesMutations
       .filter((m) => {
         const nom = normaliser(m.nomComplet);
         return mots.every((x) => nom.includes(x));
       })
       .slice(0, 10);
-    const notes = await this.notes
-      .createQueryBuilder('n')
-      .where('n.numero ILIKE :n', { n: `%${brut}%` })
-      .take(10)
-      .getMany();
     return {
       dossiers: agents.map((a) => {
         const aff = affs.find((x) => x.agentId === a.id);

@@ -26,6 +26,8 @@ import {
   EffectifsEcolesController,
 } from './enrolement/effectifs-ecoles.controller';
 import { EffectifsEcolesService } from './enrolement/effectifs-ecoles.service';
+import { RapprochementRapportsController } from './enrolement/rapprochement-rapports.controller';
+import { RapprochementRapportsService } from './enrolement/rapprochement-rapports.service';
 import { SuiviIntegrationController } from './enrolement/suivi-integration.controller';
 import { SuiviIntegrationService } from './enrolement/suivi-integration.service';
 import { ConfigEnrolementService } from './enrolement/configuration';
@@ -163,6 +165,7 @@ import { ReferentielsService } from './referentiels/referentiels.service';
     EnrolementController,
     VolontairesController,
     SuiviIntegrationController,
+    RapprochementRapportsController,
     EffectifsEcolesController,
     ControleEcolesController,
     ComparaisonFichierController,
@@ -214,6 +217,7 @@ import { ReferentielsService } from './referentiels/referentiels.service';
     VolontairesService,
     BourseService,
     SuiviIntegrationService,
+    RapprochementRapportsService,
     EffectifsEcolesService,
     ComparaisonFichierService,
     OriginesEnrolementService,
