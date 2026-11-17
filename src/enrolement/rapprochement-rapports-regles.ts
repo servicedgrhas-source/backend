@@ -83,9 +83,11 @@ export function statutDe(brut: string | null | undefined): string | null {
   const t = aPlat(brut ?? '');
   if (!t) return null;
   if (/^FONCT|^FONC|^FP$|^F$/.test(t)) return 'FONCTIONNAIRE';
-  if (/^CONT|^CTR|^CT$/.test(t)) return 'CONTRACTUEL';
-  // « Finaliste » : les volontaires (bourse), audio du 17/11/2026
-  if (/^FINAL|^VOL|^BEN|^BOURS/.test(t)) return 'VOLONTAIRE';
+  if (/^CONT|^COTR|^CTR|^CT$/.test(t)) return 'CONTRACTUEL';
+  // « Finaliste » : les volontaires (bourse), audio du 17/11/2026. Un bénévole n'est PAS un
+  // volontaire : pas de statut (à choisir à l'ajout)
+  if (/^BEN/.test(t)) return null;
+  if (/^FINAL|^VOL|^BOURS/.test(t)) return 'VOLONTAIRE';
   if (/^COM/.test(t)) return 'COMMUNAUTAIRE';
   return null;
 }

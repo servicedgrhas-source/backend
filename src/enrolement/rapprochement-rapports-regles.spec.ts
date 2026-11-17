@@ -48,6 +48,10 @@ describe('Valeurs du rapport', () => {
     ['Com.', 'COMMUNAUTAIRE'],
     ['Final', 'VOLONTAIRE'],
     ['Contractuel', 'CONTRACTUEL'],
+    ['Cotr.', 'CONTRACTUEL'],
+    ['Bénév', null],
+    ['Bén', null],
+    ['Vol.', 'VOLONTAIRE'],
     ['/', null],
   ])('statut %s → %s', (brut, statut) => {
     expect(statutDe(brut)).toBe(statut);
