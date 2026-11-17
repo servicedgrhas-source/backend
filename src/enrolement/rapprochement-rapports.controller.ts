@@ -134,7 +134,7 @@ export class RapprochementRapportsController {
     return this.rap.ajouter(u, id, b?.statut || undefined);
   }
 
-  /** Plusieurs lignes d'un coup : CONFIRMER, COMPLETER, AJOUTER, ABSENT, ANNULER. */
+  /** Plusieurs lignes d'un coup : CONFIRMER, AJOUTER (garder dans la liste), ABSENT, ANNULER. */
   @Post(':id/lot')
   lot(
     @Utilisateur() u: UtilisateurConnecte,
@@ -152,9 +152,9 @@ export class RapprochementRapportsController {
   appliquer(
     @Utilisateur() u: UtilisateurConnecte,
     @Param('id', ParseIntPipe) id: number,
-    @Body() b: { champs?: Record<string, unknown>; forcer?: boolean },
+    @Body() b: { champs?: Record<string, unknown> },
   ) {
-    return this.rap.appliquer(u, id, b?.champs ?? {}, b?.forcer === true);
+    return this.rap.appliquer(u, id, b?.champs ?? {});
   }
 
   @Post('lignes/:id/decision')

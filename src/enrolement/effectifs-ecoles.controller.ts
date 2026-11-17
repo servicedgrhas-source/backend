@@ -26,7 +26,6 @@ import {
   Utilisateur,
   type UtilisateurConnecte,
 } from '../auth/auth';
-import { CircuitService } from '../circuit/circuit.service';
 import {
   EffectifsEcolesService,
   type FiltresEcoles,
@@ -55,14 +54,6 @@ class FusionBody {
 /** Le niveau de probabilité demandé (« TRES_PROBABLE »…), ou rien. */
 const niveauDe = (n?: string) =>
   n && n in RANG_VRAISEMBLANCE ? (n as Vraisemblance) : undefined;
-
-class OrganigrammeBody {
-  @IsString() @MaxLength(260) cle: string;
-  @IsString() @MaxLength(250) nom: string;
-  @IsIn(['PRESCOLAIRE', 'PRIMAIRE', 'COLLEGE', 'LYCEE', 'ALPHABETISATION'])
-  cycle: string;
-  @IsInt() @Min(1) inspectionId: number;
-}
 
 /** Les filtres d'une liste d'écoles (cycle, DEPPSA, seuil, recherche). */
 function filtresEcoles(
@@ -153,17 +144,15 @@ export class EffectifsEcolesController {
 }
 
 /**
- * Les écoles à contrôler, dans Structures scolaires (DG, 17/11/2026) : écoles qui se ressemblent,
+ * Les écoles à contrôler, dans le volet Banque mondiale (DG, 17/11/2026) : écoles qui se ressemblent,
  * noms à harmoniser, écoles hors organigramme ; les décisions (même école, deux écoles, pas une
- * école, nom corrigé) et l'ajout d'une école à l'organigramme, sous son inspection.
+ * école, nom corrigé). Des décisions de comptage seulement : ce volet n'écrit jamais dans nos bases
+ * (fiches, organigramme) ; l'ajout à l'organigramme se fait dans Administration › Organigramme.
  */
 @Roles(...ROLES_TRAITEMENT)
 @Controller('ecoles-controle')
 export class ControleEcolesController {
-  constructor(
-    private readonly ecoles: EffectifsEcolesService,
-    private readonly circuit: CircuitService,
-  ) {}
+  constructor(private readonly ecoles: EffectifsEcolesService) {}
 
   // Sans cycle demandé : tous les cycles
   private filtres(q: Record<string, string | undefined>): FiltresEcoles {
@@ -256,17 +245,5 @@ export class ControleEcolesController {
     @Param('id', ParseIntPipe) id: number,
   ) {
     return this.ecoles.annuler(u, id);
-  }
-
-  /** Ajouter une école hors organigramme à l'organigramme (comme Administration › Organigramme : le DG). */
-  @Roles('DG')
-  @Post('organigramme')
-  organigramme(
-    @Utilisateur() u: UtilisateurConnecte,
-    @Body() d: OrganigrammeBody,
-  ) {
-    return this.ecoles.ajouterOrganigramme(u, d, (dto) =>
-      this.circuit.enregistrerStructure(u, null, dto),
-    );
   }
 }

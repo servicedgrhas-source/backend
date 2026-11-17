@@ -141,7 +141,9 @@ export const RUBRIQUES_API: Record<string, string[]> = {
   '/prestations': ['demandes-prestation'],
   '/structures': [],
   // Écoles à contrôler (ressemblances, noms, hors organigramme) : dans Structures scolaires
-  '/ecoles': ['etablissements', 'ecoles-controle'],
+  '/ecoles': ['etablissements'],
+  // Volet Banque mondiale : décisions de comptage, n'écrit pas dans nos bases
+  '/enrolement/ecoles-a-controler': ['ecoles-controle'],
   '/ecoles/besoins': ['etablissements/besoins'],
   '/enrolement/besoins': ['enrolement/besoins'],
   '/notes/affectation': ['notes', 'notes/preparer/affectation'],

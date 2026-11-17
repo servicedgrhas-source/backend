@@ -967,61 +967,6 @@ export class EffectifsEcolesService {
     return [...parDep.values()];
   }
 
-  /**
-   * Ajouter à l'organigramme une école connue seulement par les fichiers : elle devient un
-   * établissement rattaché à son inspection. Si son nom, sa DEPPSA ou son cycle changent, l'école
-   * d'avant est comptée avec la nouvelle (jumelage, annulable).
-   */
-  async ajouterOrganigramme(
-    u: UtilisateurConnecte,
-    d: { cle: string; nom: string; cycle: string; inspectionId: number },
-    creer: (dto: {
-      type: string;
-      nom: string;
-      parentId: number;
-      departementId: number | null;
-      cycle: string;
-    }) => Promise<{ id: number }>,
-  ) {
-    const c = await this.calcul();
-    const e = c.ecoles.find((x) => x.id === d.cle);
-    if (!e)
-      throw new NotFoundException('École introuvable (décision changée ?).');
-    if (e.organigramme)
-      throw new BadRequestException(
-        'Cette école est déjà dans l’organigramme.',
-      );
-    if (!(d.cycle in CYCLES_ECOLE))
-      throw new BadRequestException('Choisissez le cycle.');
-    const nom = d.nom?.replace(/s+/g, ' ').trim();
-    if (!nom) throw new BadRequestException('Écrivez le nom de l’école.');
-    const [ins] = await this.ds.query<
-      { id: number; departementId: number | null }[]
-    >(
-      `SELECT id, "departementId" FROM structure WHERE id = $1 AND type = 'INSPECTION' AND actif`,
-      [d.inspectionId],
-    );
-    if (!ins) throw new BadRequestException('Choisissez l’inspection.');
-    const s = await creer({
-      type: 'ETABLISSEMENT',
-      nom,
-      parentId: ins.id,
-      departementId: ins.departementId,
-      cycle: d.cycle,
-    });
-    // La clé de la nouvelle école ; différente de l'ancienne : l'ancienne est comptée avec elle
-    const cle = `${ins.departementId ?? ''}|${d.cycle}|${cleEcole(nom)}`;
-    if (cle !== d.cle && cleEcole(nom))
-      await this.decider(u, {
-        type: 'JUMELEE',
-        cle: d.cle,
-        autreCle: cle,
-        motif: 'Ajoutée à l’organigramme',
-      });
-    this.memoire.oublier();
-    return { id: s.id };
-  }
-
   /** Les écoles qui se ressemblent, deux par deux, à trancher. */
   async ressemblances(
     f: FiltresEcoles,

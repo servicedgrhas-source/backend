@@ -9,8 +9,6 @@ import type { UtilisateurConnecte } from '../auth/auth';
 import { lireDate, normaliser } from '../common/texte';
 import { JournalService } from '../core/core.service';
 import { LigneRapportPersonnel, RapportPersonnel } from '../entities';
-import { ConfigRecensementService } from '../recensement/configuration';
-import { RecensementService } from '../recensement/recensement.service';
 import { cleEcole, paires, ressemblance } from './effectifs-ecoles-regles';
 import {
   codeMatricule,
@@ -37,6 +35,10 @@ import {
  * 3. par un nom proche (fautes d'orthographe), même année de naissance : « probable ».
  * Les écarts avec la fiche trouvée sont listés ; une décision prise à l'écran (c'est bien elle,
  * une autre fiche, absente) est gardée quand on recalcule.
+ *
+ * Volet Banque mondiale : ce travail LIT nos bases et n'y écrit JAMAIS (DG, 17/11/2026). Les
+ * corrections (« Corriger la liste ») et les personnes gardées hors de nos bases (« Garder dans la
+ * liste ») restent sur les lignes du rapport ; l'export Excel les reprend.
  */
 
 /** Une fiche de la base (personnel ou registre), ce qu'il faut pour rapprocher et afficher. */
@@ -96,10 +98,10 @@ export const DECISIONS: Record<string, string> = {
   CONFIRME: 'Confirmé',
   AUTRE_FICHE: 'Autre fiche choisie',
   ABSENT: 'Absent confirmé',
-  AJOUTE: 'Ajouté depuis le rapport',
+  AJOUTE: 'Gardé dans la liste Banque mondiale',
 };
 
-/** Les rubriques de la fiche que l'on peut recopier depuis le rapport. */
+/** Les rubriques que l'on peut corriger dans la liste Banque mondiale. */
 export const RUBRIQUES_APPLICABLES = [
   'NOMS_PRENOMS',
   'MATRICULE_SOLDE',
@@ -108,6 +110,15 @@ export const RUBRIQUES_APPLICABLES = [
   'DATE_PRISE_SERVICE',
   'DEPARTEMENT',
 ] as const;
+
+/** Les écarts que règle la correction d'une rubrique (début du message). */
+const ECARTS_DE: Record<string, string[]> = {
+  NOMS_PRENOMS: ['Nom écrit autrement'],
+  DATE_NAISSANCE: ['Année de naissance'],
+  MATRICULE_SOLDE: ['Matricule :', 'Pas de matricule', 'Le matricule du rapport'],
+  LIEU_SERVICE: ['Lieu de service', 'Pas de lieu de service'],
+  DEPARTEMENT: ['Département dans la base'],
+};
 
 const dateFr = (d: string | null | undefined) =>
   d && /^\d{4}-\d{2}-\d{2}/.test(d)
@@ -119,8 +130,6 @@ export class RapprochementRapportsService {
   constructor(
     private readonly ds: DataSource,
     private readonly journal: JournalService,
-    private readonly recensement: RecensementService,
-    private readonly configRecensement: ConfigRecensementService,
   ) {}
 
   /* ------------------------------ Lecture du fichier ------------------------------ */
@@ -451,6 +460,10 @@ export class RapprochementRapportsService {
     let choisie: Fiche | null = null;
     let autres: Fiche[] = [];
 
+    // Gardée dans la liste Banque mondiale, sans fiche dans nos bases : rien à chercher
+    if (l.decision === 'AJOUTE' && !l.agentId && !l.volontaireId)
+      return { resultat: 'ABSENT', methode: 'AJOUT', agentId: null, volontaireId: null, ecarts: [], candidats: [] };
+
     // Une fiche choisie ou confirmée à l'écran reste la fiche de la ligne
     const fixee =
       l.decision === 'CONFIRME' || l.decision === 'AUTRE_FICHE' || l.decision === 'AJOUTE'
@@ -624,6 +637,12 @@ export class RapprochementRapportsService {
       ecarts.push(
         `${autres.filter((x) => x.type === 'PERSONNEL').length + 1} fiches possibles dans la base du personnel (homonymes ou doublon).`,
       );
+    // Une rubrique corrigée dans la liste Banque mondiale : son écart est réglé
+    const corrige = l.applique ?? {};
+    const regles = Object.entries(ECARTS_DE)
+      .filter(([k]) => k in corrige)
+      .flatMap(([, debuts]) => debuts);
+    ecarts.splice(0, ecarts.length, ...ecarts.filter((e) => !regles.some((d) => e.startsWith(d))));
     return {
       resultat: probable ? 'PROBABLE' : ecarts.length ? 'ECARTS' : 'TROUVE',
       methode,
@@ -777,246 +796,131 @@ export class RapprochementRapportsService {
   }
 
   /**
-   * Appliquer le rapport à la fiche du personnel (17/11/2026) : les rubriques choisies (nom,
-   * matricule, lieu de service, dates, département) sont recopiées, valeur relue à l'écran. Comme
-   * une correction faite au recensement : valeurs contrôlées, doublon vérifié, historique de la
-   * fiche, journal, et passage au « Contrôle des modifications » (ancienne et nouvelle valeur).
+   * Corriger la liste Banque mondiale (17/11/2026) : les rubriques choisies (nom, matricule, lieu de
+   * service, dates, département) sont gardées sur la ligne, avec la valeur de nos bases à côté.
+   * Nos bases (fiches du personnel, registre) ne sont JAMAIS modifiées : seul l'export en tient compte.
    */
   async appliquer(
     u: UtilisateurConnecte,
     ligneId: number,
     champs: Record<string, unknown>,
-    forcer = false,
   ) {
     const repo = this.ds.getRepository(LigneRapportPersonnel);
     const l = await repo.findOne({ where: { id: ligneId } });
     if (!l) throw new NotFoundException('Ligne introuvable.');
-    const rubriques = await this.appliquerSansRecalcul(u, l, champs, forcer);
-    const rapport = await this.ds
-      .getRepository(RapportPersonnel)
-      .findOneOrFail({ where: { id: l.rapportId } });
-    const b = await this.base();
-    Object.assign(l, this.rapprocherLigne(l, rapport, b, new Map(b.fiches.map((f) => [f.cle, f]))));
-    await repo.save(l);
-    return { ok: true, rubriques };
-  }
-
-  /** Recopier des rubriques dans la fiche et le noter sur la ligne (sans refaire le rapprochement). */
-  private async appliquerSansRecalcul(
-    u: UtilisateurConnecte,
-    l: LigneRapportPersonnel,
-    champs: Record<string, unknown>,
-    forcer = false,
-  ) {
-    if (!l.agentId)
-      throw new BadRequestException(
-        'Pas de fiche du personnel pour cette personne : choisissez d’abord la fiche.',
-      );
-    const donnees: Record<string, unknown> = {};
+    const donnees: Record<string, string> = {};
     for (const k of RUBRIQUES_APPLICABLES) {
       const v = champs?.[k];
       if (v === undefined || v === null || String(v).trim() === '') continue;
-      donnees[k] = String(v).trim().slice(0, 250);
+      donnees[k] = String(v).replace(/\s+/g, ' ').trim().slice(0, 250);
     }
-    // Le département : choisi par son numéro, écrit dans la fiche par son code
+    for (const k of ['DATE_NAISSANCE', 'DATE_PRISE_SERVICE'])
+      if (donnees[k] !== undefined && !/^\d{4}-\d{2}-\d{2}$/.test(donnees[k]))
+        throw new BadRequestException('Date mal écrite : choisissez-la dans le calendrier.');
+    // Le département : choisi par son numéro, gardé par son nom (ce qu'on exporte)
     if (donnees.DEPARTEMENT !== undefined) {
-      const [d] = await this.ds.query<{ code: string }[]>(
-        `SELECT code FROM departement WHERE id = $1`,
+      const [d] = await this.ds.query<{ nom: string }[]>(
+        `SELECT nom FROM departement WHERE id = $1`,
         [Number(donnees.DEPARTEMENT)],
       );
       if (!d) throw new BadRequestException('Département inconnu.');
-      donnees.DEPARTEMENT = d.code;
+      donnees.DEPARTEMENT = d.nom;
     }
     if (!Object.keys(donnees).length)
-      throw new BadRequestException('Cochez au moins une rubrique à recopier.');
-    const [avant] = await this.ds.query<{ donnees: Record<string, unknown> }[]>(
-      `SELECT donnees FROM agent_recense WHERE id = $1`,
-      [l.agentId],
+      throw new BadRequestException('Cochez au moins une rubrique à corriger.');
+    // La valeur de nos bases, pour mémoire (lue, jamais écrite)
+    const fiche = (await this.fichesDe([l])).get(
+      l.agentId ? `P${l.agentId}` : l.volontaireId ? `V${l.volontaireId}` : '',
     );
-    if (!avant) throw new NotFoundException('Fiche du personnel introuvable.');
-    await this.recensement.modifier(u, l.agentId, {
-      donnees,
-      recensement: true,
-      forcer,
-    });
-    const [apres] = await this.ds.query<{ donnees: Record<string, unknown> }[]>(
-      `SELECT donnees FROM agent_recense WHERE id = $1`,
-      [l.agentId],
-    );
+    const dansLaBase: Record<string, string | null | undefined> = {
+      NOMS_PRENOMS: fiche?.nom,
+      MATRICULE_SOLDE: fiche?.matricule,
+      LIEU_SERVICE: fiche?.lieu,
+      DATE_NAISSANCE: fiche?.dateNaissance,
+      DATE_PRISE_SERVICE: fiche?.priseService,
+      DEPARTEMENT: fiche?.departement,
+    };
     l.applique = {
       ...(l.applique ?? {}),
       ...Object.fromEntries(
-        Object.keys(donnees).map((k) => [
-          k,
-          { avant: avant.donnees?.[k] ?? null, apres: apres?.donnees?.[k] ?? null },
-        ]),
+        Object.entries(donnees).map(([k, v]) => [k, { avant: dansLaBase[k] ?? null, apres: v }]),
       ),
     };
     l.appliquePar = u.nom;
     l.appliqueLe = new Date();
-    // Appliquer, c'est reconnaître la fiche
-    if (!l.decision) {
+    // Corriger, c'est reconnaître la personne
+    if (!l.decision && (l.agentId || l.volontaireId)) {
       l.decision = 'CONFIRME';
       l.decidePar = u.nom;
       l.decideLe = new Date();
     }
-    await this.ds.getRepository(LigneRapportPersonnel).save(l);
-    await this.journal.log(u, 'RAPPORT_DDEPPSA_APPLIQUE', 'ligne_rapport_personnel', l.id, {
+    await repo.save(l);
+    await this.journal.log(u, 'RAPPORT_DDEPPSA_CORRIGE', 'ligne_rapport_personnel', l.id, {
       rapportId: l.rapportId,
-      agentId: l.agentId,
       rubriques: Object.keys(donnees),
     });
-    return Object.keys(donnees);
+    // Les écarts réglés par la correction disparaissent
+    const rapport = await this.ds
+      .getRepository(RapportPersonnel)
+      .findOneOrFail({ where: { id: l.rapportId } });
+    const b = await this.base();
+    Object.assign(l, this.rapprocherLigne(l, rapport, b, new Map(b.fiches.map((x) => [x.cle, x]))));
+    await repo.save(l);
+    return { ok: true, rubriques: Object.keys(donnees) };
   }
 
-  /**
-   * Ajouter à la base du personnel une personne du rapport qui n'y est pas (DG, 17/11/2026), avec
-   * la mention « Ajouté depuis le rapport de fin d'année … de la DDEPPSA … ». La fiche suit le
-   * circuit des agents ajoutés au recensement : à contrôler, puis décision du DG. Les rubriques mal
-   * écrites dans le rapport (genre, date…) sont laissées vides plutôt que de bloquer l'ajout.
-   */
-  private async creerDepuisLigne(
-    u: UtilisateurConnecte,
-    l: LigneRapportPersonnel,
-    rapport: RapportPersonnel & { departement?: string | null },
-    statut: string,
-    codeDep: string | null,
-  ) {
-    const iso = (v: string | null) =>
-      v && /^\d{4}-\d{2}-\d{2}$/.test(v)
-        ? v
-        : v && /^\d{1,2}[/.-]\d{1,2}[/.-]\d{4}$/.test(v)
-          ? naissanceDe(v).date
-          : null;
-    const genre = (l.donnees?.Genre ?? l.donnees?.Sexe ?? '').trim().toUpperCase();
-    const donnees: Record<string, unknown> = {
-      NOMS_PRENOMS: l.nomComplet,
-      ...(l.dateNaissance ? { DATE_NAISSANCE: l.dateNaissance } : {}),
-      ...(genre === 'F' || genre === 'M' ? { GENRE: genre } : {}),
-      ...(l.matricule ? { MATRICULE_SOLDE: l.matricule } : {}),
-      ...(l.ecole ? { LIEU_SERVICE: l.ecole } : {}),
-      ...(l.fonction ? { FONCTION: l.fonction } : {}),
-      ...(iso(l.priseService) ? { DATE_PRISE_SERVICE: iso(l.priseService) } : {}),
-      ...(codeDep ? { DEPARTEMENT: codeDep } : {}),
-    };
-    const mention = `Ajouté depuis le rapport de fin d’année ${rapport.anneeScolaire || ''} de la DDEPPSA ${rapport.departement ?? ''} (fichier « ${rapport.nomFichier} », n° ${l.numero ?? l.ordre}) : à vérifier`
-      .replace(/\s+/g, ' ')
-      .trim();
-    // Une rubrique refusée (mal écrite dans le rapport) est retirée, sauf le nom
-    for (let essai = 0; essai < 6; essai++) {
-      try {
-        const a = await this.recensement.creer(u, {
-          statut,
-          donnees,
-          contentieux: mention,
-          // Jamais forcé : une fiche au même nom et à la même naissance existe déjà → refus
-          forcer: false,
-        });
-        return a.id;
-      } catch (e) {
-        const m = (e as Error).message;
-        const champ = this.recensementConfig()
-          .find((c) => m.startsWith(`${c.libelle} :`))?.code;
-        if (!champ || champ === 'NOMS_PRENOMS' || !(champ in donnees)) throw e;
-        delete donnees[champ];
-      }
-    }
-    throw new BadRequestException('Fiche impossible à créer depuis le rapport.');
-  }
-
-  /** Les rubriques de la fiche (libellés des messages d'erreur). */
-  private recensementConfig() {
-    return this.configRecensement.get().champs;
-  }
-
-  /** Ajouter une personne absente de la base (statut du rapport, ou choisi à l'écran). */
+  /** Garder dans la liste Banque mondiale une personne absente de nos bases (statut du rapport, ou choisi). */
   async ajouter(u: UtilisateurConnecte, ligneId: number, statutChoisi?: string) {
     const repo = this.ds.getRepository(LigneRapportPersonnel);
     const l = await repo.findOne({ where: { id: ligneId } });
     if (!l) throw new NotFoundException('Ligne introuvable.');
-    const rapport = await this.rapportAvecDep(l.rapportId);
-    const r = await this.ajouterLignes(u, rapport, [l], statutChoisi);
+    const r = await this.garderLignes(u, [l], statutChoisi);
     if (r.erreurs.length) throw new BadRequestException(r.erreurs[0].message);
-    await this.rapprocher(l.rapportId, [l.id]);
-    return { ok: true, agentId: r.ajoutes[0] };
+    return { ok: true };
   }
 
-  private async rapportAvecDep(id: number) {
-    const [r] = await this.ds.query<(RapportPersonnel & { departement: string | null; codeDep: string | null })[]>(
-      `SELECT r.*, d.nom AS departement, d.code AS "codeDep" FROM rapport_personnel r
-         LEFT JOIN departement d ON d.id = r."departementId" WHERE r.id = $1`,
-      [id],
-    );
-    if (!r) throw new NotFoundException('Rapport introuvable.');
-    return r;
-  }
-
-  private async ajouterLignes(
+  /**
+   * Garder des personnes dans la liste Banque mondiale : la ligne est marquée « gardée » (avec son
+   * statut) ; AUCUNE fiche n'est créée dans nos bases. Elle figure dans l'export.
+   */
+  private async garderLignes(
     u: UtilisateurConnecte,
-    rapport: RapportPersonnel & { departement: string | null; codeDep: string | null },
     lignes: LigneRapportPersonnel[],
     statutChoisi?: string,
   ) {
     const repo = this.ds.getRepository(LigneRapportPersonnel);
-    const ajoutes: number[] = [];
     const erreurs: { ligneId: number; nom: string; message: string }[] = [];
-    // La même personne sur plusieurs listes du rapport (directeur et enseignant de la même IEP) :
-    // une seule fiche. Les fiches déjà ajoutées depuis ce rapport servent aussi.
-    const memePersonne = (a: LigneRapportPersonnel, b: { nomNormalise: string; anneeNaissance: number | null }) =>
-      a.nomNormalise === b.nomNormalise &&
-      (!a.anneeNaissance || !b.anneeNaissance || a.anneeNaissance === b.anneeNaissance);
-    const dejaAjoutees = (await repo.find({ where: { rapportId: rapport.id, decision: 'AJOUTE' } })).filter((x) => x.agentId);
+    let faits = 0;
+    if (statutChoisi && !(statutChoisi in STATUTS))
+      throw new BadRequestException('Statut inconnu.');
     for (const l of lignes) {
-      const jumelle = dejaAjoutees.find((x) => x.id !== l.id && memePersonne(l, x));
-      if (!l.agentId && jumelle) {
-        await repo.update(l.id, {
-          agentId: jumelle.agentId,
-          volontaireId: null,
-          methode: 'MEME_PERSONNE',
-          decision: 'CONFIRME',
-          decidePar: u.nom,
-          decideLe: new Date(),
-        });
+      if (l.agentId || l.volontaireId) {
+        erreurs.push({ ligneId: l.id, nom: l.nomComplet, message: 'A déjà une fiche dans nos bases : confirmez-la plutôt.' });
         continue;
       }
-      if (l.agentId || l.decision === 'AJOUTE') {
-        erreurs.push({ ligneId: l.id, nom: l.nomComplet, message: 'A déjà une fiche dans la base du personnel.' });
-        continue;
-      }
-      const statut = statutChoisi ?? l.statut;
-      if (!statut || !(statut in STATUTS)) {
-        erreurs.push({ ligneId: l.id, nom: l.nomComplet, message: 'Statut non écrit dans le rapport : choisissez-le (ajout un par un).' });
-        continue;
-      }
-      try {
-        const id = await this.creerDepuisLigne(u, l, rapport, statut, rapport.codeDep);
-        await repo.update(l.id, {
-          agentId: id,
-          volontaireId: null,
-          methode: 'AJOUT',
-          decision: 'AJOUTE',
-          decidePar: u.nom,
-          decideLe: new Date(),
-        });
-        ajoutes.push(id);
-        dejaAjoutees.push(Object.assign(l, { agentId: id, decision: 'AJOUTE' }));
-        await this.journal.log(u, 'RAPPORT_DDEPPSA_AJOUT', 'ligne_rapport_personnel', l.id, {
-          rapportId: l.rapportId,
-          agentId: id,
-        });
-      } catch (e) {
-        erreurs.push({ ligneId: l.id, nom: l.nomComplet, message: (e as Error).message });
-      }
+      if (l.decision === 'AJOUTE') continue;
+      await repo.update(l.id, {
+        statut: statutChoisi ?? l.statut,
+        methode: 'AJOUT',
+        decision: 'AJOUTE',
+        decidePar: u.nom,
+        decideLe: new Date(),
+        resultat: 'ABSENT',
+        ecarts: [],
+        candidats: [],
+      });
+      faits++;
+      await this.journal.log(u, 'RAPPORT_DDEPPSA_GARDE', 'ligne_rapport_personnel', l.id, {
+        rapportId: l.rapportId,
+      });
     }
-    return { ajoutes, erreurs };
+    return { faits, erreurs };
   }
 
   /**
    * Agir sur plusieurs lignes d'un coup (cochées à l'écran) :
    * - CONFIRMER : la fiche trouvée est la bonne ;
-   * - COMPLETER : recopier dans la fiche les rubriques que la base n'a pas (lieu de service,
-   *   matricule, date de prise de service complète) — jamais celles qui diffèrent ;
-   * - AJOUTER : ajouter à la base les personnes absentes ;
+   * - AJOUTER : garder dans la liste Banque mondiale les personnes absentes de nos bases ;
    * - ABSENT : déclarer absentes.
    * La base n'est lue qu'une fois ; le rapport est rapproché à la fin.
    */
@@ -1026,7 +930,7 @@ export class RapprochementRapportsService {
     action: string,
     ids: number[],
   ) {
-    if (!['CONFIRMER', 'COMPLETER', 'AJOUTER', 'ABSENT', 'ANNULER'].includes(action))
+    if (!['CONFIRMER', 'AJOUTER', 'ABSENT', 'ANNULER'].includes(action))
       throw new BadRequestException('Action inconnue.');
     const uniques = [...new Set(ids.filter((x) => Number.isInteger(x)))];
     if (!uniques.length) throw new BadRequestException('Cochez au moins une personne.');
@@ -1034,7 +938,6 @@ export class RapprochementRapportsService {
     const lignes = (await repo.find({ where: { rapportId } })).filter((l) =>
       uniques.includes(l.id),
     );
-    const rapport = await this.rapportAvecDep(rapportId);
     let faits = 0;
     const erreurs: { ligneId: number; nom: string; message: string }[] = [];
     const maintenant = new Date();
@@ -1047,8 +950,8 @@ export class RapprochementRapportsService {
         );
       faits = a.length;
     } else if (action === 'ANNULER') {
-      // La ligne revient « à traiter » ; une fiche ajoutée depuis le rapport n'est pas défaite ici
-      const a = lignes.filter((l) => l.decision && l.decision !== 'AJOUTE');
+      // La ligne revient « à traiter » (une fiche créée avant le volet Banque mondiale reste)
+      const a = lignes.filter((l) => l.decision && !(l.decision === 'AJOUTE' && l.agentId));
       if (a.length)
         await repo.update(
           a.map((l) => l.id),
@@ -1056,45 +959,17 @@ export class RapprochementRapportsService {
         );
       faits = a.length;
     } else if (action === 'ABSENT') {
-      const a = lignes.filter((l) => l.decision !== 'AJOUTE');
+      const a = lignes.filter((l) => !(l.decision === 'AJOUTE' && l.agentId));
       if (a.length)
         await repo.update(
           a.map((l) => l.id),
           { decision: 'ABSENT', decidePar: u.nom, decideLe: maintenant, agentId: null, volontaireId: null, resultat: 'ABSENT', methode: null, ecarts: [] },
         );
       faits = a.length;
-    } else if (action === 'AJOUTER') {
-      const r = await this.ajouterLignes(u, rapport, lignes.filter((l) => !l.agentId));
-      faits = r.ajoutes.length;
-      erreurs.push(...r.erreurs);
     } else {
-      // Compléter : seulement ce qui manque dans la fiche
-      const fiches = await this.ds.query<{ id: number; donnees: Record<string, unknown> }[]>(
-        `SELECT id, donnees FROM agent_recense WHERE id = ANY($1)`,
-        [lignes.map((l) => l.agentId).filter((x): x is number => !!x)],
-      );
-      const parId = new Map(fiches.map((f) => [f.id, f.donnees ?? {}]));
-      for (const l of lignes) {
-        const d = l.agentId ? parId.get(l.agentId) : undefined;
-        if (!d) continue;
-        const vide = (k: string) => d[k] === undefined || d[k] === null || String(d[k]).trim() === '';
-        const priseIso =
-          l.priseService && /^\d{1,2}[/.-]\d{1,2}[/.-]\d{4}$|^\d{4}-\d{2}-\d{2}$/.test(l.priseService)
-            ? (naissanceDe(l.priseService).date ?? l.priseService)
-            : null;
-        const champs: Record<string, unknown> = {};
-        if (l.ecole && vide('LIEU_SERVICE')) champs.LIEU_SERVICE = l.ecole;
-        if (l.matricule && vide('MATRICULE_SOLDE')) champs.MATRICULE_SOLDE = l.matricule;
-        if (priseIso && vide('DATE_PRISE_SERVICE')) champs.DATE_PRISE_SERVICE = priseIso;
-        if (l.dateNaissance && vide('DATE_NAISSANCE')) champs.DATE_NAISSANCE = l.dateNaissance;
-        if (!Object.keys(champs).length) continue;
-        try {
-          await this.appliquerSansRecalcul(u, l, champs);
-          faits++;
-        } catch (e) {
-          erreurs.push({ ligneId: l.id, nom: l.nomComplet, message: (e as Error).message });
-        }
-      }
+      const r = await this.garderLignes(u, lignes);
+      faits = r.faits;
+      erreurs.push(...r.erreurs);
     }
     await this.journal.log(u, 'RAPPORT_DDEPPSA_LOT', 'rapport_personnel', rapportId, {
       action,
@@ -1103,7 +978,7 @@ export class RapprochementRapportsService {
       erreurs: erreurs.length,
     });
     // Confirmer ou déclarer absent ne change pas la recherche : seules les fiches touchées sont refaites
-    if (action === 'AJOUTER' || action === 'COMPLETER' || action === 'ANNULER')
+    if (action === 'ANNULER')
       await this.rapprocher(rapportId, uniques);
     return { faits, erreurs };
   }
@@ -1126,8 +1001,8 @@ export class RapprochementRapportsService {
   /**
    * L'export demandé (DG, 17/11/2026) : une ligne par personne, une seule valeur par colonne — nom,
    * lieu de service, date de naissance, matricule, date de prise de service, département, statut.
-   * La valeur retenue est celle de la base quand la personne y a une fiche (contrôlée, corrigée par
-   * « Appliquer le rapport »), sinon celle du rapport. La même personne sur plusieurs listes du
+   * La valeur retenue : la correction faite dans la liste Banque mondiale, sinon celle de nos bases
+   * quand la personne y a une fiche, sinon celle du rapport. La même personne sur plusieurs listes du
    * rapport (directeur et enseignant) n'a qu'une ligne.
    */
   async excel(id: number) {
@@ -1199,15 +1074,19 @@ export class RapprochementRapportsService {
     h.height = 30;
     personnes.forEach((l, i) => {
       const f = l.base;
+      const c = (k: string) => {
+        const v = l.applique?.[k]?.apres;
+        return v === undefined || v === null ? null : String(v);
+      };
       const row = ws.getRow(4 + i);
       row.values = [
         i + 1,
-        ou(f?.nom, l.nomComplet),
-        ou(f?.lieu, l.ecole),
-        ou(dateFr(f?.dateNaissance), l.dateNaissance ? dateFr(l.dateNaissance) : l.anneeNaissance),
-        ou(f?.matricule, l.matricule),
-        ou(dateFr(f?.priseService), l.priseService),
-        ou(f?.departement, rapport.departement),
+        ou(c('NOMS_PRENOMS'), f?.nom, l.nomComplet),
+        ou(c('LIEU_SERVICE'), f?.lieu, l.ecole),
+        ou(dateFr(c('DATE_NAISSANCE')), dateFr(f?.dateNaissance), l.dateNaissance ? dateFr(l.dateNaissance) : l.anneeNaissance),
+        ou(c('MATRICULE_SOLDE'), f?.matricule, l.matricule),
+        ou(dateFr(c('DATE_PRISE_SERVICE')), dateFr(f?.priseService), l.priseService),
+        ou(c('DEPARTEMENT'), f?.departement, rapport.departement),
         ou(f ? STATUT_TITRE[f.statut] : null, l.statut ? STATUT_TITRE[l.statut] : null),
         SECTEURS[l.secteur ?? ''] ?? '',
       ];
