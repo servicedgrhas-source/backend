@@ -134,6 +134,16 @@ export class RapprochementRapportsController {
     return this.rap.ajouter(u, id, b?.statut || undefined);
   }
 
+  /** Proposer d'ajouter une personne absente à la base du personnel (créée seulement si validée). */
+  @Post('lignes/:id/proposer-ajout')
+  proposerAjout(
+    @Utilisateur() u: UtilisateurConnecte,
+    @Param('id', ParseIntPipe) id: number,
+    @Body() b: { statut?: string },
+  ) {
+    return this.rap.proposerAjout(u, id, b?.statut || undefined);
+  }
+
   /** Proposer les corrections d'une ligne au contrôle des modifications (la fiche ne change pas). */
   @Post('lignes/:id/proposer')
   proposer(

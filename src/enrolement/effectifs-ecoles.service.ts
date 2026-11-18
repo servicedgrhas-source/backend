@@ -1306,7 +1306,12 @@ export class EffectifsEcolesService {
     return { ok: true };
   }
 
-  async excel(f: FiltresEcoles): Promise<{ nom: string; contenu: Buffer }> {
+  /**
+   * L'Excel des effectifs par école. Les feuilles « Noms à harmoniser » et « Écoles qui se
+   * ressemblent » (travail de la DGRHAS sur ses données) ne vont que dans l'Excel d'Écoles à
+   * contrôler (`qualite`), pas dans celui remis à la Banque mondiale (18/11/2026).
+   */
+  async excel(f: FiltresEcoles, qualite = false): Promise<{ nom: string; contenu: Buffer }> {
     const c = await this.calcul();
     const ecoles = this.filtrer(c, f);
     const tout = this.filtrer(c, { ...f, sousSeuil: false });
@@ -1627,6 +1632,7 @@ export class EffectifsEcolesService {
     );
 
     // 4. Les noms d'une même école écrits de plusieurs façons
+    if (qualite) {
     const e4 = [
       'DEPPSA',
       'Cycle',
@@ -1702,8 +1708,9 @@ export class EffectifsEcolesService {
       ws6,
       l,
       e6.length,
-      'Deux écoles de la même DEPPSA dont les noms se ressemblent : peut-être la même école écrite autrement, peut-être deux écoles. À trancher dans le système (Effectifs par école › Écoles qui se ressemblent) : « même école » les compte ensemble, « deux écoles différentes » ne les propose plus.',
+      'Deux écoles de la même DEPPSA dont les noms se ressemblent : peut-être la même école écrite autrement, peut-être deux écoles. À trancher dans le système (Structures scolaires › Écoles à contrôler) : « même école » les compte ensemble, « deux écoles différentes » ne les propose plus.',
     );
+    }
 
     // 5. Reclassements dans les nouvelles DEPPSA
     const e5 = [

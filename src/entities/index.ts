@@ -1580,6 +1580,32 @@ export interface ContentieuxAgent {
  * reprend ses anciennes valeurs. `champs` : pour chaque rubrique, l'ancienne et la nouvelle valeur
  * (`TYPE_AGENT` : le type d'agent ; `STRUCTURE` : l'établissement de rattachement).
  */
+/**
+ * Proposition du volet Banque mondiale (18/11/2026) : ajouter une personne à la base du personnel
+ * (AGENT) ou une école à l'organigramme (ECOLE). Rien n'est créé avant la validation : le contrôle
+ * des modifications (personnes) ou le DG (écoles) valide (création) ou rejette (rien ne change).
+ */
+@Entity('proposition_bm')
+export class PropositionBm {
+  @PrimaryGeneratedColumn() id: number;
+  /** AGENT ou ECOLE */
+  @Index() @Column({ type: 'varchar' }) type: string;
+  @Column({ type: 'jsonb', default: {} }) donnees: Record<string, unknown>;
+  /** D'où vient la proposition (rapport, fichier, n° ; école et ses effectifs). */
+  @Column({ type: 'text', nullable: true }) source: string | null;
+  /** Ligne du rapport (AGENT) ou clé de l'école (ECOLE). */
+  @Index() @Column({ type: 'varchar', nullable: true }) origine: string | null;
+  /** A_CONTROLER, VALIDEE, REJETEE */
+  @Index() @Column({ type: 'varchar', default: 'A_CONTROLER' }) etat: string;
+  @Column({ type: 'varchar', nullable: true }) faitePar: string | null;
+  @Column({ type: 'timestamptz', default: () => 'now()' }) faiteLe: Date;
+  @Column({ type: 'varchar', nullable: true }) controlePar: string | null;
+  @Column({ type: 'timestamptz', nullable: true }) controleLe: Date | null;
+  @Column({ type: 'text', nullable: true }) note: string | null;
+  /** La fiche ou la structure créée à la validation. */
+  @Column({ type: 'int', nullable: true }) resultatId: number | null;
+}
+
 @Entity('modification_recensement')
 export class ModificationRecensement {
   @PrimaryGeneratedColumn() id: number;
@@ -2142,6 +2168,7 @@ export const ENTITES = [
   DecisionEcole,
   RapportPersonnel,
   LigneRapportPersonnel,
+  PropositionBm,
   DemandePrestation,
   PiecePrestation,
 ];

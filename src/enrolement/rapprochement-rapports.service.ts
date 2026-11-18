@@ -10,6 +10,7 @@ import { lireDate, normaliser } from '../common/texte';
 import { JournalService } from '../core/core.service';
 import { LigneRapportPersonnel, RapportPersonnel } from '../entities';
 import { RecensementService } from '../recensement/recensement.service';
+import { PropositionsBmService } from './propositions-bm.service';
 import { cleEcole, paires, ressemblance } from './effectifs-ecoles-regles';
 import {
   codeMatricule,
@@ -144,7 +145,18 @@ export class RapprochementRapportsService {
     private readonly journal: JournalService,
     // Seulement pour PROPOSER au contrôle des modifications : jamais d'écriture dans une fiche
     private readonly recensement: RecensementService,
+    // Proposer l'ajout d'une personne absente : rien n'est créé avant la validation
+    private readonly propositions: PropositionsBmService,
   ) {}
+
+  /** Proposer d'ajouter à la base du personnel une personne absente de nos bases (18/11/2026). */
+  async proposerAjout(u: UtilisateurConnecte, ligneId: number, statut?: string) {
+    const l = await this.ds.getRepository(LigneRapportPersonnel).findOne({ where: { id: ligneId } });
+    if (!l) throw new NotFoundException('Ligne introuvable.');
+    const r = await this.propositions.proposerAgents(u, [l], statut);
+    if (r.erreurs.length) throw new BadRequestException(r.erreurs[0].message);
+    return { ok: true };
+  }
 
   /* ------------------------------ Lecture du fichier ------------------------------ */
 
@@ -711,10 +723,16 @@ export class RapprochementRapportsService {
         : []
       ).map((p) => [p.id, p]),
     );
+    const ajouts = await this.propositions.enAttente('AGENT', lignes.map((l) => `L${l.id}`));
+    const ajoutDe = (id: number) => {
+      const p = ajouts.get(`L${id}`);
+      return p ? { id: p.id, etat: p.etat, controlePar: p.controlePar, note: p.note } : null;
+    };
     return {
       rapport: rapport[0],
       lignes: lignes.map((l) => ({
         ...l,
+        propositionAjout: ajoutDe(l.id),
         proposition: l.propositionId ? (propositions.get(l.propositionId) ?? null) : null,
         base: l.agentId
           ? (fiches.get(`P${l.agentId}`) ?? null)
@@ -1047,7 +1065,7 @@ export class RapprochementRapportsService {
     action: string,
     ids: number[],
   ) {
-    if (!['CONFIRMER', 'AJOUTER', 'ABSENT', 'ANNULER', 'PROPOSER'].includes(action))
+    if (!['CONFIRMER', 'AJOUTER', 'ABSENT', 'ANNULER', 'PROPOSER', 'PROPOSER_AJOUT'].includes(action))
       throw new BadRequestException('Action inconnue.');
     const uniques = [...new Set(ids.filter((x) => Number.isInteger(x)))];
     if (!uniques.length) throw new BadRequestException('Cochez au moins une personne.');
@@ -1083,6 +1101,10 @@ export class RapprochementRapportsService {
           { decision: 'ABSENT', decidePar: u.nom, decideLe: maintenant, agentId: null, volontaireId: null, resultat: 'ABSENT', methode: null, ecarts: [] },
         );
       faits = a.length;
+    } else if (action === 'PROPOSER_AJOUT') {
+      const r = await this.propositions.proposerAgents(u, lignes);
+      faits = r.faits;
+      erreurs.push(...r.erreurs);
     } else if (action === 'PROPOSER') {
       const r = await this.proposerLignes(u, await this.rapportAvecDep(rapportId), lignes);
       faits = r.faits;

@@ -114,7 +114,7 @@ export const RUBRIQUES_API: Record<string, string[]> = {
   '/enrolement/regularisations': ['enrolement/regularisations'],
   '/enrolement/tableau': ['enrolement/tableau', 'enrolement/guide'],
   '/enrolement/configuration': ['enrolement/configuration'],
-  '/recensement': ['recensement/tableau', 'recensement/modifications'],
+  '/recensement': ['recensement/tableau', 'recensement/modifications', 'propositions-ajout'],
   '/personnel': [],
   '/personnel/agents': [
     'recensement/agents',
@@ -143,7 +143,7 @@ export const RUBRIQUES_API: Record<string, string[]> = {
   // Écoles à contrôler (ressemblances, noms, hors organigramme) : dans Structures scolaires
   '/ecoles': ['etablissements'],
   // Volet Banque mondiale : décisions de comptage, n'écrit pas dans nos bases
-  '/enrolement/ecoles-a-controler': ['ecoles-controle'],
+  '/ecoles/a-controler': ['ecoles-controle'],
   '/ecoles/besoins': ['etablissements/besoins'],
   '/enrolement/besoins': ['enrolement/besoins'],
   '/notes/affectation': ['notes', 'notes/preparer/affectation'],
@@ -154,7 +154,7 @@ export const RUBRIQUES_API: Record<string, string[]> = {
   '/administration': ['utilisateurs'],
   '/administration/parametres': ['parametres'],
   '/administration/regles': ['configuration'],
-  '/administration/organigramme': ['structures'],
+  '/administration/organigramme': ['structures', 'propositions-ecoles'],
   '/administration/referentiels': [
     'referentiels/valeurs',
     'referentiels/import-ancien',

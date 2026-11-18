@@ -27,6 +27,8 @@ import {
 } from './enrolement/effectifs-ecoles.controller';
 import { EffectifsEcolesService } from './enrolement/effectifs-ecoles.service';
 import { RapprochementRapportsController } from './enrolement/rapprochement-rapports.controller';
+import { PropositionsBmController } from './enrolement/propositions-bm.controller';
+import { PropositionsBmService } from './enrolement/propositions-bm.service';
 import { RapprochementRapportsService } from './enrolement/rapprochement-rapports.service';
 import { SuiviIntegrationController } from './enrolement/suivi-integration.controller';
 import { SuiviIntegrationService } from './enrolement/suivi-integration.service';
@@ -166,6 +168,7 @@ import { ReferentielsService } from './referentiels/referentiels.service';
     VolontairesController,
     SuiviIntegrationController,
     RapprochementRapportsController,
+    PropositionsBmController,
     EffectifsEcolesController,
     ControleEcolesController,
     ComparaisonFichierController,
@@ -218,6 +221,7 @@ import { ReferentielsService } from './referentiels/referentiels.service';
     BourseService,
     SuiviIntegrationService,
     RapprochementRapportsService,
+    PropositionsBmService,
     EffectifsEcolesService,
     ComparaisonFichierService,
     OriginesEnrolementService,
