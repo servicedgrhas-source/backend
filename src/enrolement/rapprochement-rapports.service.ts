@@ -114,7 +114,7 @@ export const RUBRIQUES_APPLICABLES = [
 
 /**
  * Les rubriques qu'on peut proposer à la base du personnel (17/11/2026) : le rapport récent y est
- * fiable. Pas le nom ni la date de naissance (photos recopiées, homonymes : pièce exigée).
+ * fiable. Jamais le nom ; la date de naissance seulement quand la fiche n'en a pas (DG, 18/11).
  */
 export const RUBRIQUES_PROPOSABLES = [
   'LIEU_SERVICE',
@@ -939,6 +939,16 @@ export class RapprochementRapportsService {
         )
       ).map((x) => x.id),
     );
+    // La date de naissance : proposée seulement si la fiche n'en a pas (DG, 18/11/2026)
+    const sansNaissance = new Set(
+      (
+        await this.ds.query<{ id: number }[]>(
+          `SELECT id FROM agent_recense WHERE id = ANY($1)
+              AND "dateNaissance" IS NULL AND coalesce(donnees->>'DATE_NAISSANCE', '') = ''`,
+          [lignes.map((l) => l.agentId).filter((x): x is number => !!x)],
+        )
+      ).map((x) => x.id),
+    );
     for (const l of lignes) {
       const erreur = (message: string) => erreurs.push({ ligneId: l.id, nom: l.nomComplet, message });
       if (!l.agentId) {
@@ -955,8 +965,10 @@ export class RapprochementRapportsService {
         if (v === undefined || v === null || v === '') continue;
         donnees[k] = k === 'DEPARTEMENT' ? (deps.get(String(v)) ?? '') : String(v);
       }
+      const naissance = l.applique?.DATE_NAISSANCE?.apres;
+      if (naissance && sansNaissance.has(l.agentId)) donnees.DATE_NAISSANCE = String(naissance);
       if (!Object.keys(donnees).length) {
-        erreur('Rien à proposer : corrigez d’abord la liste (lieu de service, prise de service, département, matricule).');
+        erreur('Rien à proposer : corrigez d’abord la liste (lieu de service, prise de service, département, matricule, ou date de naissance si la fiche n’en a pas).');
         continue;
       }
       const source = `Rapport de fin d’année ${rapport.anneeScolaire || ''} de la DDEPPSA ${rapport.departement ?? ''} (fichier « ${rapport.nomFichier} », n° ${l.numero ?? l.ordre})`

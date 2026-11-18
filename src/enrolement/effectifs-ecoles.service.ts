@@ -812,10 +812,17 @@ export class EffectifsEcolesService {
     const lignes = this.filtrer(c, f);
     // « Seulement les écoles de 3 fonctionnaires ou moins » coché : le tableau par DEPPSA et les
     // compteurs ne comptent que ces écoles (17/11/2026)
-    const parDep = this.parDeppsa(f.sousSeuil ? lignes : tout, f.seuil);
+    // Toutes les écoles de chaque DEPPSA (case cochée ou non) : « 10 sur 31 écoles » (18/11/2026)
+    const toutesParDep = new Map<string, number>();
+    for (const e of tout)
+      toutesParDep.set(e.departement, (toutesParDep.get(e.departement) ?? 0) + 1);
+    const parDep = this.parDeppsa(f.sousSeuil ? lignes : tout, f.seuil).map(
+      (d) => ({ ...d, toutesEcoles: toutesParDep.get(d.departement) ?? d.ecoles }),
+    );
     const totaux = parDep.reduce(
       (t, d) => {
         t.ecoles += d.ecoles;
+        t.toutesEcoles += d.toutesEcoles;
         t.sousSeuil += d.sousSeuil;
         for (const k of EFFECTIFS) t[k] += d[k];
         t.total += d.total;
@@ -823,6 +830,7 @@ export class EffectifsEcolesService {
       },
       {
         ecoles: 0,
+        toutesEcoles: 0,
         sousSeuil: 0,
         volontaires: 0,
         communautaires: 0,
@@ -1535,9 +1543,12 @@ export class EffectifsEcolesService {
 
     // 2. Par DEPPSA (seulement les écoles prioritaires si le filtre est coché)
     const parDep = this.parDeppsa(f.sousSeuil ? ecoles : tout, f.seuil);
+    // Toutes les écoles de la DEPPSA, à côté : « 10 sur 31 » (18/11/2026)
+    const toutesDep = this.parDeppsa(tout, f.seuil);
+    const toutes = (dep: string) => toutesDep.find((x) => x.departement === dep)?.ecoles ?? 0;
     const e2 = [
       'DEPPSA',
-      'Écoles',
+      f.sousSeuil ? 'Toutes les écoles' : 'Écoles',
       `Écoles de ${f.seuil} fonctionnaires ou moins (avec contractuels)`,
       ...EFFECTIFS.map((k) => LIBELLES[k]),
       'Total',
@@ -1549,7 +1560,7 @@ export class EffectifsEcolesService {
     for (const d of parDep)
       ligne(ws2, l++, [
         d.departement,
-        d.ecoles,
+        f.sousSeuil ? toutes(d.departement) : d.ecoles,
         d.sousSeuil,
         ...EFFECTIFS.map((k) => d[k]),
         d.total,
@@ -1559,7 +1570,7 @@ export class EffectifsEcolesService {
       l++,
       [
         'TOTAL',
-        parDep.reduce((s, d) => s + d.ecoles, 0),
+        parDep.reduce((s, d) => s + (f.sousSeuil ? toutes(d.departement) : d.ecoles), 0),
         parDep.reduce((s, d) => s + d.sousSeuil, 0),
         ...EFFECTIFS.map((k) => parDep.reduce((s, d) => s + d[k], 0)),
         parDep.reduce((s, d) => s + d.total, 0),
