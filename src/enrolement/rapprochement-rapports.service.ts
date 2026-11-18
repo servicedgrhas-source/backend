@@ -1068,7 +1068,7 @@ export class RapprochementRapportsService {
     action: string,
     ids: number[],
   ) {
-    if (!['CONFIRMER', 'AJOUTER', 'ABSENT', 'ANNULER', 'PROPOSER', 'PROPOSER_AJOUT'].includes(action))
+    if (!['CONFIRMER', 'AJOUTER', 'ABSENT', 'ANNULER', 'PROPOSER', 'PROPOSER_AJOUT', 'COMPLETER_LISTE'].includes(action))
       throw new BadRequestException('Action inconnue.');
     const uniques = [...new Set(ids.filter((x) => Number.isInteger(x)))];
     if (!uniques.length) throw new BadRequestException('Cochez au moins une personne.');
@@ -1104,6 +1104,8 @@ export class RapprochementRapportsService {
           { decision: 'ABSENT', decidePar: u.nom, decideLe: maintenant, agentId: null, volontaireId: null, resultat: 'ABSENT', methode: null, ecarts: [] },
         );
       faits = a.length;
+    } else if (action === 'COMPLETER_LISTE') {
+      faits = await this.completerListe(u, lignes);
     } else if (action === 'PROPOSER_AJOUT') {
       const r = await this.propositions.proposerAgents(u, lignes);
       faits = r.faits;
@@ -1124,9 +1126,53 @@ export class RapprochementRapportsService {
       erreurs: erreurs.length,
     });
     // Confirmer ou déclarer absent ne change pas la recherche : seules les fiches touchées sont refaites
-    if (action === 'ANNULER')
+    if (action === 'ANNULER' || action === 'COMPLETER_LISTE')
       await this.rapprocher(rapportId, uniques);
     return { faits, erreurs };
+  }
+
+  /**
+   * Compléter la liste Banque mondiale en série (18/11/2026) : pour chaque ligne cochée qui a une
+   * fiche, les rubriques VIDES dans nos bases prennent la valeur du rapport (lieu de service,
+   * matricule, date de naissance, date de prise de service — l'année seule si c'est tout ce que
+   * donne le rapport —, département). Une valeur déjà dans nos bases n'est jamais remplacée, le nom
+   * jamais touché, une correction déjà faite à la main gardée. Nos bases ne changent pas.
+   */
+  private async completerListe(u: UtilisateurConnecte, lignes: LigneRapportPersonnel[]) {
+    const avecFiche = lignes.filter((l) => l.agentId || l.volontaireId);
+    if (!avecFiche.length) return 0;
+    const fiches = await this.fichesDe(avecFiche);
+    const rapport = await this.rapportAvecDep(avecFiche[0].rapportId);
+    const repo = this.ds.getRepository(LigneRapportPersonnel);
+    const vide = (v: unknown) => v === undefined || v === null || String(v).trim() === '';
+    const date = (v: string | null) => {
+      if (!v) return null;
+      const n = naissanceDe(v);
+      return n.date ?? (n.annee ? String(n.annee) : null);
+    };
+    let faits = 0;
+    const maintenant = new Date();
+    for (const l of avecFiche) {
+      const f = fiches.get(l.agentId ? `P${l.agentId}` : `V${l.volontaireId}`);
+      if (!f) continue;
+      const proposees: Record<string, [unknown, string | null]> = {
+        LIEU_SERVICE: [f.lieu, l.ecole?.trim() || null],
+        MATRICULE_SOLDE: [f.type === 'PERSONNEL' ? f.matricule : 'registre', l.matricule?.replace(/\s+/g, '') || null],
+        DATE_NAISSANCE: [f.dateNaissance, l.dateNaissance ?? (l.anneeNaissance ? String(l.anneeNaissance) : null)],
+        DATE_PRISE_SERVICE: [f.priseService, date(l.priseService)],
+        DEPARTEMENT: [f.departement, rapport.departement],
+      };
+      const ajout: Record<string, { avant: null; apres: string }> = {};
+      for (const [k, [base, rap]] of Object.entries(proposees))
+        if (vide(base) && !vide(rap) && !l.applique?.[k]) ajout[k] = { avant: null, apres: String(rap) };
+      if (!Object.keys(ajout).length) continue;
+      l.applique = { ...(l.applique ?? {}), ...ajout };
+      l.appliquePar = u.nom;
+      l.appliqueLe = maintenant;
+      await repo.save(l);
+      faits++;
+    }
+    return faits;
   }
 
   async supprimer(u: UtilisateurConnecte, id: number) {
