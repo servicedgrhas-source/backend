@@ -124,14 +124,30 @@ export function naissanceDe(v: string | null | undefined): {
   date: string | null;
 } {
   const t = (v ?? '').trim();
+  // Une date impossible du rapport (« 20/20/1978 », « 31/02/1990 », « 00/01/1900 ») n'est pas
+  // gardée (elle bloquait tout l'import) ; son année l'est si elle est plausible
+  const plausible = (a: number) => a >= 1930 && a <= new Date().getFullYear();
+  const reelle = (a: number, m: number, j: number) => {
+    const x = new Date(Date.UTC(a, m - 1, j));
+    return x.getUTCFullYear() === a && x.getUTCMonth() === m - 1 && x.getUTCDate() === j;
+  };
   const d = /^(\d{1,2})[/.-](\d{1,2})[/.-](\d{4})$/.exec(t);
-  if (d)
-    return {
-      annee: +d[3],
-      date: `${d[3]}-${d[2].padStart(2, '0')}-${d[1].padStart(2, '0')}`,
-    };
   const iso = /^(\d{4})-(\d{2})-(\d{2})/.exec(t);
-  if (iso) return { annee: +iso[1], date: iso[0] };
+  const amj = d
+    ? [+d[3], +d[2], +d[1]]
+    : iso
+      ? [+iso[1], +iso[2], +iso[3]]
+      : null;
+  if (amj) {
+    const [an, mo, jo] = amj;
+    return {
+      annee: plausible(an) ? an : null,
+      date:
+        plausible(an) && reelle(an, mo, jo)
+          ? `${an}-${String(mo).padStart(2, '0')}-${String(jo).padStart(2, '0')}`
+          : null,
+    };
+  }
   const a = /^(19|20)\d{2}$/.exec(t);
   return { annee: a ? +t : null, date: null };
 }

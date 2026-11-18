@@ -134,7 +134,16 @@ export class RapprochementRapportsController {
     return this.rap.ajouter(u, id, b?.statut || undefined);
   }
 
-  /** Plusieurs lignes d'un coup : CONFIRMER, AJOUTER (garder dans la liste), ABSENT, ANNULER. */
+  /** Proposer les corrections d'une ligne au contrôle des modifications (la fiche ne change pas). */
+  @Post('lignes/:id/proposer')
+  proposer(
+    @Utilisateur() u: UtilisateurConnecte,
+    @Param('id', ParseIntPipe) id: number,
+  ) {
+    return this.rap.proposer(u, id);
+  }
+
+  /** Plusieurs lignes d'un coup : CONFIRMER, AJOUTER (garder dans la liste), ABSENT, ANNULER, PROPOSER. */
   @Post(':id/lot')
   lot(
     @Utilisateur() u: UtilisateurConnecte,

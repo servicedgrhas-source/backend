@@ -9,6 +9,7 @@ import type { UtilisateurConnecte } from '../auth/auth';
 import { lireDate, normaliser } from '../common/texte';
 import { JournalService } from '../core/core.service';
 import { LigneRapportPersonnel, RapportPersonnel } from '../entities';
+import { RecensementService } from '../recensement/recensement.service';
 import { cleEcole, paires, ressemblance } from './effectifs-ecoles-regles';
 import {
   codeMatricule,
@@ -111,6 +112,17 @@ export const RUBRIQUES_APPLICABLES = [
   'DEPARTEMENT',
 ] as const;
 
+/**
+ * Les rubriques qu'on peut proposer à la base du personnel (17/11/2026) : le rapport récent y est
+ * fiable. Pas le nom ni la date de naissance (photos recopiées, homonymes : pièce exigée).
+ */
+export const RUBRIQUES_PROPOSABLES = [
+  'LIEU_SERVICE',
+  'DATE_PRISE_SERVICE',
+  'DEPARTEMENT',
+  'MATRICULE_SOLDE',
+] as const;
+
 /** Les écarts que règle la correction d'une rubrique (début du message). */
 const ECARTS_DE: Record<string, string[]> = {
   NOMS_PRENOMS: ['Nom écrit autrement'],
@@ -130,6 +142,8 @@ export class RapprochementRapportsService {
   constructor(
     private readonly ds: DataSource,
     private readonly journal: JournalService,
+    // Seulement pour PROPOSER au contrôle des modifications : jamais d'écriture dans une fiche
+    private readonly recensement: RecensementService,
   ) {}
 
   /* ------------------------------ Lecture du fichier ------------------------------ */
@@ -687,10 +701,21 @@ export class RapprochementRapportsService {
       .getRepository(LigneRapportPersonnel)
       .find({ where: { rapportId: id }, order: { ordre: 'ASC' } });
     const fiches = await this.fichesDe(lignes);
+    const pids = lignes.map((l) => l.propositionId).filter((x): x is number => !!x);
+    const propositions = new Map(
+      (pids.length
+        ? await this.ds.query<{ id: number; etat: string; controlePar: string | null; note: string | null }[]>(
+            `SELECT id, etat, "controlePar", note FROM modification_recensement WHERE id = ANY($1)`,
+            [pids],
+          )
+        : []
+      ).map((p) => [p.id, p]),
+    );
     return {
       rapport: rapport[0],
       lignes: lignes.map((l) => ({
         ...l,
+        proposition: l.propositionId ? (propositions.get(l.propositionId) ?? null) : null,
         base: l.agentId
           ? (fiches.get(`P${l.agentId}`) ?? null)
           : l.volontaireId
@@ -869,6 +894,85 @@ export class RapprochementRapportsService {
     return { ok: true, rubriques: Object.keys(donnees) };
   }
 
+  /**
+   * Proposer à la base du personnel les corrections d'une ligne (17/11/2026) : lieu de service, date
+   * de prise de service, département, matricule. La fiche ne change PAS : la proposition part au
+   * contrôle des modifications, avec sa source ; la base n'est modifiée que si le contrôle valide.
+   */
+  async proposer(u: UtilisateurConnecte, ligneId: number) {
+    const repo = this.ds.getRepository(LigneRapportPersonnel);
+    const l = await repo.findOne({ where: { id: ligneId } });
+    if (!l) throw new NotFoundException('Ligne introuvable.');
+    const r = await this.proposerLignes(u, await this.rapportAvecDep(l.rapportId), [l]);
+    if (r.erreurs.length) throw new BadRequestException(r.erreurs[0].message);
+    return { ok: true };
+  }
+
+  private async rapportAvecDep(id: number) {
+    const [r] = await this.ds.query<(RapportPersonnel & { departement: string | null })[]>(
+      `SELECT r.*, d.nom AS departement FROM rapport_personnel r
+         LEFT JOIN departement d ON d.id = r."departementId" WHERE r.id = $1`,
+      [id],
+    );
+    if (!r) throw new NotFoundException('Rapport introuvable.');
+    return r;
+  }
+
+  private async proposerLignes(
+    u: UtilisateurConnecte,
+    rapport: RapportPersonnel & { departement: string | null },
+    lignes: LigneRapportPersonnel[],
+  ) {
+    const repo = this.ds.getRepository(LigneRapportPersonnel);
+    const erreurs: { ligneId: number; nom: string; message: string }[] = [];
+    let faits = 0;
+    const deps = new Map(
+      (await this.ds.query<{ nom: string; code: string }[]>(`SELECT nom, code FROM departement`)).map(
+        (d) => [d.nom, d.code],
+      ),
+    );
+    const enCours = new Set(
+      (
+        await this.ds.query<{ id: number }[]>(
+          `SELECT id FROM modification_recensement WHERE id = ANY($1) AND etat = 'A_CONTROLER'`,
+          [lignes.map((l) => l.propositionId).filter((x): x is number => !!x)],
+        )
+      ).map((x) => x.id),
+    );
+    for (const l of lignes) {
+      const erreur = (message: string) => erreurs.push({ ligneId: l.id, nom: l.nomComplet, message });
+      if (!l.agentId) {
+        erreur('Pas de fiche dans la base du personnel.');
+        continue;
+      }
+      if (l.propositionId && enCours.has(l.propositionId)) {
+        erreur('Déjà proposée : en attente du contrôle des modifications.');
+        continue;
+      }
+      const donnees: Record<string, string> = {};
+      for (const k of RUBRIQUES_PROPOSABLES) {
+        const v = l.applique?.[k]?.apres;
+        if (v === undefined || v === null || v === '') continue;
+        donnees[k] = k === 'DEPARTEMENT' ? (deps.get(String(v)) ?? '') : String(v);
+      }
+      if (!Object.keys(donnees).length) {
+        erreur('Rien à proposer : corrigez d’abord la liste (lieu de service, prise de service, département, matricule).');
+        continue;
+      }
+      const source = `Rapport de fin d’année ${rapport.anneeScolaire || ''} de la DDEPPSA ${rapport.departement ?? ''} (fichier « ${rapport.nomFichier} », n° ${l.numero ?? l.ordre})`
+        .replace(/\s+/g, ' ')
+        .trim();
+      try {
+        const p = await this.recensement.proposer(u, l.agentId, donnees, source);
+        await repo.update(l.id, { propositionId: p.id });
+        faits++;
+      } catch (e) {
+        erreur((e as Error).message);
+      }
+    }
+    return { faits, erreurs };
+  }
+
   /** Garder dans la liste Banque mondiale une personne absente de nos bases (statut du rapport, ou choisi). */
   async ajouter(u: UtilisateurConnecte, ligneId: number, statutChoisi?: string) {
     const repo = this.ds.getRepository(LigneRapportPersonnel);
@@ -921,6 +1025,7 @@ export class RapprochementRapportsService {
    * Agir sur plusieurs lignes d'un coup (cochées à l'écran) :
    * - CONFIRMER : la fiche trouvée est la bonne ;
    * - AJOUTER : garder dans la liste Banque mondiale les personnes absentes de nos bases ;
+   * - PROPOSER : proposer les corrections au contrôle des modifications (la fiche ne change pas) ;
    * - ABSENT : déclarer absentes.
    * La base n'est lue qu'une fois ; le rapport est rapproché à la fin.
    */
@@ -930,7 +1035,7 @@ export class RapprochementRapportsService {
     action: string,
     ids: number[],
   ) {
-    if (!['CONFIRMER', 'AJOUTER', 'ABSENT', 'ANNULER'].includes(action))
+    if (!['CONFIRMER', 'AJOUTER', 'ABSENT', 'ANNULER', 'PROPOSER'].includes(action))
       throw new BadRequestException('Action inconnue.');
     const uniques = [...new Set(ids.filter((x) => Number.isInteger(x)))];
     if (!uniques.length) throw new BadRequestException('Cochez au moins une personne.');
@@ -966,6 +1071,10 @@ export class RapprochementRapportsService {
           { decision: 'ABSENT', decidePar: u.nom, decideLe: maintenant, agentId: null, volontaireId: null, resultat: 'ABSENT', methode: null, ecarts: [] },
         );
       faits = a.length;
+    } else if (action === 'PROPOSER') {
+      const r = await this.proposerLignes(u, await this.rapportAvecDep(rapportId), lignes);
+      faits = r.faits;
+      erreurs.push(...r.erreurs);
     } else {
       const r = await this.garderLignes(u, lignes);
       faits = r.faits;

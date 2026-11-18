@@ -1071,6 +1071,42 @@ export class RecensementService {
   /* ------------------------------ Contrôle des modifications du recensement ------------------------------ */
 
   /**
+   * Proposer une modification d'une fiche (17/11/2026 : rapports de fin d'année des DDEPPSA, volet
+   * Banque mondiale). La fiche n'est PAS modifiée : la proposition attend le contrôle des
+   * modifications, qui la valide (les valeurs sont alors appliquées) ou la rejette (rien ne change).
+   * Seules les rubriques qui diffèrent de la fiche sont proposées ; leurs valeurs sont contrôlées.
+   */
+  async proposer(
+    u: UtilisateurConnecte,
+    agentId: number,
+    brutes: Record<string, unknown>,
+    source: string,
+  ) {
+    const c = this.config.get();
+    const a = await this.trouver(u, agentId);
+    const donnees = this.lireDonnees(c, brutes);
+    const champs = Object.fromEntries(
+      Object.entries(donnees)
+        .filter(([k, v]) => JSON.stringify(a.donnees[k] ?? null) !== JSON.stringify(v))
+        .map(([k, v]) => [k, { avant: a.donnees[k] ?? null, apres: v }]),
+    );
+    if (!Object.keys(champs).length)
+      throw new BadRequestException('La fiche a déjà ces valeurs : rien à proposer.');
+    const m = await this.agents.manager.save(ModificationRecensement, {
+      agentId: a.id,
+      faitePar: u.nom,
+      champs,
+      proposition: true,
+      source: source.slice(0, 500),
+    });
+    await this.journal.log(u, 'RECENSEMENT_PROPOSITION', 'agent_recense', a.id, {
+      champs: Object.keys(champs),
+      source,
+    });
+    return { id: m.id, rubriques: Object.keys(champs) };
+  }
+
+  /**
    * Modifications faites au recensement qui attendent le contrôle, dans le périmètre du compte :
    * l'agent, qui a modifié et quand, et chaque rubrique avec son ancienne et sa nouvelle valeur.
    */
@@ -1086,13 +1122,15 @@ export class RecensementService {
         champs: Record<string, { avant: unknown; apres: unknown }>;
         faitePar: string | null;
         faiteLe: string;
+        proposition: boolean;
+        source: string | null;
         nomComplet: string;
         numeroFiche: string;
         statut: string;
         structure: string | null;
       }[]
     >(
-      `SELECT m.id, m."agentId", m.champs, m."faitePar", m."faiteLe", a."nomComplet", a."numeroFiche", a.statut, s.nom AS structure
+      `SELECT m.id, m."agentId", m.champs, m."faitePar", m."faiteLe", m.proposition, m.source, a."nomComplet", a."numeroFiche", a.statut, s.nom AS structure
          FROM modification_recensement m
          JOIN agent_recense a ON a.id = m."agentId"
          LEFT JOIN structure s ON s.id = a."structureId"
@@ -1151,6 +1189,8 @@ export class RecensementService {
   /**
    * Contrôle d'une ou plusieurs modifications : validée (elle reste), ou rejetée (la fiche reprend
    * l'ancienne valeur de chaque rubrique, sauf celles modifiées à nouveau depuis).
+   * Une PROPOSITION (rapports des DDEPPSA) : validée, ses valeurs sont appliquées à la fiche (sauf
+   * les rubriques changées depuis) ; rejetée, rien ne change.
    */
   async controlerModifications(
     u: UtilisateurConnecte,
@@ -1177,11 +1217,28 @@ export class RecensementService {
       );
     let restaurees = 0;
     let gardees = 0;
+    let appliquees = 0;
+    const erreurs: { id: number; message: string }[] = [];
     const eq = (x: unknown, y: unknown) =>
       JSON.stringify(x ?? null) === JSON.stringify(y ?? null);
     for (const m of liste) {
       const a = await this.trouver(u, m.agentId);
-      if (decision === 'REJETER') {
+      if (m.proposition && decision === 'VALIDER') {
+        // Seules les rubriques encore telles qu'au moment de la proposition
+        const donnees: Record<string, unknown> = {};
+        for (const [k, x] of Object.entries(m.champs))
+          if (eq(a.donnees[k], x.avant)) donnees[k] = x.apres;
+          else gardees++;
+        if (Object.keys(donnees).length)
+          try {
+            await this.modifier(u, a.id, { donnees });
+            appliquees += Object.keys(donnees).length;
+          } catch (e) {
+            // Refusée (doublon, valeur…) : la proposition reste à contrôler
+            erreurs.push({ id: m.id, message: `${a.nomComplet} : ${(e as Error).message}` });
+            continue;
+          }
+      } else if (decision === 'REJETER' && !m.proposition) {
         for (const [k, x] of Object.entries(m.champs)) {
           if (k === 'TYPE_AGENT') {
             if (a.statut === x.apres && typeof x.avant === 'string') {
@@ -1222,7 +1279,13 @@ export class RecensementService {
         { champs: Object.keys(m.champs), note: n },
       );
     }
-    return { controlees: liste.length, restaurees, gardees };
+    return {
+      controlees: liste.length - erreurs.length,
+      restaurees,
+      gardees,
+      appliquees,
+      erreurs,
+    };
   }
 
   async supprimer(u: UtilisateurConnecte, id: number) {

@@ -70,6 +70,12 @@ describe('Valeurs du rapport', () => {
     expect(naissanceDe('6/2/1987')).toEqual({ annee: 1987, date: '1987-02-06' });
     expect(naissanceDe('1987-02-06')).toEqual({ annee: 1987, date: '1987-02-06' });
     expect(naissanceDe('/')).toEqual({ annee: null, date: null });
+    // Dates impossibles des rapports : pas de date (l'import ne bloque plus), l'année si plausible
+    expect(naissanceDe('20/20/1978')).toEqual({ annee: 1978, date: null });
+    expect(naissanceDe('31/02/1990')).toEqual({ annee: 1990, date: null });
+    expect(naissanceDe('00/01/1900')).toEqual({ annee: null, date: null });
+    expect(naissanceDe('19/06/1094')).toEqual({ annee: null, date: null });
+    expect(naissanceDe('14/07/12964')).toEqual({ annee: null, date: null });
   });
   it('le matricule', () => {
     expect(codeMatricule('233 792 R')).toBe('233792R');

@@ -906,6 +906,8 @@ export class LigneRapportPersonnel {
   > | null;
   @Column({ type: 'varchar', nullable: true }) appliquePar: string | null;
   @Column({ type: 'timestamp', nullable: true }) appliqueLe: Date | null;
+  /** La proposition faite à la base du personnel (modification_recensement), s'il y en a une. */
+  @Column({ type: 'int', nullable: true }) propositionId: number | null;
 }
 
 /** Répartition automatique du quota « Autres » sans département, validée par le DG. */
@@ -1593,6 +1595,13 @@ export class ModificationRecensement {
   @Column({ type: 'varchar', nullable: true }) controlePar: string | null;
   @Column({ type: 'timestamptz', nullable: true }) controleLe: Date | null;
   @Column({ type: 'text', nullable: true }) note: string | null;
+  /**
+   * Proposition (17/11/2026, rapports des DDEPPSA) : la fiche n'est PAS encore modifiée ; « Valider »
+   * applique les nouvelles valeurs, « Rejeter » ne change rien.
+   */
+  @Column({ type: 'boolean', default: false }) proposition: boolean;
+  /** D'où vient la proposition (rapport, fichier, n° de ligne). */
+  @Column({ type: 'text', nullable: true }) source: string | null;
 }
 
 @Entity('agent_recense')
