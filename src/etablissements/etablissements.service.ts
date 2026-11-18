@@ -335,13 +335,14 @@ export class EtablissementsService {
       .filter(Boolean)
       .slice(0, 5))
       ajouter(
-        `translate(upper(s.nom || ' ' || coalesce(s.localite, '')), 'ÀÁÂÄÃÉÈÊËÍÌÎÏÓÒÔÖÕÚÙÛÜÇ', 'AAAAAEEEEIIIIOOOOOUUUUC') LIKE $X`,
+        `translate(upper(s.nom || ' ' || coalesce(s.localite, '') || ' ' || coalesce(s.code, '')), 'ÀÁÂÄÃÉÈÊËÍÌÎÏÓÒÔÖÕÚÙÛÜÇ', 'AAAAAEEEEIIIIOOOOOUUUUC') LIKE $X`,
         `%${m}%`,
       );
     const lignes = await this.structures.query<
       {
         id: number;
         nom: string;
+        code: string | null;
         cycle: string | null;
         localite: string | null;
         departement: string | null;
@@ -352,7 +353,7 @@ export class EtablissementsService {
         total: number;
       }[]
     >(
-      `SELECT s.id, s.nom, s.cycle, s.localite, d.nom AS departement, i.sigle AS inspection,
+      `SELECT s.id, s.nom, s.code, s.cycle, s.localite, d.nom AS departement, i.sigle AS inspection,
               (SELECT count(*)::int FROM classe c WHERE c."structureId" = s.id AND c."anneeScolaire" = $1) AS classes,
               (SELECT count(*)::int FROM salle x WHERE x."structureId" = s.id) AS salles,
               (SELECT count(*)::int FROM agent_recense a WHERE a."structureId" = s.id AND coalesce(a.contentieux->>'etat', 'CONFIRME') = 'CONFIRME') AS agents,
@@ -380,6 +381,7 @@ export class EtablissementsService {
         .map((l) => ({
           id: l.id,
           nom: this.nomEcole(l.nom, l.cycle),
+          code: l.code,
           cycle: l.cycle,
           localite: l.localite,
           departement: l.departement,
@@ -425,6 +427,7 @@ export class EtablissementsService {
       nomFeuille: 'Écoles',
       entetes: [
         'N°',
+        'Code',
         'École',
         'Cycle',
         'Inspection',
@@ -434,10 +437,12 @@ export class EtablissementsService {
         'Salles',
         'Agents rattachés',
       ],
-      largeurs: [6, 40, 14, 18, 22, 18, 9, 9, 12],
-      nombres: [0, 6, 7, 8],
+      // Le code de l'école dans le référentiel (« PRI-LEP »), demandé le 18/11/2026
+      largeurs: [6, 12, 38, 13, 17, 20, 17, 8, 8, 11],
+      nombres: [0, 7, 8, 9],
       lignes: r.lignes.map((l, i) => [
         i + 1,
+        l.code ?? '',
         l.nom,
         l.cycle ? (LIBELLE_CYCLE_ECOLE[l.cycle] ?? l.cycle) : '',
         l.inspection ?? '',
