@@ -1588,8 +1588,27 @@ export class EnrolementService implements OnApplicationBootstrap {
         lignes,
       };
     }
-    // Tous les non retenus (DG, 16/11/2026) : les écartés déjà connus et ceux écartés pour un autre motif
+    // Tous les non retenus (DG, 16/11/2026) : les écartés déjà connus et ceux écartés pour un autre motif.
+    // Un déjà connu dit OÙ il est connu (18/11/2026 : « Déjà connu : Deja afectés », texte tapé à
+    // l'écartement, ne disait rien au lecteur) ; le texte tapé reste à part, en observation.
     if (quoi === 'non-retenus') {
+      const connus = await this.comparateurConnus(campagneId);
+      const dejaConnu = (nom: string, naissance: string | null) => {
+        const t = connus(nom, naissance)[0];
+        if (!t) return 'Déjà connu (plus retrouvé aujourd’hui dans nos bases : à revoir)';
+        const ou = [t.etablissement, t.departement].filter(Boolean).join(', ');
+        const quoiT =
+          t.source === 'Recrutement (Fonction publique)'
+            ? `Déjà recruté par la Fonction publique (${t.detail})`
+            : t.source === 'Base du personnel'
+              ? `Déjà dans la base du personnel : ${(t.statut ?? '').toLowerCase()}`
+              : t.source === 'Recrutés des années passées'
+                ? `Déjà recruté en ${t.detail}`
+                : t.source === 'Enrôlement d’une autre année'
+                  ? `Déjà retenu à l’enrôlement (${t.detail})`
+                  : `Déjà au registre : ${(t.statut ?? t.source).toLowerCase()}`;
+        return `${quoiT}${ou ? ` — ${ou}` : ''}${t.sure ? '' : ' (correspondance à vérifier)'}`;
+      };
       const lignes = (await this.liste({ campagneId, etat: 'NON_RETENU' })).map(
         (e) => ({
           id: e.id,
@@ -1598,17 +1617,19 @@ export class EnrolementService implements OnApplicationBootstrap {
           ...this.ageDe(e.dateNaissance, c.annee),
           diplome: e.diplomeLibelle,
           cycle: [e.cycle, e.specialite].filter(Boolean).join(' · ') || null,
-          motif:
-            e.motifDecision ??
-            (e.ecarteDejaConnu ? 'Déjà connu ailleurs' : 'Non précisé'),
+          motif: e.ecarteDejaConnu
+            ? dejaConnu(e.nomComplet, e.dateNaissance)
+            : (e.motifDecision ?? 'Non précisé'),
+          // Ce qui avait été tapé à l'écartement (« Déjà connu : … »)
+          observation: e.ecarteDejaConnu
+            ? (e.motifDecision ?? '').replace(/^D[ée]j[àa] connu\s*(:\s*)?/i, '').replace(/^\(recruté, volontaire ou enrôlé\)$/, '') || null
+            : null,
           decision: e.decidePar
             ? `${e.decidePar}${e.decideLe ? `, le ${jour(new Date(e.decideLe).toISOString())}` : ''}`
             : null,
         }),
       );
-      const deja = lignes.filter((l) =>
-        /^D[ée]j[àa] connu/i.test(l.motif),
-      ).length;
+      const deja = lignes.filter((l) => l.observation !== null || /^D[ée]j[àa]/i.test(l.motif)).length;
       return {
         titre: `LISTE DES NON RETENUS — ENRÔLEMENT ${c.annee}`,
         sousTitre: `Enrôlement ${c.annee} (${c.anneeScolaire}) · ${lignes.length.toLocaleString('fr-FR')} non retenu(s) : ${deja.toLocaleString('fr-FR')} déjà connu(s) ailleurs, ${(lignes.length - deja).toLocaleString('fr-FR')} pour un autre motif`,

@@ -352,7 +352,8 @@ export class EnrolementController {
           ['Âge', 'age', 6],
           ['Diplôme', 'diplome', 20],
           ['Cycle · spécialité', 'cycle', 22],
-          ['Motif', 'motif', 34],
+          ['Motif (où il est déjà connu)', 'motif', 46],
+          ['Observation saisie', 'observation', 18],
           ['Décidé par', 'decision', 22],
           ...(avecOrigine
             ? ([['Origine', 'origine', 18]] as [string, string, number][])

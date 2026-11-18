@@ -1264,6 +1264,7 @@ export class RapprochementRapportsService {
       RUBRIQUE: ['Personnel (administratif / enseignant)', 14, (l) => ou(l.rubrique ? l.rubrique.charAt(0) + l.rubrique.slice(1).toLowerCase() : null)],
       NUMERO_RAPPORT: ['N° dans le rapport', 9, (l) => ou(l.numero)],
       RESULTAT: ['Résultat du rapprochement', 16, (l) => ou(RESULTATS[l.resultat])],
+      TELEPHONE: ['Téléphone', 14, (l) => ou(brut(l, 'Téléphone', 'Telephone', 'Tél', 'Tel', 'Tél.', 'Contact', 'N° de téléphone'))],
       DECISION: ['Décision', 18, (l) => ou(l.decision ? DECISIONS[l.decision] : 'À traiter')],
     };
     const cles = (demandees ?? []).filter((k) => k in CATALOGUE);
