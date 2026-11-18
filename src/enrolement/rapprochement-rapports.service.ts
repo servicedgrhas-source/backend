@@ -1197,7 +1197,7 @@ export class RapprochementRapportsService {
    * quand la personne y a une fiche, sinon celle du rapport. La même personne sur plusieurs listes du
    * rapport (directeur et enseignant) n'a qu'une ligne.
    */
-  async excel(id: number) {
+  async excel(id: number, demandees?: string[]) {
     const { rapport, lignes } = await this.detail(id);
     const SECTEURS: Record<string, string> = {
       PUBLIC: 'Public',
@@ -1232,17 +1232,44 @@ export class RapprochementRapportsService {
     const VERT = 'FF00692F';
     const bord = { style: 'thin' as const, color: { argb: 'FFD4D4D8' } };
     const cadre = { top: bord, left: bord, bottom: bord, right: bord };
-    const cols: [string, number][] = [
-      ['N°', 6],
-      ['Noms et prénoms', 34],
-      ['Lieu de service', 32],
-      ['Date de naissance', 13],
-      ['Matricule', 12],
-      ['Date de prise de service', 14],
-      ['Département', 14],
-      ['Statut', 15],
-      ['Secteur', 13],
-    ];
+    // Les colonnes choisies à l'export (18/11/2026) ; sans choix, les 9 colonnes habituelles
+    type L = (typeof personnes)[number];
+    const brut = (l: L, ...noms: string[]) => {
+      const d = l.donnees ?? {};
+      const k = Object.keys(d).find((x) => noms.some((n) => x.trim().toLowerCase() === n.toLowerCase()));
+      return k ? d[k] : '';
+    };
+    const corr = (l: L, k: string) => {
+      const v = l.applique?.[k]?.apres;
+      return v === undefined || v === null ? null : String(v as string);
+    };
+    const CATALOGUE: Record<string, [string, number, (l: L, i: number) => string | number]> = {
+      NUMERO: ['N°', 6, (_l, i) => i + 1],
+      NOM: ['Noms et prénoms', 34, (l) => ou(corr(l, 'NOMS_PRENOMS'), l.base?.nom, l.nomComplet)],
+      LIEU: ['Lieu de service', 32, (l) => ou(corr(l, 'LIEU_SERVICE'), l.base?.lieu, l.ecole)],
+      NAISSANCE: ['Date de naissance', 13, (l) => ou(dateFr(corr(l, 'DATE_NAISSANCE')), dateFr(l.base?.dateNaissance), l.dateNaissance ? dateFr(l.dateNaissance) : l.anneeNaissance)],
+      MATRICULE: ['Matricule', 12, (l) => ou(corr(l, 'MATRICULE_SOLDE'), l.base?.matricule, l.matricule)],
+      PRISE_SERVICE: ['Date de prise de service', 14, (l) => ou(dateFr(corr(l, 'DATE_PRISE_SERVICE')), dateFr(l.base?.priseService), l.priseService)],
+      DEPARTEMENT: ['Département', 14, (l) => ou(corr(l, 'DEPARTEMENT'), l.base?.departement, rapport.departement)],
+      STATUT: ['Statut', 15, (l) => ou(l.base ? STATUT_TITRE[l.base.statut] : null, l.statut ? STATUT_TITRE[l.statut] : null)],
+      SECTEUR: ['Secteur', 13, (l) => SECTEURS[l.secteur ?? ''] ?? ''],
+      GENRE: ['Genre', 7, (l) => ou(brut(l, 'Genre', 'Sexe', 'G'))],
+      FONCTION: ['Fonction', 16, (l) => ou(l.fonction)],
+      GRADE: ['Grade / échelon', 12, (l) => ou(brut(l, 'G/E', 'Grade', 'Grade et échelon'))],
+      DIPLOME_ACAD: ['Diplôme académique', 12, (l) => ou(brut(l, 'Acad', 'Acad.', 'Diplôme Acad.'))],
+      DIPLOME_PROF: ['Diplôme professionnel', 12, (l) => ou(brut(l, 'Prof', 'Prof.', 'Diplôme Prof.'))],
+      RECRUTEMENT: ['Année de recrutement', 12, (l) => ou(brut(l, 'Recr', 'Recrut', 'Date de recrutement'))],
+      INSPECTION: ['Inspection', 18, (l) => ou(brut(l, 'Inspection'))],
+      CYCLE: ['Cycle', 12, (l) => ou(l.cycle ? l.cycle.charAt(0) + l.cycle.slice(1).toLowerCase() : null)],
+      RUBRIQUE: ['Personnel (administratif / enseignant)', 14, (l) => ou(l.rubrique ? l.rubrique.charAt(0) + l.rubrique.slice(1).toLowerCase() : null)],
+      NUMERO_RAPPORT: ['N° dans le rapport', 9, (l) => ou(l.numero)],
+      RESULTAT: ['Résultat du rapprochement', 16, (l) => ou(RESULTATS[l.resultat])],
+      DECISION: ['Décision', 18, (l) => ou(l.decision ? DECISIONS[l.decision] : 'À traiter')],
+    };
+    const cles = (demandees ?? []).filter((k) => k in CATALOGUE);
+    const choisies = cles.length ? cles : ['NUMERO', 'NOM', 'LIEU', 'NAISSANCE', 'MATRICULE', 'PRISE_SERVICE', 'DEPARTEMENT', 'STATUT', 'SECTEUR'];
+    const cols: [string, number][] = choisies.map((k) => [CATALOGUE[k][0], CATALOGUE[k][1]]);
+    const colNom = choisies.indexOf('NOM') + 1;
     ws.columns = cols.map(([, w]) => ({ width: w }));
     ws.mergeCells(1, 1, 1, cols.length);
     const t = ws.getCell(1, 1);
@@ -1265,28 +1292,13 @@ export class RapprochementRapportsService {
     });
     h.height = 30;
     personnes.forEach((l, i) => {
-      const f = l.base;
-      const c = (k: string) => {
-        const v = l.applique?.[k]?.apres;
-        return v === undefined || v === null ? null : String(v);
-      };
       const row = ws.getRow(4 + i);
-      row.values = [
-        i + 1,
-        ou(c('NOMS_PRENOMS'), f?.nom, l.nomComplet),
-        ou(c('LIEU_SERVICE'), f?.lieu, l.ecole),
-        ou(dateFr(c('DATE_NAISSANCE')), dateFr(f?.dateNaissance), l.dateNaissance ? dateFr(l.dateNaissance) : l.anneeNaissance),
-        ou(c('MATRICULE_SOLDE'), f?.matricule, l.matricule),
-        ou(dateFr(c('DATE_PRISE_SERVICE')), dateFr(f?.priseService), l.priseService),
-        ou(c('DEPARTEMENT'), f?.departement, rapport.departement),
-        ou(f ? STATUT_TITRE[f.statut] : null, l.statut ? STATUT_TITRE[l.statut] : null),
-        SECTEURS[l.secteur ?? ''] ?? '',
-      ];
+      row.values = choisies.map((k) => CATALOGUE[k][2](l, i));
       row.eachCell({ includeEmpty: true }, (c, k) => {
         if (k > cols.length) return;
         c.border = cadre;
-        c.font = { size: 10, bold: k === 2 };
-        c.alignment = { vertical: 'middle', wrapText: true, horizontal: k === 1 ? 'center' : 'left' };
+        c.font = { size: 10, bold: k === colNom };
+        c.alignment = { vertical: 'middle', wrapText: true, horizontal: choisies[k - 1] === 'NUMERO' ? 'center' : 'left' };
         if (i % 2) c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF4F4F5' } };
       });
     });

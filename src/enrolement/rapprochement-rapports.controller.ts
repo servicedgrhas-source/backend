@@ -106,8 +106,16 @@ export class RapprochementRapportsController {
   }
 
   @Get(':id/excel')
-  async excel(@Param('id', ParseIntPipe) id: number, @Res() res: Response) {
-    const { nom, contenu } = await this.rap.excel(id);
+  async excel(
+    @Param('id', ParseIntPipe) id: number,
+    @Res() res: Response,
+    @Query('colonnes') colonnes?: string,
+  ) {
+    // Les colonnes choisies à l'export (« NOM,MATRICULE,… ») ; sans choix, les colonnes habituelles
+    const { nom, contenu } = await this.rap.excel(
+      id,
+      colonnes ? String(colonnes).split(',').slice(0, 40) : undefined,
+    );
     res.setHeader('Content-Type', EXCEL);
     res.setHeader(
       'Content-Disposition',
