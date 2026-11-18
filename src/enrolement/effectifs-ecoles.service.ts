@@ -810,7 +810,7 @@ export class EffectifsEcolesService {
     const c = await this.calcul();
     const tout = this.filtrer(c, { ...f, sousSeuil: false });
     const lignes = this.filtrer(c, f);
-    // « Seulement les écoles de 3 fonctionnaires ou moins » coché : le tableau par DEPPSA et les
+    // « Seulement les écoles de 3 fonctionnaires et moins » coché : le tableau par DEPPSA et les
     // compteurs ne comptent que ces écoles (17/11/2026)
     // Toutes les écoles de chaque DEPPSA (case cochée ou non) : « 10 sur 31 écoles » (18/11/2026)
     const toutesParDep = new Map<string, number>();
@@ -1323,7 +1323,7 @@ export class EffectifsEcolesService {
     const dep = f.departementId
       ? c.deps.find((d) => d.id === f.departementId)?.nom
       : null;
-    const sous = `${libCycle}${dep ? ` · DEPPSA ${dep}` : ' · toutes les DEPPSA'}${f.sousSeuil ? ` · écoles de ${f.seuil} fonctionnaires ou moins (contractuels compris)` : ''} · situation au ${new Date().toLocaleDateString('fr-FR')}`;
+    const sous = `${libCycle}${dep ? ` · DEPPSA ${dep}` : ' · toutes les DEPPSA'}${f.sousSeuil ? ` · écoles de ${f.seuil} fonctionnaires et moins (contractuels compris)` : ''} · situation au ${new Date().toLocaleDateString('fr-FR')}`;
 
     const wb = new ExcelJS.Workbook();
     wb.creator = 'SIGRHAS-MEPPSA';
@@ -1463,7 +1463,7 @@ export class EffectifsEcolesService {
       'Cycle',
       ...EFFECTIFS.map((k) => LIBELLES[k]),
       'Total',
-      `${f.seuil} fonctionnaires ou moins (avec contractuels)`,
+      `${f.seuil} fonctionnaires et moins (avec contractuels)`,
       'Dans l’organigramme',
     ];
     const ws = feuille(
@@ -1543,7 +1543,7 @@ export class EffectifsEcolesService {
       ws,
       l,
       enTetes.length,
-      `En orange : les écoles qui ont ${f.seuil} fonctionnaires ou moins, contractuels compris (DG, 17/11/2026 : un contractuel compte comme un fonctionnaire). Volontaires et communautaires : registre de la bourse (en poste). Fonctionnaires et contractuels : base du personnel (en activité), école de l’organigramme ou « lieu de service » écrit. La même école écrite de plusieurs façons est comptée une seule fois (voir « Noms à harmoniser »).`,
+      `En orange : les écoles qui ont ${f.seuil} fonctionnaires et moins, contractuels compris (DG, 17/11/2026 : un contractuel compte comme un fonctionnaire). Volontaires et communautaires : registre de la bourse (en poste). Fonctionnaires et contractuels : base du personnel (en activité), école de l’organigramme ou « lieu de service » écrit. La même école écrite de plusieurs façons est comptée une seule fois (voir « Noms à harmoniser »).`,
     );
 
     // 2. Par DEPPSA (seulement les écoles prioritaires si le filtre est coché)
@@ -1554,7 +1554,7 @@ export class EffectifsEcolesService {
     const e2 = [
       'DEPPSA',
       f.sousSeuil ? 'Toutes les écoles' : 'Écoles',
-      `Écoles de ${f.seuil} fonctionnaires ou moins (avec contractuels)`,
+      `Écoles de ${f.seuil} fonctionnaires et moins (avec contractuels)`,
       ...EFFECTIFS.map((k) => LIBELLES[k]),
       'Total',
     ];
