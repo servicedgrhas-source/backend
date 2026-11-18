@@ -210,7 +210,18 @@ function distance(a: string, b: string) {
 export function faute(a: string, b: string) {
   if (a === b || a.length < 6 || b.length < 6) return false;
   const nombres = (x: string) => (x.match(/\d+/g) ?? []).join(' ');
-  return nombres(a) === nombres(b) && distance(a, b) === 1;
+  // « FATIMA A » / « FATIMA B » : une seule lettre d'écart, mais deux groupes, donc deux écoles
+  // (18/11/2026 : elles étaient comptées ensemble). Les mots d'une lettre doivent être les mêmes.
+  const lettres = (x: string) =>
+    x
+      .split(' ')
+      .filter((m) => /^[A-Z]$/.test(m))
+      .join(' ');
+  return (
+    nombres(a) === nombres(b) &&
+    lettres(a) === lettres(b) &&
+    distance(a, b) === 1
+  );
 }
 
 const MOIS_EN_LETTRES = new Set([

@@ -112,6 +112,9 @@ describe('Écoles écrites à la main (Banque mondiale, 16/11/2026)', () => {
   it('reconnaît une faute de frappe, pas une autre école', () => {
     expect(faute('MOUYONDZI', 'MOYONDZI')).toBe(true);
     expect(faute('MOUNGALI 2', 'MOUNGALI 3')).toBe(false);
+    // Deux groupes : deux écoles, pas une faute de frappe
+    expect(faute('NOTRE DAME DE FATIMA A', 'NOTRE DAME DE FATIMA B')).toBe(false);
+    expect(faute('NOTRE DAME DE FATIMA B', 'NOTRE DAME DE FATIAMA B')).toBe(true);
     expect(faute('NKAYI', 'NKAY')).toBe(false);
     expect(faute('LOUDIMA GARE', 'LOUDIMA POSTE')).toBe(false);
   });
