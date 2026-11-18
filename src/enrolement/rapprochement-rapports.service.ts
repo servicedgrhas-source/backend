@@ -858,8 +858,9 @@ export class RapprochementRapportsService {
       donnees[k] = String(v).replace(/\s+/g, ' ').trim().slice(0, 250);
     }
     for (const k of ['DATE_NAISSANCE', 'DATE_PRISE_SERVICE'])
-      if (donnees[k] !== undefined && !/^\d{4}-\d{2}-\d{2}$/.test(donnees[k]))
-        throw new BadRequestException('Date mal écrite : choisissez-la dans le calendrier.');
+      // Une date complète, ou l'année seule (le rapport ne donne souvent que l'année, 18/11/2026)
+      if (donnees[k] !== undefined && !/^\d{4}(-\d{2}-\d{2})?$/.test(donnees[k]))
+        throw new BadRequestException('Date mal écrite : jj/mm/aaaa, ou l’année seule.');
     // Le département : choisi par son numéro, gardé par son nom (ce qu'on exporte)
     if (donnees.DEPARTEMENT !== undefined) {
       const [d] = await this.ds.query<{ nom: string }[]>(
@@ -981,10 +982,12 @@ export class RapprochementRapportsService {
       for (const k of RUBRIQUES_PROPOSABLES) {
         const v = l.applique?.[k]?.apres;
         if (v === undefined || v === null || v === '') continue;
+        // L'année seule ne va pas dans une fiche (date complète exigée) : gardée dans la liste seulement
+        if (k === 'DATE_PRISE_SERVICE' && /^\d{4}$/.test(String(v))) continue;
         donnees[k] = k === 'DEPARTEMENT' ? (deps.get(String(v)) ?? '') : String(v);
       }
       const naissance = l.applique?.DATE_NAISSANCE?.apres;
-      if (naissance && sansNaissance.has(l.agentId)) donnees.DATE_NAISSANCE = String(naissance);
+      if (naissance && /^\d{4}-\d{2}-\d{2}$/.test(String(naissance)) && sansNaissance.has(l.agentId)) donnees.DATE_NAISSANCE = String(naissance);
       if (!Object.keys(donnees).length) {
         erreur('Rien à proposer : corrigez d’abord la liste (lieu de service, prise de service, département, matricule, ou date de naissance si la fiche n’en a pas).');
         continue;
