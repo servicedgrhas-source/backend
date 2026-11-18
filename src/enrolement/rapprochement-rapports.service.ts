@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ConflictException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
@@ -1017,6 +1018,7 @@ export class RapprochementRapportsService {
     if (!l) throw new NotFoundException('Ligne introuvable.');
     const r = await this.proposerLignes(u, await this.rapportAvecDep(l.rapportId), [l], opts);
     if (r.erreurs.length) throw new BadRequestException(r.erreurs[0].message);
+    await this.confirmerTraitees(u, [l]);
     return { ok: true };
   }
 
@@ -1186,7 +1188,73 @@ export class RapprochementRapportsService {
    * - ABSENT : déclarer absentes.
    * La base n'est lue qu'une fois ; le rapport est rapproché à la fin.
    */
+  /** Les actions en série en cours, par rapport : une seule à la fois (deux clics, deux onglets). */
+  private readonly lotsEnCours = new Map<number, { action: string; par: string; depuis: Date }>();
+
+  /**
+   * Une action en série, une seule à la fois par rapport (19/11/2026 : un deuxième clic pendant la
+   * première renvoyait des centaines de « déjà proposée »). Le résultat sépare ce qui a été fait, les
+   * personnes laissées de côté pour une raison normale (déjà proposée, fiche probable…) regroupées
+   * par raison, et les vraies erreurs.
+   */
   async lot(
+    u: UtilisateurConnecte,
+    rapportId: number,
+    action: string,
+    ids: number[],
+    options: { rubriques?: string[]; infos?: string[]; remplacer?: boolean; proposer?: boolean } = {},
+  ) {
+    const deja = this.lotsEnCours.get(rapportId);
+    if (deja)
+      throw new ConflictException(
+        `Une action en série est déjà en cours sur ce rapport (lancée par ${deja.par} à ${deja.depuis.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit', timeZone: 'Africa/Brazzaville' })}) : attendez qu’elle se termine, la liste se mettra à jour toute seule.`,
+      );
+    this.lotsEnCours.set(rapportId, { action, par: u.nom, depuis: new Date() });
+    try {
+      const r = await this.lotSansVerrou(u, rapportId, action, ids, options);
+      // Les raisons normales de ne rien faire ne sont pas des erreurs : regroupées, avec les noms
+      const NORMALES = [
+        'Déjà proposée',
+        'Déjà ajoutée',
+        'Fiche seulement probable',
+        'Pas de fiche dans la base du personnel',
+        'Rien de nouveau',
+        'A déjà une fiche',
+        'Type d’agent non écrit',
+      ];
+      const ignorees = new Map<string, { motif: string; n: number; noms: string[]; ligneIds: number[] }>();
+      const erreurs: typeof r.erreurs = [];
+      for (const e of r.erreurs) {
+        if (!NORMALES.some((m) => e.message.startsWith(m))) {
+          erreurs.push(e);
+          continue;
+        }
+        const g = ignorees.get(e.message) ?? { motif: e.message, n: 0, noms: [], ligneIds: [] };
+        g.n++;
+        if (g.noms.length < 200) g.noms.push(e.nom);
+        g.ligneIds.push(e.ligneId);
+        ignorees.set(e.message, g);
+      }
+      return { ...r, erreurs, ignorees: [...ignorees.values()].sort((a, b) => b.n - a.n) };
+    } finally {
+      this.lotsEnCours.delete(rapportId);
+    }
+  }
+
+  /** Recalculer tout le rapport : pas pendant une action en série (elle écrit les mêmes lignes). */
+  async recalculer(u: UtilisateurConnecte, rapportId: number) {
+    const deja = this.lotsEnCours.get(rapportId);
+    if (deja)
+      throw new ConflictException('Une action en série est en cours sur ce rapport : recalculez quand elle sera terminée.');
+    this.lotsEnCours.set(rapportId, { action: 'RECALCULER', par: u.nom, depuis: new Date() });
+    try {
+      return await this.rapprocher(rapportId);
+    } finally {
+      this.lotsEnCours.delete(rapportId);
+    }
+  }
+
+  private async lotSansVerrou(
     u: UtilisateurConnecte,
     rapportId: number,
     action: string,
@@ -1203,6 +1271,7 @@ export class RapprochementRapportsService {
     );
     let faits = 0;
     let proposees = 0;
+    let confirmees = 0;
     const erreurs: { ligneId: number; nom: string; message: string }[] = [];
     const maintenant = new Date();
     if (action === 'CONFIRMER') {
@@ -1250,6 +1319,7 @@ export class RapprochementRapportsService {
         // « Rien de nouveau » n'est pas une erreur ici : la fiche a déjà tout
         erreurs.push(...r.erreurs.filter((e) => !e.message.startsWith('Rien de nouveau')));
       }
+      confirmees = await this.confirmerTraitees(u, lignes);
     } else if (action === 'PROPOSER_AJOUT') {
       const r = await this.propositions.proposerAgents(u, lignes);
       faits = r.faits;
@@ -1261,6 +1331,7 @@ export class RapprochementRapportsService {
       });
       faits = r.faits;
       erreurs.push(...r.erreurs);
+      confirmees = await this.confirmerTraitees(u, lignes);
     } else {
       const r = await this.garderLignes(u, lignes);
       faits = r.faits;
@@ -1271,13 +1342,31 @@ export class RapprochementRapportsService {
       lignes: uniques.length,
       faits,
       proposees,
+      confirmees,
       erreurs: erreurs.length,
       ...(action === 'PRENDRE_RAPPORT' ? { options } : {}),
     });
     // Confirmer ou déclarer absent ne change pas la recherche : seules les fiches touchées sont refaites
     if (action === 'ANNULER' || action === 'COMPLETER_LISTE' || action === 'PRENDRE_RAPPORT')
       await this.rapprocher(rapportId, uniques);
-    return { faits, proposees, erreurs };
+    return { faits, proposees, confirmees, erreurs };
+  }
+
+  /**
+   * Prendre le rapport ou proposer à la base, c'est reconnaître la fiche trouvée : les lignes encore
+   * à traiter qui ont une fiche passent « confirmées » (« Déjà décidées »). Une fiche seulement
+   * probable reste à traiter : quelqu'un doit d'abord dire que c'est la bonne personne.
+   */
+  private async confirmerTraitees(u: UtilisateurConnecte, lignes: LigneRapportPersonnel[]) {
+    const a = lignes.filter((l) => (l.agentId || l.volontaireId) && !l.decision && l.resultat !== 'PROBABLE');
+    if (!a.length) return 0;
+    const maintenant = new Date();
+    await this.ds.getRepository(LigneRapportPersonnel).update(
+      a.map((l) => l.id),
+      { decision: 'CONFIRME', decidePar: u.nom, decideLe: maintenant },
+    );
+    for (const l of a) Object.assign(l, { decision: 'CONFIRME', decidePar: u.nom, decideLe: maintenant });
+    return a.length;
   }
 
   /**
@@ -1347,7 +1436,8 @@ export class RapprochementRapportsService {
       l.applique = { ...(l.applique ?? {}), ...ajout };
       l.appliquePar = u.nom;
       l.appliqueLe = maintenant;
-      await repo.save(l);
+      // Seulement ces trois colonnes : une décision prise entre-temps sur la ligne n'est pas écrasée
+      await repo.update(l.id, { applique: l.applique as never, appliquePar: l.appliquePar, appliqueLe: l.appliqueLe });
       faits++;
     }
     return faits;

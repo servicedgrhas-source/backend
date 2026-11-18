@@ -101,8 +101,11 @@ export class RapprochementRapportsController {
 
   /** Refaire le rapprochement (après des corrections dans la base) ; les décisions restent. */
   @Post(':id/recalculer')
-  recalculer(@Param('id', ParseIntPipe) id: number) {
-    return this.rap.rapprocher(id);
+  recalculer(
+    @Utilisateur() u: UtilisateurConnecte,
+    @Param('id', ParseIntPipe) id: number,
+  ) {
+    return this.rap.recalculer(u, id);
   }
 
   @Get(':id/excel')

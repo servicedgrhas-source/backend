@@ -29,8 +29,9 @@ import {
 
 /**
  * Effectifs par école (Banque mondiale, 16/11/2026) : pour chaque école, rangée par DEPPSA, le nombre
- * de volontaires, de communautaires, de contractuels et de fonctionnaires ; les écoles qui ont moins
- * de 3 fonctionnaires sont signalées (elles passent en priorité). Lecture seule, aucun nom de
+ * de volontaires, de communautaires, de contractuels et de fonctionnaires ; le seuil de la Banque
+ * mondiale : les écoles qui ont au moins 3 fonctionnaires ou contractuels, leur part, et la part du
+ * personnel qui y travaille (DG, 18/11/2026). Lecture seule, aucun nom de
  * personne : seulement des nombres.
  *
  * Sources :
@@ -105,13 +106,18 @@ interface LigneDecision {
 }
 
 /**
- * Une école prioritaire (Banque mondiale ; DG, 17/11/2026) : au plus `seuil` fonctionnaires, les
- * contractuels comptés avec eux (« un contractuel est presque fonctionnaire »), 3 compris.
+ * Le seuil de la Banque mondiale (réunion DG du 18/11/2026, qui corrige la règle du 17/11) : une
+ * école l'atteint quand elle a AU MOINS `seuil` fonctionnaires ou contractuels, c'est-à-dire 3 et
+ * plus (un contractuel compte comme un fonctionnaire). Les autres en ont moins de 3.
  */
-export const sousLeSeuil = (
+export const atteintLeSeuil = (
   e: { fonctionnaires: number; contractuels: number },
   seuil: number,
-) => e.fonctionnaires + e.contractuels <= seuil;
+) => e.fonctionnaires + e.contractuels >= seuil;
+
+/** Une part en pour cent, à un chiffre après la virgule (0 si le total est nul). */
+const part = (n: number, total: number) =>
+  total ? Math.round((n * 1000) / total) / 10 : 0;
 
 /** À partir de cette ressemblance (0 à 1), deux écoles sont proposées comme peut-être la même. */
 const SEUIL_RESSEMBLANCE = 0.75;
@@ -193,7 +199,8 @@ export interface FiltresEcoles {
   cycle?: string;
   departementId?: number;
   seuil: number;
-  sousSeuil?: boolean;
+  /** AU_MOINS : les écoles qui atteignent le seuil ; MOINS : celles qui ne l'atteignent pas. */
+  seuilFiltre?: 'AU_MOINS' | 'MOINS';
   recherche?: string;
 }
 
@@ -754,7 +761,7 @@ export class EffectifsEcolesService {
       (e) =>
         (!f.cycle || (f.cycle === 'SANS' ? !e.cycle : e.cycle === f.cycle)) &&
         (!f.departementId || e.departementId === f.departementId) &&
-        (!f.sousSeuil || sousLeSeuil(e, f.seuil)) &&
+        (!f.seuilFiltre || (f.seuilFiltre === 'AU_MOINS') === atteintLeSeuil(e, f.seuil)) &&
         (!r || sansAccents(e.nom).toUpperCase().includes(r)),
     );
   }
@@ -770,75 +777,77 @@ export class EffectifsEcolesService {
   /** Les paires d'écoles qui se ressemblent, dans les écoles filtrées. */
   private pairesFiltrees(c: Calcul, f: FiltresEcoles) {
     const ids = new Set(
-      this.filtrer(c, { ...f, sousSeuil: false }).map((e) => e.id),
+      this.filtrer(c, { ...f, seuilFiltre: undefined }).map((e) => e.id),
     );
     return c.ressemblances.filter((p) => ids.has(p.a) || ids.has(p.b));
   }
 
-  /** Par DEPPSA : nombre d'écoles, écoles sous le seuil, effectifs. */
+  /**
+   * Par DEPPSA : écoles qui atteignent le seuil (au moins 3 fonctionnaires ou contractuels) et
+   * celles qui ne l'atteignent pas, avec leur part ; effectifs ; personnel qui travaille dans les
+   * écoles qui atteignent le seuil, et sa part (demande de la Banque mondiale, DG 18/11/2026).
+   */
   private parDeppsa(ecoles: LigneEcole[], seuil: number) {
-    const m = new Map<
-      string,
-      Record<Effectif, number> & {
-        departement: string;
-        ecoles: number;
-        sousSeuil: number;
-        total: number;
-      }
-    >();
+    type Ligne = Record<Effectif, number> & {
+      departement: string;
+      ecoles: number;
+      auMoins: number;
+      moins: number;
+      total: number;
+      /** Tout le personnel compté (V, C, Ct, F) des écoles qui atteignent le seuil. */
+      personnelAuMoins: number;
+      /** Les fonctionnaires et contractuels de ces écoles. */
+      fcAuMoins: number;
+    };
+    const vide = (departement: string): Ligne => ({
+      departement,
+      ecoles: 0,
+      auMoins: 0,
+      moins: 0,
+      volontaires: 0,
+      communautaires: 0,
+      contractuels: 0,
+      fonctionnaires: 0,
+      total: 0,
+      personnelAuMoins: 0,
+      fcAuMoins: 0,
+    });
+    const m = new Map<string, Ligne>();
     for (const e of ecoles) {
-      const x = m.get(e.departement) ?? {
-        departement: e.departement,
-        ecoles: 0,
-        sousSeuil: 0,
-        volontaires: 0,
-        communautaires: 0,
-        contractuels: 0,
-        fonctionnaires: 0,
-        total: 0,
-      };
+      const x = m.get(e.departement) ?? vide(e.departement);
       x.ecoles++;
-      if (sousLeSeuil(e, seuil)) x.sousSeuil++;
+      if (atteintLeSeuil(e, seuil)) {
+        x.auMoins++;
+        x.personnelAuMoins += e.total;
+        x.fcAuMoins += e.fonctionnaires + e.contractuels;
+      } else x.moins++;
       for (const k of EFFECTIFS) x[k] += e[k];
       x.total += e.total;
       m.set(e.departement, x);
     }
-    return [...m.values()];
+    const avecParts = (x: Ligne) => ({
+      ...x,
+      partAuMoins: part(x.auMoins, x.ecoles),
+      partMoins: part(x.moins, x.ecoles),
+      partPersonnelAuMoins: part(x.personnelAuMoins, x.total),
+      partFcAuMoins: part(x.fcAuMoins, x.fonctionnaires + x.contractuels),
+    });
+    const lignes = [...m.values()];
+    const total = lignes.reduce((t, d) => {
+      for (const k of ['ecoles', 'auMoins', 'moins', 'total', 'personnelAuMoins', 'fcAuMoins', ...EFFECTIFS] as const)
+        t[k] += d[k];
+      return t;
+    }, vide('Total'));
+    return { lignes: lignes.map(avecParts), total: avecParts(total) };
   }
 
   async effectifs(f: FiltresEcoles, page = 1, taille = 50) {
     const c = await this.calcul();
-    const tout = this.filtrer(c, { ...f, sousSeuil: false });
+    const tout = this.filtrer(c, { ...f, seuilFiltre: undefined });
     const lignes = this.filtrer(c, f);
-    // « Seulement les écoles de 3 fonctionnaires et moins » coché : le tableau par DEPPSA et les
-    // compteurs ne comptent que ces écoles (17/11/2026)
-    // Toutes les écoles de chaque DEPPSA (case cochée ou non) : « 10 sur 31 écoles » (18/11/2026)
-    const toutesParDep = new Map<string, number>();
-    for (const e of tout)
-      toutesParDep.set(e.departement, (toutesParDep.get(e.departement) ?? 0) + 1);
-    const parDep = this.parDeppsa(f.sousSeuil ? lignes : tout, f.seuil).map(
-      (d) => ({ ...d, toutesEcoles: toutesParDep.get(d.departement) ?? d.ecoles }),
-    );
-    const totaux = parDep.reduce(
-      (t, d) => {
-        t.ecoles += d.ecoles;
-        t.toutesEcoles += d.toutesEcoles;
-        t.sousSeuil += d.sousSeuil;
-        for (const k of EFFECTIFS) t[k] += d[k];
-        t.total += d.total;
-        return t;
-      },
-      {
-        ecoles: 0,
-        toutesEcoles: 0,
-        sousSeuil: 0,
-        volontaires: 0,
-        communautaires: 0,
-        contractuels: 0,
-        fonctionnaires: 0,
-        total: 0,
-      },
-    );
+    // Le tableau par DEPPSA et les compteurs portent toujours sur TOUTES les écoles du cycle et de
+    // la DEPPSA choisis : le filtre du seuil ne change que la liste des écoles (18/11/2026)
+    const { lignes: parDep, total: totaux } = this.parDeppsa(tout, f.seuil);
     const sansEcole = c.sansEcole.filter(
       (s) => !f.departementId || s.departementId === f.departementId,
     );
@@ -913,7 +922,7 @@ export class EffectifsEcolesService {
     taille = 30,
   ) {
     const c = await this.calcul();
-    const toutes = this.filtrer(c, { ...f, sousSeuil: false }).filter((e) =>
+    const toutes = this.filtrer(c, { ...f, seuilFiltre: undefined }).filter((e) =>
       quoi === 'harmoniser' ? e.ecritures > 1 : !e.organigramme,
     );
     // Les plus nombreuses d'abord : ce sont elles qui comptent le plus
@@ -1314,7 +1323,7 @@ export class EffectifsEcolesService {
   async excel(f: FiltresEcoles, qualite = false): Promise<{ nom: string; contenu: Buffer }> {
     const c = await this.calcul();
     const ecoles = this.filtrer(c, f);
-    const tout = this.filtrer(c, { ...f, sousSeuil: false });
+    const tout = this.filtrer(c, { ...f, seuilFiltre: undefined });
     const libCycle = f.cycle
       ? f.cycle === 'SANS'
         ? 'cycle non reconnu'
@@ -1323,12 +1332,12 @@ export class EffectifsEcolesService {
     const dep = f.departementId
       ? c.deps.find((d) => d.id === f.departementId)?.nom
       : null;
-    const sous = `${libCycle}${dep ? ` · DEPPSA ${dep}` : ' · toutes les DEPPSA'}${f.sousSeuil ? ` · écoles de ${f.seuil} fonctionnaires et moins (contractuels compris)` : ''} · situation au ${new Date().toLocaleDateString('fr-FR')}`;
+    const sous = `${libCycle}${dep ? ` · DEPPSA ${dep}` : ' · toutes les DEPPSA'}${f.seuilFiltre === 'AU_MOINS' ? ` · seulement les écoles d’au moins ${f.seuil} fonctionnaires ou contractuels` : f.seuilFiltre === 'MOINS' ? ` · seulement les écoles de moins de ${f.seuil} fonctionnaires ou contractuels` : ''} · situation au ${new Date().toLocaleDateString('fr-FR')}`;
 
     const wb = new ExcelJS.Workbook();
     wb.creator = 'SIGRHAS-MEPPSA';
     const VERT = 'FF0F5132';
-    const ORANGE = 'FFFDE9D9';
+    const VERT_CLAIR = 'FFE2F0D9';
     const GRIS = 'FFF1F5F2';
     const fin: Partial<ExcelJS.Border> = {
       style: 'thin',
@@ -1463,7 +1472,7 @@ export class EffectifsEcolesService {
       'Cycle',
       ...EFFECTIFS.map((k) => LIBELLES[k]),
       'Total',
-      `${f.seuil} fonctionnaires et moins (avec contractuels)`,
+      `Au moins ${f.seuil} fonctionnaires ou contractuels`,
       'Dans l’organigramme',
     ];
     const ws = feuille(
@@ -1486,7 +1495,7 @@ export class EffectifsEcolesService {
           '',
           ...EFFECTIFS.map((k) => lignes.reduce((s, e) => s + e[k], 0)),
           lignes.reduce((s, e) => s + e.total, 0),
-          lignes.filter((e) => sousLeSeuil(e, f.seuil)).length,
+          `${lignes.filter((e) => atteintLeSeuil(e, f.seuil)).length} école(s)`,
           '',
         ],
         true,
@@ -1502,7 +1511,7 @@ export class EffectifsEcolesService {
       }
       courant = e.departement;
       bloc.push(e);
-      const sous = sousLeSeuil(e, f.seuil);
+      const atteint = atteintLeSeuil(e, f.seuil);
       ligne(
         ws,
         l,
@@ -1513,11 +1522,11 @@ export class EffectifsEcolesService {
           e.cycle ? CYCLES_ECOLE[e.cycle] : '—',
           ...EFFECTIFS.map((k) => e[k]),
           e.total,
-          sous ? 'Oui' : '',
+          atteint ? 'Oui' : 'Non',
           e.organigramme ? 'Oui' : 'Non',
         ],
         false,
-        sous ? ORANGE : undefined,
+        atteint ? VERT_CLAIR : undefined,
       );
       l++;
     }
@@ -1532,7 +1541,7 @@ export class EffectifsEcolesService {
         '',
         ...EFFECTIFS.map((k) => ecoles.reduce((s, e) => s + e[k], 0)),
         ecoles.reduce((s, e) => s + e.total, 0),
-        ecoles.filter((e) => sousLeSeuil(e, f.seuil)).length,
+        `${ecoles.filter((e) => atteintLeSeuil(e, f.seuil)).length} école(s)`,
         '',
       ],
       true,
@@ -1543,45 +1552,52 @@ export class EffectifsEcolesService {
       ws,
       l,
       enTetes.length,
-      `En orange : les écoles qui ont ${f.seuil} fonctionnaires et moins, contractuels compris (DG, 17/11/2026 : un contractuel compte comme un fonctionnaire). Volontaires et communautaires : registre de la bourse (en poste). Fonctionnaires et contractuels : base du personnel (en activité), école de l’organigramme ou « lieu de service » écrit. La même école écrite de plusieurs façons est comptée une seule fois (voir « Noms à harmoniser »).`,
+      `En vert : les écoles qui ont au moins ${f.seuil} fonctionnaires ou contractuels (${f.seuil} et plus ; un contractuel compte comme un fonctionnaire) — seuil de la Banque mondiale (DG, 18/11/2026). Volontaires et communautaires : registre de la bourse (en poste). Fonctionnaires et contractuels : base du personnel (en activité), école de l’organigramme ou « lieu de service » écrit. La même école écrite de plusieurs façons est comptée une seule fois (voir « Noms à harmoniser »).`,
     );
 
-    // 2. Par DEPPSA (seulement les écoles prioritaires si le filtre est coché)
-    const parDep = this.parDeppsa(f.sousSeuil ? ecoles : tout, f.seuil);
-    // Toutes les écoles de la DEPPSA, à côté : « 10 sur 31 » (18/11/2026)
-    const toutesDep = this.parDeppsa(tout, f.seuil);
-    const toutes = (dep: string) => toutesDep.find((x) => x.departement === dep)?.ecoles ?? 0;
+    // 2. Par DEPPSA : toujours toutes les écoles ; écoles qui atteignent le seuil et celles qui ne
+    // l'atteignent pas, avec leur part ; personnel de ces écoles et sa part (DG, 18/11/2026)
+    const { lignes: parDep, total: tot } = this.parDeppsa(tout, f.seuil);
     const e2 = [
       'DEPPSA',
-      f.sousSeuil ? 'Toutes les écoles' : 'Écoles',
-      `Écoles de ${f.seuil} fonctionnaires et moins (avec contractuels)`,
+      'Écoles',
+      `Au moins ${f.seuil} F/C`,
+      '% des écoles',
+      `Moins de ${f.seuil} F/C`,
+      '% des écoles',
       ...EFFECTIFS.map((k) => LIBELLES[k]),
-      'Total',
+      'Personnel compté',
+      `Personnel des écoles d’au moins ${f.seuil} F/C`,
+      '% du personnel',
+      `Fonct. + contr. de ces écoles`,
+      '% des fonct. + contr.',
     ];
-    const ws2 = feuille('Par DEPPSA', [22, 10, 16, 12, 15, 13, 14, 10]);
-    entete(ws2, e2.length, 'EFFECTIFS PAR DEPPSA');
+    const ws2 = feuille('Par DEPPSA', [22, 9, 11, 9, 11, 9, 11, 13, 12, 13, 11, 14, 9, 13, 10], true);
+    entete(ws2, e2.length, `ÉCOLES D’AU MOINS ${f.seuil} FONCTIONNAIRES OU CONTRACTUELS, PAR DEPPSA`);
     titres(ws2, 13, e2);
     l = 14;
-    for (const d of parDep)
-      ligne(ws2, l++, [
-        d.departement,
-        f.sousSeuil ? toutes(d.departement) : d.ecoles,
-        d.sousSeuil,
-        ...EFFECTIFS.map((k) => d[k]),
-        d.total,
-      ]);
-    ligne(
+    const pc = (v: number) => `${v.toLocaleString('fr-FR')} %`;
+    const valeurs = (d: (typeof parDep)[number]) => [
+      d.ecoles,
+      d.auMoins,
+      pc(d.partAuMoins),
+      d.moins,
+      pc(d.partMoins),
+      ...EFFECTIFS.map((k) => d[k]),
+      d.total,
+      d.personnelAuMoins,
+      pc(d.partPersonnelAuMoins),
+      d.fcAuMoins,
+      pc(d.partFcAuMoins),
+    ];
+    for (const d of parDep) ligne(ws2, l++, [d.departement, ...valeurs(d)]);
+    ligne(ws2, l++, [dep ? 'TOTAL' : 'TOTAL (tout le territoire)', ...valeurs(tot)], true, 'FFD9EAD3');
+    l++;
+    note(
       ws2,
-      l++,
-      [
-        'TOTAL',
-        parDep.reduce((s, d) => s + (f.sousSeuil ? toutes(d.departement) : d.ecoles), 0),
-        parDep.reduce((s, d) => s + d.sousSeuil, 0),
-        ...EFFECTIFS.map((k) => parDep.reduce((s, d) => s + d[k], 0)),
-        parDep.reduce((s, d) => s + d.total, 0),
-      ],
-      true,
-      'FFD9EAD3',
+      l,
+      e2.length,
+      `F/C = fonctionnaires et contractuels. Une école atteint le seuil quand elle a au moins ${f.seuil} fonctionnaires ou contractuels (${f.seuil} et plus). « Personnel compté » = volontaires + communautaires + contractuels + fonctionnaires rattachés à une école. Sur ${tot.ecoles.toLocaleString('fr-FR')} écoles, ${tot.auMoins.toLocaleString('fr-FR')} (${pc(tot.partAuMoins)}) ont au moins ${f.seuil} fonctionnaires ou contractuels et ${tot.moins.toLocaleString('fr-FR')} (${pc(tot.partMoins)}) en ont moins ; ${pc(tot.partPersonnelAuMoins)} du personnel compté travaille dans les premières.`,
     );
 
     // 3. Les personnes qu'on ne peut pas placer dans une école

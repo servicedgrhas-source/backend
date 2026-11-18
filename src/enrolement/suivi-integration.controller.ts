@@ -80,7 +80,7 @@ export class SuiviIntegrationController {
       situation: q.situation || undefined,
       recherche: q.recherche?.slice(0, 100) || undefined,
       aRegler: q.aRegler === '1',
-      etape: q.etape?.slice(0, 20) || undefined,
+      etape: q.etape?.slice(0, 40) || undefined,
     };
   }
 

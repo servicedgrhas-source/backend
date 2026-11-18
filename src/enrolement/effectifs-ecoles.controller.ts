@@ -81,11 +81,17 @@ function filtresEcoles(
           ? q.cycle
           : undefined,
     departementId:
-      q.departementId && /^d+$/.test(q.departementId)
+      q.departementId && /^\d+$/.test(q.departementId)
         ? Number(q.departementId)
         : undefined,
     seuil: Number.isInteger(seuil) && seuil >= 1 && seuil <= 50 ? seuil : 3,
-    sousSeuil: q.sousSeuil === '1',
+    // AU_MOINS : écoles d'au moins `seuil` F/C ; MOINS : les autres (« sousSeuil=1 » des anciens liens = MOINS)
+    seuilFiltre:
+      q.seuilFiltre === 'AU_MOINS' || q.seuilFiltre === 'MOINS'
+        ? q.seuilFiltre
+        : q.sousSeuil === '1'
+          ? 'MOINS'
+          : undefined,
     recherche: q.recherche?.slice(0, 100) || undefined,
   };
 }

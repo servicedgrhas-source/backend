@@ -109,6 +109,9 @@ export interface LigneSuivi {
   population: 'VOLONTAIRE' | 'COMMUNAUTAIRE';
   registre: 'EN_POSTE' | 'SORTI' | 'ABSENT';
   motifSortie: string | null;
+  /** Le code du motif (RETIRE_DDEPPSA, RECRUTE_FP, DOUBLON…) et la date de sortie (jj/mm/aaaa). */
+  motifCode: string | null;
+  dateSortie: string | null;
   dernierMoisBourse: string | null;
   vague: number | null;
   departementId: number | null;
@@ -194,7 +197,43 @@ export const ETAPES: Record<
     garder: (l) =>
       l.registre !== 'ABSENT' && !!l.salaire && !l.salaire.matricule,
   },
+  enposte: {
+    libelle: 'Encore en bourse (en poste)',
+    garder: (l) => l.registre === 'EN_POSTE',
+  },
+  sortis: {
+    libelle: 'Sortis de la bourse (tous motifs)',
+    garder: (l) => l.registre === 'SORTI',
+  },
+  'recrutes-fiche': {
+    libelle: 'Recrutés, devenus fonctionnaires ou contractuels dans la base du personnel',
+    garder: (l) => l.registre !== 'ABSENT' && estRecrute(l) && !!l.salaire,
+  },
+  'recrutes-sans-fiche': {
+    libelle: 'Recrutés (texte reçu ou sortie « recruté »), pas encore dans la base du personnel',
+    garder: (l) => l.registre !== 'ABSENT' && estRecrute(l) && !l.salaire,
+  },
 };
+
+/**
+ * L'étape d'une carte cliquée, y compris les sortis d'un motif (« sorti:RETIRE_DDEPPSA ») : la
+ * liste des sortis avec leur motif et leur date de sortie (DG, 18/11/2026).
+ */
+export function etapeDe(
+  code: string | undefined,
+  motifs: { code: string; libelle: string }[],
+): { libelle: string; garder: (l: LigneSuivi) => boolean } | undefined {
+  if (!code) return undefined;
+  if (ETAPES[code]) return ETAPES[code];
+  if (code.startsWith('sorti:')) {
+    const m = code.slice(6);
+    return {
+      libelle: `Sortis de la bourse : ${motifs.find((x) => x.code === m)?.libelle ?? (m === 'SANS_MOTIF' ? 'sans motif écrit' : m)}`,
+      garder: (l) => l.registre === 'SORTI' && l.motifCode === m,
+    };
+  }
+  return undefined;
+}
 
 /** Les groupes de la base du personnel (cartes « Toute la base du personnel »). */
 export const GROUPES_PERSONNEL: Record<
@@ -583,6 +622,8 @@ export class SuiviIntegrationService {
           v.population === 'COMMUNAUTAIRE' ? 'COMMUNAUTAIRE' : 'VOLONTAIRE',
         registre: v.statut === 'SORTI' ? 'SORTI' : 'EN_POSTE',
         motifSortie: v.statut === 'SORTI' ? motif(v.motifSortie) : null,
+        motifCode: v.statut === 'SORTI' ? (v.motifSortie ?? 'SANS_MOTIF') : null,
+        dateSortie: v.statut === 'SORTI' && v.dateSortie ? dateFr(String(v.dateSortie)) : null,
         dernierMoisBourse:
           v.statut !== 'SORTI'
             ? 'en cours'
@@ -627,6 +668,8 @@ export class SuiviIntegrationService {
         population: o.startsWith('communaut') ? 'COMMUNAUTAIRE' : 'VOLONTAIRE',
         registre: 'ABSENT',
         motifSortie: null,
+        motifCode: null,
+        dateSortie: null,
         dernierMoisBourse: null,
         vague: null,
         departementId: a.departementId,
@@ -767,8 +810,53 @@ export class SuiviIntegrationService {
       .filter((l) => l.texte?.date && l.note?.date)
       .map((l) => jours(l.note!.date!) - jours(l.texte!.date!))
       .filter((x) => x >= 0);
+    // La répartition du registre, qui s'additionne (DG, 18/11/2026 : les chiffres doivent parler) :
+    // en poste + sortis = fiches ; sortis par motif, avec leurs dates ; recrutés avec ou sans fiche
+    const enPoste = registre.filter((l) => l.registre === 'EN_POSTE');
+    const sortis = registre.filter((l) => l.registre === 'SORTI');
+    const motifs = new Map<string, { code: string; libelle: string; n: number; sansDate: number; du: string | null; au: string | null }>();
+    const iso = (d: string) => d.split('/').reverse().join('-');
+    for (const l of sortis) {
+      const k = l.motifCode ?? 'SANS_MOTIF';
+      const m = motifs.get(k) ?? { code: k, libelle: l.motifSortie ?? 'Sans motif écrit', n: 0, sansDate: 0, du: null, au: null };
+      m.n++;
+      if (!l.dateSortie) m.sansDate++;
+      else {
+        if (!m.du || iso(l.dateSortie) < iso(m.du)) m.du = l.dateSortie;
+        if (!m.au || iso(l.dateSortie) > iso(m.au)) m.au = l.dateSortie;
+      }
+      motifs.set(k, m);
+    }
+    const recrutesListe = registre.filter(estRecrute);
+    const avecFiche = recrutesListe.filter((l) => !!l.salaire);
+    const repartition = {
+      fiches: registre.length,
+      doublons: sortis.filter((l) => l.motifCode === 'DOUBLON').length,
+      enPoste: {
+        total: enPoste.length,
+        nonRecrutes: enPoste.filter((l) => l.situation === 'NON_RECRUTE').length,
+        aVerifier: enPoste.filter((l) => l.situation === 'A_VERIFIER').length,
+        recrutes: enPoste.filter(estRecrute).length,
+      },
+      sortis: {
+        total: sortis.length,
+        parMotif: [...motifs.values()].sort((a, b) => b.n - a.n),
+        aVerifier: sortis.filter((l) => l.situation === 'A_VERIFIER').length,
+      },
+      recrutes: {
+        total: recrutesListe.length,
+        avecFiche: avecFiche.length,
+        payes: avecFiche.filter((l) => !!l.salaire?.matricule).length,
+        attente: avecFiche.filter((l) => !l.salaire?.matricule).length,
+        /** Parmi eux : sortis de la bourse avec le motif « recruté à la Fonction publique ». */
+        attenteSortisFP: avecFiche.filter((l) => !l.salaire?.matricule && l.motifCode === 'RECRUTE_FP').length,
+        sansFiche: recrutesListe.length - avecFiche.length,
+        sansFicheEnPoste: recrutesListe.filter((l) => !l.salaire && l.registre === 'EN_POSTE').length,
+      },
+    };
     return {
       total,
+      repartition,
       taux: {
         integration: taux(total.recrutes, total.base),
         affectation: taux(total.affectes, total.recrutes),
@@ -825,16 +913,17 @@ export class SuiviIntegrationService {
       (x) => !f.departementId || x.departementId === f.departementId,
     );
     const lignes = this.filtrer(toutes, f);
-    const etape = f.etape ? ETAPES[f.etape] : undefined;
+    const etape = etapeDe(f.etape, this.config.get().motifsSortie);
     const liste = etape ? lignes.filter(etape.garder) : lignes;
     const debut = (Math.max(1, page) - 1) * taille;
     return {
       synthese: this.synthese(lignes),
       sources,
       total: liste.length,
-      etapes: Object.fromEntries(
-        Object.entries(ETAPES).map(([k, x]) => [k, x.libelle]),
-      ),
+      etapes: {
+        ...Object.fromEntries(Object.entries(ETAPES).map(([k, x]) => [k, x.libelle])),
+        ...(f.etape && etape ? { [f.etape]: etape.libelle } : {}),
+      },
       page: Math.max(1, page),
       taille,
       // Déjà triée au calcul : situations les plus parlantes d'abord, dans l'ordre du parcours
@@ -1223,6 +1312,27 @@ export class SuiviIntegrationService {
       l++;
     }
     l++;
+    // Ce que sont devenues les fiches du registre : des chiffres qui s'additionnent (DG, 18/11/2026)
+    const R = s.repartition;
+    bloc('Ce que sont devenues les fiches du registre');
+    titres(syn, l, ['', 'Nombre', 'Détail', '', '', '']);
+    l++;
+    const periode = (m: { sansDate: number; du: string | null; au: string | null }) =>
+      [m.du ? (m.du === m.au ? `le ${m.du}` : `du ${m.du} au ${m.au}`) : '', m.sansDate ? `${m.sansDate} sans date de sortie` : '']
+        .filter(Boolean)
+        .join(' · ');
+    for (const [lib, n, tx] of [
+      ['Fiches du registre de la bourse', R.fiches, `${R.enPoste.total} encore en bourse + ${R.sortis.total} sortis`],
+      ['Encore en bourse (en poste)', R.enPoste.total, `${R.enPoste.nonRecrutes} pas encore recrutés · ${R.enPoste.aVerifier} à vérifier · ${R.enPoste.recrutes} déjà recrutés mais encore payés en bourse`],
+      ['Sortis de la bourse', R.sortis.total, 'par motif ci-dessous'],
+      ...R.sortis.parMotif.map((m) => [`   Sortis : ${m.libelle}`, m.n, periode(m)]),
+      ['Recrutés (devenus fonctionnaires ou contractuels)', R.recrutes.total, `${R.recrutes.avecFiche} dans la base du personnel (${R.recrutes.payes} payés, ${R.recrutes.attente} en attente de matricule) · ${R.recrutes.sansFiche} pas encore dans la base du personnel (texte reçu ou sortie « recruté »)`],
+    ] as [string, number, string][]) {
+      ligne(syn, l, [lib, n, tx, '', '', '']);
+      syn.mergeCells(l, 3, l, 6);
+      l++;
+    }
+    l++;
     bloc('Par situation');
     titres(syn, l, ['Situation', 'Personnes', '', '', '', '']);
     l++;
@@ -1340,6 +1450,7 @@ export class SuiviIntegrationService {
       ['Département', 15],
       ['Cycle', 16],
       ['Registre de la bourse', 14],
+      ['Date de sortie', 12],
       ['Dernier mois de bourse', 14],
       ['Texte d’intégration', 26],
       ['Date du texte', 12],
@@ -1387,6 +1498,7 @@ export class SuiviIntegrationService {
               : x.registre === 'SORTI'
                 ? `Sorti (${x.motifSortie ?? ''})`
                 : 'Absent',
+            x.registre === 'SORTI' ? (x.dateSortie ?? 'sans date') : '',
             x.dernierMoisBourse ?? '',
             x.texte ? `${x.texte.nature} n° ${x.texte.numero}` : '',
             x.texte?.date ?? '',
