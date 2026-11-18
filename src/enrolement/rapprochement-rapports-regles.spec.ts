@@ -1,5 +1,6 @@
 import {
   codeMatricule,
+  infosDuRapport,
   colonneDe,
   compareNoms,
   motsDuNom,
@@ -97,5 +98,41 @@ describe('Comparer un nom du rapport à la base', () => {
   });
   it('deux personnes différentes', () => {
     expect(c('MINGA MAMPILA Zoe', 'DIAYANDI Kevin Odilon').score).toBeLessThan(0.4);
+  });
+});
+
+describe('Autres informations du bottin', () => {
+  it('lit genre, nationalité, situation, enfants, échelon, diplômes', () => {
+    const r = infosDuRapport({
+      Genre: 'F',
+      Nat: 'Cong',
+      'Situat matri': 'Célibataire',
+      'Situation (écrite)': 'C.04',
+      'G/E': 'I.C 1er',
+      Catégorie: '2',
+      Prof: 'CFEEN-CAP',
+      Acad: 'BAC A4',
+      Recr: '2023',
+      Téléphone: '06 649 12 52',
+    }, 'Enseig.');
+    expect(r).toEqual({
+      GENRE: 'F',
+      NATIONALITE: 'Congolaise',
+      SITUATION_MATRIMONIALE: 'CELIBATAIRE',
+      NOMBRE_ENFANTS: '4',
+      TELEPHONE_1: '06 649 12 52',
+      FONCTION: 'Enseignant',
+      CATEGORIE: 'II',
+      ECHELON: '1',
+      DIPLOME_PRO: 'CFEEN CAP',
+      AUTRES_DIPLOMES: 'BAC | A4 | |',
+    });
+  });
+  it('« C3 » du Niari, « M » seul, échelon en colonne', () => {
+    expect(infosDuRapport({ 'Situat matri': 'C3', Échelon: '7e' })).toEqual({ SITUATION_MATRIMONIALE: 'CELIBATAIRE', NOMBRE_ENFANTS: '3', ECHELON: '7' });
+    expect(infosDuRapport({ 'Situat matri': 'M' })).toEqual({ SITUATION_MATRIMONIALE: 'MARIE' });
+  });
+  it('laisse le douteux : « Active », « ? », année seule', () => {
+    expect(infosDuRapport({ Recr: '2014', Genre: '?', Prof: '2023' }, 'Active')).toEqual({});
   });
 });

@@ -10,6 +10,7 @@ import { lireDate, normaliser } from '../common/texte';
 import { JournalService } from '../core/core.service';
 import { LigneRapportPersonnel, RapportPersonnel } from '../entities';
 import { RecensementService } from '../recensement/recensement.service';
+import { lireValeur, valeurLisible } from '../recensement/valeurs';
 import { PropositionsBmService } from './propositions-bm.service';
 import { cleEcole, paires, ressemblance } from './effectifs-ecoles-regles';
 import {
@@ -17,6 +18,9 @@ import {
   colonneDe,
   type ColonneRapport,
   compareNoms,
+  INFOS_AGENTS_ETAT,
+  INFOS_BOTTIN,
+  infosDuRapport,
   motsDuNom,
   naissanceDe,
   partieDe,
@@ -124,6 +128,15 @@ export const RUBRIQUES_PROPOSABLES = [
   'MATRICULE_SOLDE',
 ] as const;
 
+/** Les rubriques de la liste Banque mondiale que l'on peut prendre du rapport en série (pas le nom). */
+export const RUBRIQUES_PRENDRE = [
+  'LIEU_SERVICE',
+  'MATRICULE_SOLDE',
+  'DATE_NAISSANCE',
+  'DATE_PRISE_SERVICE',
+  'DEPARTEMENT',
+] as const;
+
 /** Les écarts que règle la correction d'une rubrique (début du message). */
 const ECARTS_DE: Record<string, string[]> = {
   NOMS_PRENOMS: ['Nom écrit autrement'],
@@ -131,6 +144,21 @@ const ECARTS_DE: Record<string, string[]> = {
   MATRICULE_SOLDE: ['Matricule :', 'Pas de matricule', 'Le matricule du rapport'],
   LIEU_SERVICE: ['Lieu de service', 'Pas de lieu de service'],
   DEPARTEMENT: ['Département dans la base'],
+};
+
+/** Les autres informations d'une ligne telles que l'écran les montre (sans les valeurs brutes). */
+const pourEcran = (x: { infos: Record<string, string>; infosNouvelles: string[]; infosDifferentes: string[] }) => ({
+  infos: x.infos,
+  infosNouvelles: x.infosNouvelles,
+  infosDifferentes: x.infosDifferentes,
+});
+
+/** Une fiche sans ses valeurs brutes (seulement pour les calculs du serveur). */
+const sansBrutes = <T extends { brutes: unknown }>(f: T | undefined): Omit<T, 'brutes'> | null => {
+  if (!f) return null;
+  const x: Partial<T> = { ...f };
+  delete x.brutes;
+  return x as Omit<T, 'brutes'>;
 };
 
 const dateFr = (d: string | null | undefined) =>
@@ -732,14 +760,68 @@ export class RapprochementRapportsService {
       rapport: rapport[0],
       lignes: lignes.map((l) => ({
         ...l,
+        // Les autres informations du bottin (genre, téléphone, diplômes…), lisibles, et celles qui
+        // manquent à la fiche du personnel (à proposer à nos bases)
+        ...pourEcran(this.infosDeLigne(l, l.agentId ? fiches.get(`P${l.agentId}`) : undefined)),
         propositionAjout: ajoutDe(l.id),
         proposition: l.propositionId ? (propositions.get(l.propositionId) ?? null) : null,
-        base: l.agentId
-          ? (fiches.get(`P${l.agentId}`) ?? null)
-          : l.volontaireId
-            ? (fiches.get(`V${l.volontaireId}`) ?? null)
-            : null,
+        base: sansBrutes(
+          l.agentId
+            ? fiches.get(`P${l.agentId}`)
+            : l.volontaireId
+              ? fiches.get(`V${l.volontaireId}`)
+              : undefined,
+        ),
       })),
+    };
+  }
+
+  /** Valeurs de fiche (codes) → texte lisible (« CELIBATAIRE » → « Célibataire »). */
+  private lisibles(brutes: Record<string, unknown>) {
+    const c = this.recensement.config.get();
+    const r: Record<string, string> = {};
+    for (const [k, v] of Object.entries(brutes)) {
+      const ch = c.champs.find((x) => x.code === k);
+      const t = ch ? valeurLisible(ch, v) : typeof v === 'string' ? v : JSON.stringify(v ?? '');
+      if (t) r[k] = t;
+    }
+    return r;
+  }
+
+  /**
+   * Les autres informations du bottin d'une ligne, au format de la fiche (valeurs refusées par la
+   * fiche laissées de côté), et, s'il y a une fiche du personnel, ce qu'elle n'a pas encore.
+   */
+  private infosDeLigne(
+    l: LigneRapportPersonnel,
+    fiche?: { statut: string; brutes: Record<string, unknown> },
+  ) {
+    const c = this.recensement.config.get();
+    const valeurs: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(infosDuRapport(l.donnees, l.fonction))) {
+      const ch = c.champs.find((x) => x.code === k);
+      if (!ch) continue;
+      // Catégorie, échelon, indice : les agents de l'État seulement
+      if (fiche && INFOS_AGENTS_ETAT.includes(k) && !['FONCTIONNAIRE', 'CONTRACTUEL'].includes(fiche.statut)) continue;
+      const lu = lireValeur(ch, v);
+      if (lu.erreur || lu.valeur === null || lu.valeur === undefined || lu.valeur === '') continue;
+      valeurs[k] = lu.valeur;
+    }
+    const pareil = (a: unknown, b: unknown) =>
+      normaliser(JSON.stringify(a ?? null)) === normaliser(JSON.stringify(b ?? null));
+    const videFiche = (k: string) => {
+      const v = fiche?.brutes[k];
+      return v === undefined || v === null || v === '' || (Array.isArray(v) && !v.length);
+    };
+    return {
+      infos: this.lisibles(valeurs),
+      /** Ce que le rapport donne et que la fiche n'a pas. */
+      infosNouvelles: fiche ? Object.keys(valeurs).filter((k) => videFiche(k)) : [],
+      /** Ce que le rapport donne autrement que la fiche (le rapport est plus récent). */
+      infosDifferentes: fiche
+        ? Object.keys(valeurs).filter((k) => !videFiche(k) && k !== 'AUTRES_DIPLOMES' && !pareil(valeurs[k], fiche.brutes[k]))
+        : [],
+      valeursInfos: valeurs,
     };
   }
 
@@ -760,20 +842,27 @@ export class RapprochementRapportsService {
         departement: string | null;
         statut: string;
         etat: string | null;
+        /** Les autres informations de la fiche (genre, téléphone…), lisibles ; et telles que gardées. */
+        infos: Record<string, string>;
+        brutes: Record<string, unknown>;
       }
     >();
     if (ids.length)
       for (const a of await this.ds.query<
-        { id: number; nom: string; lieu: string | null; dateNaissance: string | null; matricule: string | null; priseService: string | null; departement: string | null; statut: string }[]
+        { id: number; nom: string; lieu: string | null; dateNaissance: string | null; matricule: string | null; priseService: string | null; departement: string | null; statut: string; brutes: Record<string, unknown> | null }[]
       >(
         `SELECT a.id, a."nomComplet" AS nom, coalesce(s.nom, a.donnees->>'LIEU_SERVICE') AS lieu,
                 a."dateNaissance"::text AS "dateNaissance", a.matricule,
-                a.donnees->>'DATE_PRISE_SERVICE' AS "priseService", d.nom AS departement, a.statut
+                a.donnees->>'DATE_PRISE_SERVICE' AS "priseService", d.nom AS departement, a.statut,
+                (SELECT jsonb_object_agg(e.key, e.value) FROM jsonb_each(a.donnees) e
+                  WHERE e.key = ANY($2)) AS brutes
            FROM agent_recense a LEFT JOIN departement d ON d.id = a."departementId"
            LEFT JOIN structure s ON s.id = a."structureId" WHERE a.id = ANY($1)`,
-        [ids],
-      ))
-        m.set(`P${a.id}`, { type: 'PERSONNEL', etat: null, ...a });
+        [ids, Object.keys(INFOS_BOTTIN)],
+      )) {
+        const { brutes, ...x } = a;
+        m.set(`P${a.id}`, { type: 'PERSONNEL', etat: null, ...x, infos: this.lisibles(brutes ?? {}), brutes: brutes ?? {} });
+      }
     if (vids.length)
       for (const v of await this.ds.query<
         { id: string; nom: string; lieu: string | null; dateNaissance: string | null; priseService: string | null; departement: string | null; statut: string; etat: string }[]
@@ -783,7 +872,7 @@ export class RapprochementRapportsService {
            FROM volontaire v LEFT JOIN departement d ON d.id = v."departementId" WHERE v.id = ANY($1::uuid[])`,
         [vids],
       ))
-        m.set(`V${v.id}`, { type: 'REGISTRE', matricule: null, ...v });
+        m.set(`V${v.id}`, { type: 'REGISTRE', matricule: null, ...v, infos: {}, brutes: {} });
     return m;
   }
 
@@ -918,11 +1007,15 @@ export class RapprochementRapportsService {
    * de prise de service, département, matricule. La fiche ne change PAS : la proposition part au
    * contrôle des modifications, avec sa source ; la base n'est modifiée que si le contrôle valide.
    */
-  async proposer(u: UtilisateurConnecte, ligneId: number) {
+  async proposer(
+    u: UtilisateurConnecte,
+    ligneId: number,
+    opts: { infos?: string[]; remplacer?: boolean } = {},
+  ) {
     const repo = this.ds.getRepository(LigneRapportPersonnel);
     const l = await repo.findOne({ where: { id: ligneId } });
     if (!l) throw new NotFoundException('Ligne introuvable.');
-    const r = await this.proposerLignes(u, await this.rapportAvecDep(l.rapportId), [l]);
+    const r = await this.proposerLignes(u, await this.rapportAvecDep(l.rapportId), [l], opts);
     if (r.erreurs.length) throw new BadRequestException(r.erreurs[0].message);
     return { ok: true };
   }
@@ -937,14 +1030,26 @@ export class RapprochementRapportsService {
     return r;
   }
 
+  /**
+   * Proposer à la base du personnel (contrôle des modifications) ce que le rapport apporte :
+   * - les corrections de la liste Banque mondiale (lieu de service, prise de service, département,
+   *   matricule ; la date de naissance seulement si la fiche n'en a pas, DG 18/11/2026) ;
+   * - les autres informations du bottin (genre, téléphone, situation, enfants, fonction, diplômes,
+   *   échelon…) : celles qui manquent à la fiche, ou aussi celles qui diffèrent si `remplacer`
+   *   (le rapport 2025-2026 est plus récent que nos bases de 2022-2024, DG 18/11/2026).
+   * Une valeur refusée par la fiche (téléphone mal écrit…) est laissée de côté, pas toute la ligne.
+   * Une fiche seulement « probable » n'est pas touchée tant qu'on ne l'a pas confirmée.
+   */
   private async proposerLignes(
     u: UtilisateurConnecte,
     rapport: RapportPersonnel & { departement: string | null },
     lignes: LigneRapportPersonnel[],
+    opts: { rubriques?: string[]; infos?: string[]; remplacer?: boolean } = {},
   ) {
     const repo = this.ds.getRepository(LigneRapportPersonnel);
     const erreurs: { ligneId: number; nom: string; message: string }[] = [];
     let faits = 0;
+    const c = this.recensement.config.get();
     const deps = new Map(
       (await this.ds.query<{ nom: string; code: string }[]>(`SELECT nom, code FROM departement`)).map(
         (d) => [d.nom, d.code],
@@ -958,28 +1063,32 @@ export class RapprochementRapportsService {
         )
       ).map((x) => x.id),
     );
-    // La date de naissance : proposée seulement si la fiche n'en a pas (DG, 18/11/2026)
-    const sansNaissance = new Set(
-      (
-        await this.ds.query<{ id: number }[]>(
-          `SELECT id FROM agent_recense WHERE id = ANY($1)
-              AND "dateNaissance" IS NULL AND coalesce(donnees->>'DATE_NAISSANCE', '') = ''`,
-          [lignes.map((l) => l.agentId).filter((x): x is number => !!x)],
-        )
-      ).map((x) => x.id),
-    );
+    const fiches = await this.fichesDe(lignes.filter((l) => l.agentId));
+    const rubriques = opts.rubriques ?? [...RUBRIQUES_PROPOSABLES, 'DATE_NAISSANCE'];
+    const infos = opts.infos ?? Object.keys(INFOS_BOTTIN);
     for (const l of lignes) {
       const erreur = (message: string) => erreurs.push({ ligneId: l.id, nom: l.nomComplet, message });
       if (!l.agentId) {
         erreur('Pas de fiche dans la base du personnel.');
         continue;
       }
+      if (l.resultat === 'PROBABLE' && !l.decision) {
+        erreur('Fiche seulement probable : confirmez d’abord que c’est la bonne personne.');
+        continue;
+      }
       if (l.propositionId && enCours.has(l.propositionId)) {
         erreur('Déjà proposée : en attente du contrôle des modifications.');
         continue;
       }
-      const donnees: Record<string, string> = {};
+      const fiche = fiches.get(`P${l.agentId}`);
+      if (!fiche) {
+        erreur('Fiche introuvable dans la base du personnel.');
+        continue;
+      }
+      const donnees: Record<string, unknown> = {};
+      // 1. Les corrections de la liste Banque mondiale
       for (const k of RUBRIQUES_PROPOSABLES) {
+        if (!rubriques.includes(k)) continue;
         const v = l.applique?.[k]?.apres;
         if (v === undefined || v === null || v === '') continue;
         // L'année seule ne va pas dans une fiche (date complète exigée) : gardée dans la liste seulement
@@ -987,9 +1096,23 @@ export class RapprochementRapportsService {
         donnees[k] = k === 'DEPARTEMENT' ? (deps.get(String(v)) ?? '') : String(v);
       }
       const naissance = l.applique?.DATE_NAISSANCE?.apres;
-      if (naissance && /^\d{4}-\d{2}-\d{2}$/.test(String(naissance)) && sansNaissance.has(l.agentId)) donnees.DATE_NAISSANCE = String(naissance);
+      if (rubriques.includes('DATE_NAISSANCE') && naissance && /^\d{4}-\d{2}-\d{2}$/.test(String(naissance)) && !fiche.dateNaissance)
+        donnees.DATE_NAISSANCE = String(naissance);
+      // 2. Les autres informations du bottin
+      const x = this.infosDeLigne(l, fiche);
+      for (const k of infos) {
+        if (!(k in x.valeursInfos)) continue;
+        if (x.infosNouvelles.includes(k) || (opts.remplacer && x.infosDifferentes.includes(k)))
+          donnees[k] = x.valeursInfos[k];
+      }
+      // Une valeur refusée par la fiche est laissée de côté ; une valeur déjà dans la fiche aussi
+      for (const [k, v] of Object.entries(donnees)) {
+        const ch = c.champs.find((y) => y.code === k);
+        const lu = ch ? lireValeur(ch, v) : { erreur: 'inconnue', valeur: null };
+        if (lu.erreur || JSON.stringify(lu.valeur ?? null) === JSON.stringify(fiche.brutes[k] ?? null)) delete donnees[k];
+      }
       if (!Object.keys(donnees).length) {
-        erreur('Rien à proposer : corrigez d’abord la liste (lieu de service, prise de service, département, matricule, ou date de naissance si la fiche n’en a pas).');
+        erreur('Rien de nouveau à proposer : la fiche a déjà ce que donne le rapport (ou corrigez d’abord la liste).');
         continue;
       }
       const source = `Rapport de fin d’année ${rapport.anneeScolaire || ''} de la DDEPPSA ${rapport.departement ?? ''} (fichier « ${rapport.nomFichier} », n° ${l.numero ?? l.ordre})`
@@ -998,6 +1121,7 @@ export class RapprochementRapportsService {
       try {
         const p = await this.recensement.proposer(u, l.agentId, donnees, source);
         await repo.update(l.id, { propositionId: p.id });
+        l.propositionId = p.id;
         faits++;
       } catch (e) {
         erreur((e as Error).message);
@@ -1067,8 +1191,9 @@ export class RapprochementRapportsService {
     rapportId: number,
     action: string,
     ids: number[],
+    options: { rubriques?: string[]; infos?: string[]; remplacer?: boolean; proposer?: boolean } = {},
   ) {
-    if (!['CONFIRMER', 'AJOUTER', 'ABSENT', 'ANNULER', 'PROPOSER', 'PROPOSER_AJOUT', 'COMPLETER_LISTE'].includes(action))
+    if (!['CONFIRMER', 'AJOUTER', 'ABSENT', 'ANNULER', 'PROPOSER', 'PROPOSER_AJOUT', 'COMPLETER_LISTE', 'PRENDRE_RAPPORT'].includes(action))
       throw new BadRequestException('Action inconnue.');
     const uniques = [...new Set(ids.filter((x) => Number.isInteger(x)))];
     if (!uniques.length) throw new BadRequestException('Cochez au moins une personne.');
@@ -1077,6 +1202,7 @@ export class RapprochementRapportsService {
       uniques.includes(l.id),
     );
     let faits = 0;
+    let proposees = 0;
     const erreurs: { ligneId: number; nom: string; message: string }[] = [];
     const maintenant = new Date();
     if (action === 'CONFIRMER') {
@@ -1106,12 +1232,33 @@ export class RapprochementRapportsService {
       faits = a.length;
     } else if (action === 'COMPLETER_LISTE') {
       faits = await this.completerListe(u, lignes);
+    } else if (action === 'PRENDRE_RAPPORT') {
+      const rubriques = (options.rubriques ?? []).filter((k) => (RUBRIQUES_PRENDRE as readonly string[]).includes(k));
+      const infos = (options.infos ?? []).filter((k) => k in INFOS_BOTTIN);
+      if (!rubriques.length && !(options.proposer && infos.length))
+        throw new BadRequestException('Cochez au moins une rubrique à prendre du rapport.');
+      faits = rubriques.length ? await this.prendreRapport(u, lignes, rubriques, !!options.remplacer) : 0;
+      // La case « proposer aussi à nos bases » : les fiches du personnel, par le contrôle des modifications
+      if (options.proposer) {
+        const r = await this.proposerLignes(
+          u,
+          await this.rapportAvecDep(rapportId),
+          lignes.filter((l) => l.agentId),
+          { rubriques, infos, remplacer: !!options.remplacer },
+        );
+        proposees = r.faits;
+        // « Rien de nouveau » n'est pas une erreur ici : la fiche a déjà tout
+        erreurs.push(...r.erreurs.filter((e) => !e.message.startsWith('Rien de nouveau')));
+      }
     } else if (action === 'PROPOSER_AJOUT') {
       const r = await this.propositions.proposerAgents(u, lignes);
       faits = r.faits;
       erreurs.push(...r.erreurs);
     } else if (action === 'PROPOSER') {
-      const r = await this.proposerLignes(u, await this.rapportAvecDep(rapportId), lignes);
+      const r = await this.proposerLignes(u, await this.rapportAvecDep(rapportId), lignes, {
+        infos: options.infos?.filter((k) => k in INFOS_BOTTIN),
+        remplacer: !!options.remplacer,
+      });
       faits = r.faits;
       erreurs.push(...r.erreurs);
     } else {
@@ -1123,12 +1270,14 @@ export class RapprochementRapportsService {
       action,
       lignes: uniques.length,
       faits,
+      proposees,
       erreurs: erreurs.length,
+      ...(action === 'PRENDRE_RAPPORT' ? { options } : {}),
     });
     // Confirmer ou déclarer absent ne change pas la recherche : seules les fiches touchées sont refaites
-    if (action === 'ANNULER' || action === 'COMPLETER_LISTE')
+    if (action === 'ANNULER' || action === 'COMPLETER_LISTE' || action === 'PRENDRE_RAPPORT')
       await this.rapprocher(rapportId, uniques);
-    return { faits, erreurs };
+    return { faits, proposees, erreurs };
   }
 
   /**
@@ -1138,7 +1287,23 @@ export class RapprochementRapportsService {
    * donne le rapport —, département). Une valeur déjà dans nos bases n'est jamais remplacée, le nom
    * jamais touché, une correction déjà faite à la main gardée. Nos bases ne changent pas.
    */
-  private async completerListe(u: UtilisateurConnecte, lignes: LigneRapportPersonnel[]) {
+  private completerListe(u: UtilisateurConnecte, lignes: LigneRapportPersonnel[]) {
+    return this.prendreRapport(u, lignes, [...RUBRIQUES_PRENDRE], false);
+  }
+
+  /**
+   * Prendre le rapport dans la liste Banque mondiale, en série (DG, 18/11/2026 : le rapport 2025-2026
+   * est plus récent que nos bases, il ne doit pas perdre d'office) : pour les rubriques choisies, la
+   * valeur du rapport va dans la liste quand nos bases n'en ont pas, et aussi, si `remplacer`, quand
+   * nos bases en ont une autre. Jamais le nom ; une correction déjà faite à la main est gardée ; une
+   * date réduite à l'année ne remplace pas une date complète. Nos bases ne changent pas.
+   */
+  private async prendreRapport(
+    u: UtilisateurConnecte,
+    lignes: LigneRapportPersonnel[],
+    rubriques: string[],
+    remplacer: boolean,
+  ) {
     const avecFiche = lignes.filter((l) => l.agentId || l.volontaireId);
     if (!avecFiche.length) return 0;
     const fiches = await this.fichesDe(avecFiche);
@@ -1150,6 +1315,12 @@ export class RapprochementRapportsService {
       const n = naissanceDe(v);
       return n.date ?? (n.annee ? String(n.annee) : null);
     };
+    const pareil = (k: string, a: unknown, b: unknown) =>
+      k === 'MATRICULE_SOLDE'
+        ? codeMatricule(a) === codeMatricule(b)
+        : k.startsWith('DATE')
+          ? String(a).slice(0, 10) === String(b).slice(0, 10)
+          : normaliser(a).replace(/[^A-Z0-9]+/g, ' ').trim() === normaliser(b).replace(/[^A-Z0-9]+/g, ' ').trim();
     let faits = 0;
     const maintenant = new Date();
     for (const l of avecFiche) {
@@ -1162,9 +1333,16 @@ export class RapprochementRapportsService {
         DATE_PRISE_SERVICE: [f.priseService, date(l.priseService)],
         DEPARTEMENT: [f.departement, rapport.departement],
       };
-      const ajout: Record<string, { avant: null; apres: string }> = {};
-      for (const [k, [base, rap]] of Object.entries(proposees))
-        if (vide(base) && !vide(rap) && !l.applique?.[k]) ajout[k] = { avant: null, apres: String(rap) };
+      const ajout: Record<string, { avant: unknown; apres: string }> = {};
+      for (const [k, [base, rap]] of Object.entries(proposees)) {
+        if (!rubriques.includes(k) || vide(rap) || l.applique?.[k]) continue;
+        if (k === 'MATRICULE_SOLDE' && f.type !== 'PERSONNEL') continue;
+        if (!vide(base)) {
+          if (!remplacer || pareil(k, base, rap)) continue;
+          if (k.startsWith('DATE') && /^\d{4}$/.test(String(rap))) continue;
+        }
+        ajout[k] = { avant: vide(base) ? null : base, apres: String(rap) };
+      }
       if (!Object.keys(ajout).length) continue;
       l.applique = { ...(l.applique ?? {}), ...ajout };
       l.appliquePar = u.nom;

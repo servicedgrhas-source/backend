@@ -157,21 +157,31 @@ export class RapprochementRapportsController {
   proposer(
     @Utilisateur() u: UtilisateurConnecte,
     @Param('id', ParseIntPipe) id: number,
+    @Body() b: { infos?: unknown; remplacer?: unknown },
   ) {
-    return this.rap.proposer(u, id);
+    return this.rap.proposer(u, id, {
+      infos: Array.isArray(b?.infos) ? b.infos.map(String) : undefined,
+      remplacer: b?.remplacer === true,
+    });
   }
 
-  /** Plusieurs lignes d'un coup : CONFIRMER, AJOUTER (garder dans la liste), ABSENT, ANNULER, PROPOSER. */
+  /** Plusieurs lignes d'un coup : CONFIRMER, AJOUTER (garder dans la liste), ABSENT, ANNULER, PROPOSER, PRENDRE_RAPPORT (+ options). */
   @Post(':id/lot')
   lot(
     @Utilisateur() u: UtilisateurConnecte,
     @Param('id', ParseIntPipe) id: number,
-    @Body() b: { action?: string; ids?: unknown },
+    @Body() b: { action?: string; ids?: unknown; rubriques?: unknown; infos?: unknown; remplacer?: unknown; proposer?: unknown },
   ) {
     const ids = Array.isArray(b?.ids)
       ? b.ids.filter((x): x is number => Number.isInteger(x)).slice(0, 20000)
       : [];
-    return this.rap.lot(u, id, String(b?.action ?? ''), ids);
+    const liste = (v: unknown) => (Array.isArray(v) ? v.map(String).slice(0, 50) : undefined);
+    return this.rap.lot(u, id, String(b?.action ?? ''), ids, {
+      rubriques: liste(b?.rubriques),
+      infos: liste(b?.infos),
+      remplacer: b?.remplacer === true,
+      proposer: b?.proposer === true,
+    });
   }
 
   /** Recopier dans la fiche du personnel les rubriques choisies du rapport. */

@@ -233,3 +233,107 @@ export function compareNoms(rapport: string[], base: string[]) {
     complet: trouves === rapport.length,
   };
 }
+
+/**
+ * Les autres informations du bottin (rapport de la DDEPPSA) que la Banque mondiale n'utilise pas
+ * mais qui servent à nos bases (DG, 18/11/2026 : « ces infos ne doivent pas dormir ») : rubrique de
+ * la fiche → libellé. Elles ne vont dans une fiche que par le contrôle des modifications.
+ */
+export const INFOS_BOTTIN: Record<string, string> = {
+  GENRE: 'Genre',
+  LIEU_NAISSANCE: 'Lieu de naissance',
+  NATIONALITE: 'Nationalité',
+  SITUATION_MATRIMONIALE: 'Situation matrimoniale',
+  NOMBRE_ENFANTS: 'Nombre d’enfants',
+  TELEPHONE_1: 'Téléphone',
+  FONCTION: 'Fonction',
+  CATEGORIE: 'Catégorie',
+  ECHELON: 'Échelon',
+  INDICE_SOLDE: 'Indice solde',
+  DIPLOME_PRO: 'Diplôme professionnel',
+  AUTRES_DIPLOMES: 'Diplôme académique',
+  DATE_RECRUTEMENT: 'Date de recrutement',
+};
+
+/** Rubriques réservées aux agents de l'État (fonctionnaires, contractuels). */
+export const INFOS_AGENTS_ETAT = ['CATEGORIE', 'ECHELON', 'INDICE_SOLDE'];
+
+/**
+ * Les autres informations d'une ligne du rapport, prêtes pour une fiche : lues dans les colonnes
+ * telles qu'écrites (« Genre », « Nat », « Situat matri » C.04 = célibataire, 4 enfants, « G/E »
+ * I 1er = échelon 1, « Prof », « Acad », « Téléphone »…). Ce qui est douteux est laissé de côté :
+ * une année seule de recrutement (la fiche exige une date complète), le grade abrégé de « G/E ».
+ */
+export function infosDuRapport(
+  donnees: Record<string, unknown> | null | undefined,
+  fonction?: string | null,
+): Record<string, string> {
+  const cases = Object.entries(donnees ?? {})
+    .map(([k, v]) => [aPlat(k), (typeof v === 'string' ? v : v === null || v === undefined ? '' : JSON.stringify(v)).replace(/\s+/g, ' ').trim()] as const)
+    .filter(([, v]) => !vide(v) && !/\?/.test(v));
+  const lire = (re: RegExp) => cases.find(([t]) => re.test(t))?.[1] ?? '';
+  const r: Record<string, string> = {};
+  // Genre
+  const g = aPlat(lire(/^(GENRE|SEXE|G)$/));
+  if (/^(F|FEMININ|FEMME)$/.test(g)) r.GENRE = 'F';
+  else if (/^(M|H|MASCULIN|HOMME)$/.test(g)) r.GENRE = 'M';
+  // Lieu de naissance
+  const lieu = lire(/LIEU.*NAIS/);
+  if (lieu && /[A-Za-z]{2}/.test(lieu)) r.LIEU_NAISSANCE = lieu.slice(0, 120);
+  // Nationalité : « Cg », « Cong », « C » = congolaise
+  const nat = aPlat(lire(/^NAT/));
+  if (/^(C|CG|CGSE|CONG|CONGO|CONGOLAIS|CONGOLAISE)$/.test(nat)) r.NATIONALITE = 'Congolaise';
+  else if (nat.length >= 5 && !/^CONT/.test(nat)) r.NATIONALITE = lire(/^NAT/);
+  // Situation matrimoniale et enfants : « C.04 », « M2 », « Célibataire »
+  const MATRI: Record<string, string> = { C: 'CELIBATAIRE', M: 'MARIE', D: 'DIVORCE', V: 'VEUF' };
+  for (const [, brut] of cases.filter(([t]) => /^SITU/.test(t)).sort(([a], [b]) => Number(/MATRI/.test(b)) - Number(/MATRI/.test(a)))) {
+    const s = aPlat(brut);
+    const m = /^(CELIB|MARI|DIVOR|VEU)/.exec(s) ?? /^([CMDV])(?: ?0?(\d{1,2}))?$/.exec(s);
+    if (!m) continue;
+    const k = m[1].startsWith('CELIB') ? 'C' : m[1].startsWith('MARI') ? 'M' : m[1].startsWith('DIVOR') ? 'D' : m[1].startsWith('VEU') ? 'V' : m[1];
+    r.SITUATION_MATRIMONIALE ??= MATRI[k];
+    if (m[2] !== undefined && r.NOMBRE_ENFANTS === undefined) r.NOMBRE_ENFANTS = String(Number(m[2]));
+  }
+  const enfants = lire(/ENFANT/);
+  if (/^\d{1,2}$/.test(enfants)) r.NOMBRE_ENFANTS = String(Number(enfants));
+  // Téléphone
+  const tel = lire(/^(TEL|TELEPHONE|CONTACT|N DE TEL|N° DE TEL)/);
+  if (tel.replace(/\D/g, '').length >= 8) r.TELEPHONE_1 = tel;
+  // Fonction (abréviations du rapport)
+  const f = (fonction ?? lire(/^FONCT/)).trim();
+  const fa = aPlat(f);
+  if (fa && !/^(ACTIVE?|FINAL|COMM?|VOL|BEN)\b/.test(fa)) {
+    r.FONCTION = /^ENS/.test(fa)
+      ? /ANTE$/.test(fa) ? 'Enseignante' : 'Enseignant'
+      : /^SECR/.test(fa)
+        ? 'Secrétaire'
+        : /^GESTION/.test(fa)
+          ? 'Gestionnaire'
+          : /^EDUC/.test(fa)
+            ? 'Éducatrice'
+            : f.replace(/\.$/, '');
+  }
+  // Catégorie (1 → I), échelon (colonne, ou le nombre de « G/E » : I 1er, Inst 7)
+  const cat = aPlat(lire(/^CAT/));
+  if (/^[123]$/.test(cat)) r.CATEGORIE = ['I', 'II', 'III'][Number(cat) - 1];
+  else if (/^(I|II|III)$/.test(cat)) r.CATEGORIE = cat;
+  const ech = /^(\d{1,2})(ER|E|EME)?$/.exec(aPlat(lire(/^ECHELON$|^ECH$/)));
+  const ge = /(?:^|[^0-9])(\d{1,2}) ?(?:ER|E|EME)?$/.exec(aPlat(lire(/^G ?\/ ?E$/)));
+  if (ech) r.ECHELON = String(Number(ech[1]));
+  else if (ge) r.ECHELON = String(Number(ge[1]));
+  const ind = lire(/^IND/).replace(/\s/g, '');
+  if (/^\d{2,4}$/.test(ind)) r.INDICE_SOLDE = ind;
+  // Diplômes
+  const prof = lire(/^PROF/);
+  if (/[A-Za-z]{2}/.test(prof)) r.DIPLOME_PRO = prof.replace(/\s*[-/]\s*/g, ' ').trim();
+  const acad = aPlat(lire(/ACAD/));
+  const d = /^(CEPE|BEPC|PEPC|BEMG|BET|BEMT|BAC|LIC|LICENCE|DEUG|BTS|MAITRISE|MASTER)(?: (.+))?$/.exec(acad);
+  if (d) {
+    const code = { PEPC: 'BEPC', BEMG: 'BEPC', BEMT: 'BET', LIC: 'LICENCE', DEUG: 'LICENCE' }[d[1]] ?? d[1];
+    if (d[1] !== 'DEUG') r.AUTRES_DIPLOMES = `${code} | ${d[2] ?? ''} | |`;
+  }
+  // Recrutement : seulement une date complète
+  const recr = naissanceDe(lire(/RECR/)).date;
+  if (recr) r.DATE_RECRUTEMENT = recr;
+  return r;
+}
