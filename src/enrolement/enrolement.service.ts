@@ -1621,7 +1621,10 @@ export class EnrolementService implements OnApplicationBootstrap {
           // Cycle et spécialité séparés ; les départements choisis par le candidat (DG, 19/11/2026)
           cycle: e.cycle || null,
           specialite: e.specialite || null,
-          departementsChoisis: e.departementsSouhaitesNoms.join(', ') || null,
+          // Les 3 départements souhaités par le candidat, dans son ordre de préférence
+          souhaite1: e.departementsSouhaitesNoms[0] ?? null,
+          souhaite2: e.departementsSouhaitesNoms[1] ?? null,
+          souhaite3: e.departementsSouhaitesNoms[2] ?? null,
           motif: e.ecarteDejaConnu
             ? dejaConnu(e.nomComplet, e.dateNaissance)
             : (e.motifDecision ?? 'Non précisé'),
