@@ -213,6 +213,8 @@ interface Calcul {
    */
   ressemblances: PaireEcoles[];
   decisions: LigneDecision[];
+  /** Les écoles de l'organigramme où personne n'est encore compté (cibles possibles d'un rattachement). */
+  organigrammeVides: { id: string; cle: string; nom: string; departementId: number | null; departement: string; cycle: CycleEcole | null }[];
   /** Personnes sans école : rien d'écrit, ou un lieu qui n'est pas une école (inspection…). */
   sansEcole: {
     departementId: number | null;
@@ -711,8 +713,26 @@ export class EffectifsEcolesService {
         b.score - a.score ||
         a.a.localeCompare(b.a),
     );
+    const dejaComptees = new Set(liste.map((e) => e.id));
+    const organigrammeVides = [...structureParEcole.entries()]
+      .filter(([k]) => !dejaComptees.has(k))
+      .map(([k, sid]) => {
+        const st = structures.get(sid)!;
+        const [d0, c0, ...n0] = k.split('|');
+        const departementId = d0 ? Number(d0) : null;
+        const cycle = (c0 || null) as CycleEcole | null;
+        return {
+          id: k,
+          cle: n0.join('|'),
+          nom: nomAffiche(st.nom, cycle),
+          departementId,
+          departement: departementId === null ? 'DDEPPSA non renseignée' : (nomDep.get(departementId) ?? '?'),
+          cycle,
+        };
+      });
     return {
       le: Date.now(),
+      organigrammeVides,
       ecoles: liste,
       ressemblances,
       decisions,
@@ -941,25 +961,57 @@ export class EffectifsEcolesService {
    * l'organigramme de la même DDEPPSA (cycle compatible, pas déclarées « différentes ») dont le nom
    * ressemble le plus. Rangées de la plus sûre à la moins sûre ; une école sans école proche à la fin.
    */
+  /** Les propositions de rattachement, gardées tant que le calcul des écoles ne change pas. */
+  private readonly memoCandidats = new WeakMap<object, Map<string, ReturnType<EffectifsEcolesService['calculerCandidats']>>>();
   private candidatsOrganigramme(c: Calcul, f: FiltresEcoles) {
+    const k = JSON.stringify([f.cycle ?? '', f.departementId ?? '', f.recherche ?? '']);
+    // La liste des écoles du calcul est le même objet tant que le calcul n'est pas refait
+    let m = this.memoCandidats.get(c.ecoles);
+    if (!m) this.memoCandidats.set(c.ecoles, (m = new Map()));
+    let r = m.get(k);
+    if (!r) m.set(k, (r = this.calculerCandidats(c, f)));
+    return r;
+  }
+
+  private calculerCandidats(c: Calcul, f: FiltresEcoles) {
     const differentes = new Set(
       c.decisions.filter((d) => d.type === 'DIFFERENTES').map((d) => paireCle(d.cle, d.autreCle)),
     );
-    const orgsParDep = new Map<string, { e: EcoleCalculee; p: Map<string, number> }[]>();
-    for (const e of c.ecoles)
-      if (e.organigramme) {
-        const k = String(e.departementId ?? '');
-        orgsParDep.set(k, [...(orgsParDep.get(k) ?? []), { e, p: paires(e.cle) }]);
-      }
+    // Toutes les écoles de l'organigramme, de TOUTES les DDEPPSA (19/11/2026 : « EP Bolouaka » des
+    // fichiers de la Cuvette est dans Congo-Oubangui, « CEG Bodouango » des Plateaux dans
+    // Nkéni-Alima ; chercher dans la même DDEPPSA seulement proposait de mauvaises écoles).
+    // Un index des paires de lettres limite les comparaisons aux noms qui en partagent.
+    const orgs = [
+      ...c.ecoles.filter((e) => e.organigramme),
+      ...c.organigrammeVides.map((v) => ({ ...v, total: 0 })),
+    ].map((e) => ({ e, p: paires(e.cle) }));
+    const index = new Map<string, number[]>();
+    orgs.forEach((o, i) => {
+      for (const k of o.p.keys()) index.set(k, [...(index.get(k) ?? []), i]);
+    });
     const hors = this.filtrer(c, { ...f, seuilFiltre: undefined }).filter((e) => !e.organigramme);
     return hors
       .map((e) => {
         const pe = paires(e.cle);
-        const candidats = (orgsParDep.get(String(e.departementId ?? '')) ?? [])
+        const communes = new Map<number, number>();
+        for (const k of pe.keys()) for (const i of index.get(k) ?? []) communes.set(i, (communes.get(i) ?? 0) + 1);
+        const candidats = [...communes.entries()]
+          .sort((x, y) => y[1] - x[1])
+          .slice(0, 60)
+          .map(([i]) => orgs[i])
           .filter(({ e: o }) => !(e.cycle && o.cycle && e.cycle !== o.cycle) && !differentes.has(paireCle(e.id, o.id)))
-          .map(({ e: o, p: po }) => ({ id: o.id, nom: o.nom, cycle: o.cycle, total: o.total, score: ressemblance(e.cle, o.cle, pe, po) }))
+          .map(({ e: o, p: po }) => ({
+            id: o.id,
+            nom: o.nom,
+            cycle: o.cycle,
+            total: o.total,
+            departement: o.departement,
+            memeDdeppsa: o.departementId === e.departementId,
+            score: ressemblance(e.cle, o.cle, pe, po),
+          }))
           .filter((x) => x.score >= 0.4)
-          .sort((a, b) => b.score - a.score || b.total - a.total)
+          // À ressemblance égale (à 3 points près), la même DDEPPSA d'abord
+          .sort((x, y) => Math.round((y.score - x.score) * 33) || Number(y.memeDdeppsa) - Number(x.memeDdeppsa) || y.score - x.score || y.total - x.total)
           .slice(0, 3);
         return { e, candidats };
       })
@@ -1099,7 +1151,11 @@ export class EffectifsEcolesService {
     if (liste.length > 3000)
       throw new BadRequestException('Trop de paires d’un coup (3 000 au plus).');
     const c = await this.calcul();
-    const parId = new Map(c.ecoles.map((e) => [e.id, e]));
+    const parId = new Map<string, EcoleCalculee>(c.ecoles.map((e) => [e.id, e]));
+    // Les écoles de l'organigramme où personne n'est encore compté : cibles possibles
+    for (const v of c.organigrammeVides)
+      if (!parId.has(v.id))
+        parId.set(v.id, { ...v, nomCorrige: false, organigramme: true, volontaires: 0, communautaires: 0, contractuels: 0, fonctionnaires: 0, total: 0, ecritures: 0, jumelees: 0, proche: null, variantes: new Map() });
     // Les groupes : les paires cochées qui partagent une école
     const pere = new Map<string, string>();
     const chef = (x: string): string => {
