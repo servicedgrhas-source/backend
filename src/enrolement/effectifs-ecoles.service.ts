@@ -1070,24 +1070,67 @@ export class EffectifsEcolesService {
     const aCreer: { cle: string; autreCle: string }[] = [];
     // Les écoles de chaque groupe refusé : l'écran garde ces paires cochées, avec la raison (19/11/2026)
     const refuses: { ecoles: string; raison: string; ids: string[] }[] = [];
-    for (const membres of groupes.values()) {
-      const refuser = (raison: string) =>
-        refuses.push({ ecoles: membres.map((e) => e.nom).join(' / '), raison, ids: membres.map((e) => e.id) });
-      if (membres.filter((e) => e.organigramme).length > 1) {
-        refuser('deux écoles de l’organigramme');
-        continue;
-      }
-      // Plus de deux écoles reliées de proche en proche : la personne qui coche a vérifié les paires
-      // (19/11/2026 : refuser bloquait le travail) ; seul un mélange de cycles reste refusé
-      if (membres.length > 2) {
-        const cycles = new Set(membres.map((e) => e.cycle).filter(Boolean));
-        if (cycles.size > 1) {
-          refuser('des cycles différents dans le même groupe');
-          continue;
-        }
+    // Les paires cochées, école par école (pour savoir à quelle école de l'organigramme rattacher)
+    const voisins = new Map<string, Set<string>>();
+    for (const p of liste) {
+      const a = String(p?.a ?? '');
+      const b = String(p?.b ?? '');
+      if (a === b || !parId.has(a) || !parId.has(b)) continue;
+      for (const [x, y] of [[a, b], [b, a]]) voisins.set(x, (voisins.get(x) ?? new Set()).add(y));
+    }
+    let nbGroupes = 0;
+    /** Fusionner un ensemble d'écoles sous la préférée (sauf cycles mélangés dans un groupe de plus de deux). */
+    const fusionnerEnsemble = (membres: EcoleCalculee[]) => {
+      if (membres.length < 2) return;
+      if (membres.length > 2 && new Set(membres.map((e) => e.cycle).filter(Boolean)).size > 1) {
+        refuses.push({ ecoles: membres.map((e) => e.nom).join(' / '), raison: 'des cycles différents dans le même groupe', ids: membres.map((e) => e.id) });
+        return;
       }
       const [garde, ...autres] = [...membres].sort(preference);
       for (const e of autres) aCreer.push({ cle: e.id, autreCle: garde.id });
+      nbGroupes++;
+    };
+    for (const membres of groupes.values()) {
+      const orgs = membres.filter((e) => e.organigramme);
+      if (orgs.length <= 1) {
+        fusionnerEnsemble(membres);
+        continue;
+      }
+      // Plusieurs écoles de l'organigramme dans le groupe (19/11/2026 : « EP MOUDZOMBO » cochée avec
+      // MOUNDZOMBO-A et MOUNDZOMBO-B refusait tout le groupe, sans dire pourquoi) : chaque école hors
+      // organigramme rejoint l'école de l'organigramme avec laquelle elle est cochée ; cochée avec
+      // plusieurs, on ne choisit pas à la place de la personne et on le lui dit
+      const rattachee = new Map<string, string>(orgs.map((o) => [o.id, o.id]));
+      const ambigues = new Set<string>();
+      for (const o of orgs)
+        for (const o2 of orgs)
+          if (o.id < o2.id && voisins.get(o.id)?.has(o2.id))
+            refuses.push({ ecoles: `${o.nom} / ${o2.nom}`, raison: 'ce sont deux écoles de l’organigramme, donc deux écoles officielles différentes : « Deux écoles différentes »', ids: [o.id, o2.id] });
+      for (let tour = 0; tour < membres.length; tour++) {
+        let change = false;
+        for (const x of membres) {
+          if (rattachee.has(x.id) || ambigues.has(x.id)) continue;
+          const cibles = new Set([...(voisins.get(x.id) ?? [])].map((v) => rattachee.get(v)).filter((v): v is string => !!v));
+          const orgsVoisines = [...(voisins.get(x.id) ?? [])].filter((v) => parId.get(v)?.organigramme);
+          if (orgsVoisines.length > 1) {
+            ambigues.add(x.id);
+            refuses.push({
+              ecoles: [x.nom, ...orgsVoisines.map((v) => parId.get(v)!.nom)].join(' / '),
+              raison: `« ${x.nom} » est cochée avec plusieurs écoles de l’organigramme (${orgsVoisines.map((v) => `« ${parId.get(v)!.nom} »`).join(', ')}) : gardez-la avec la bonne, avec le bouton « Même école » de cette paire-là`,
+              ids: [x.id, ...orgsVoisines],
+            });
+            change = true;
+          } else if (cibles.size === 1) {
+            rattachee.set(x.id, [...cibles][0]);
+            change = true;
+          }
+        }
+        if (!change) break;
+      }
+      for (const x of membres)
+        if (!rattachee.has(x.id) && !ambigues.has(x.id))
+          refuses.push({ ecoles: x.nom, raison: `« ${x.nom} » n’est reliée qu’à des écoles laissées de côté : tranchez sa paire ici`, ids: [x.id, ...(voisins.get(x.id) ?? [])] });
+      for (const o of orgs) fusionnerEnsemble(membres.filter((x) => rattachee.get(x.id) === o.id));
     }
     if (!aCreer.length)
       return { fusionnees: 0, groupes: 0, refuses, ignorees };
@@ -1129,7 +1172,7 @@ export class EffectifsEcolesService {
     this.memoire.oublier();
     return {
       fusionnees: lignes.length,
-      groupes: groupes.size - refuses.length,
+      groupes: nbGroupes,
       refuses,
       ignorees,
     };
