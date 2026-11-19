@@ -1138,6 +1138,13 @@ export class RecensementService {
         ORDER BY m."faiteLe" LIMIT 500`,
       fp.params,
     );
+    // Le vrai nombre à contrôler (la liste n'en montre que 500 à la fois)
+    const [{ n: total }] = await this.agents.query<{ n: number }[]>(
+      `SELECT count(*)::int AS n FROM modification_recensement m
+         JOIN agent_recense a ON a.id = m."agentId"
+        WHERE m.etat = 'A_CONTROLER' AND ${where || 'TRUE'}`,
+      fp.params,
+    );
     const c = this.config.get();
     const deps = await this.departements();
     const nomDep = (code: string) =>
@@ -1173,7 +1180,7 @@ export class RecensementService {
           ? 'Établissement de rattachement'
           : (c.champs.find((x) => x.code === k)?.libelle ?? k);
     return {
-      total: lignes.length,
+      total,
       lignes: lignes.map((l) => ({
         ...l,
         champs: Object.entries(l.champs).map(([k, x]) => ({
