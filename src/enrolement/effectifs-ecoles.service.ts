@@ -1077,26 +1077,12 @@ export class EffectifsEcolesService {
         refuser('deux écoles de l’organigramme');
         continue;
       }
-      // Plus de deux écoles reliées de proche en proche : chacune doit être la même que chacune des
-      // autres (« Nkouka M » ressemble à « Nkouka Mbouaba » et à « Nkouka Mpassi », qui sont deux
-      // écoles), et du même cycle (« CE de Bouansa » relie un CEP et un CEG)
+      // Plus de deux écoles reliées de proche en proche : la personne qui coche a vérifié les paires
+      // (19/11/2026 : refuser bloquait le travail) ; seul un mélange de cycles reste refusé
       if (membres.length > 2) {
         const cycles = new Set(membres.map((e) => e.cycle).filter(Boolean));
         if (cycles.size > 1) {
-          refuser('des cycles différents');
-          continue;
-        }
-        const douteuse = membres.some((x, i) =>
-          membres
-            .slice(i + 1)
-            .some(
-              (y) =>
-                RANG_VRAISEMBLANCE[vraisemblance(x, y).niveau] >
-                RANG_VRAISEMBLANCE.PROBABLE,
-            ),
-        );
-        if (douteuse) {
-          refuser('des écoles du groupe ne se ressemblent pas assez entre elles');
+          refuser('des cycles différents dans le même groupe');
           continue;
         }
       }

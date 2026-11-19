@@ -1499,7 +1499,26 @@ export class EnrolementService implements OnApplicationBootstrap {
    * registre, ou à un retenu d'une autre campagne. La DGRHAS tranche : écarter, autre personne, ou
    * garder malgré tout (12/11/2026).
    */
+  /**
+   * Les « déjà connus » d'une campagne, gardés en mémoire (19/11/2026 : 14 s à chaque ouverture de
+   * la page) : refaits seulement quand les dossiers de la campagne changent, ou après 10 minutes
+   * (les autres bases — personnel, registre, recrutés — bougent peu).
+   */
+  private readonly memoDejaConnus = new Map<number, { cle: string; le: number; res: Promise<ReturnType<EnrolementService['dossierConnu']>[]> }>();
   async dejaConnus(campagneId: number) {
+    const [x] = await this.enroles.query<{ cle: string }[]>(
+      `SELECT count(*) || '|' || coalesce(max("modifieLe")::text, '') AS cle FROM enrole WHERE "campagneId" = $1`,
+      [campagneId],
+    );
+    const m = this.memoDejaConnus.get(campagneId);
+    if (m && m.cle === x.cle && Date.now() - m.le < 600_000) return m.res;
+    const res = this.calculerDejaConnus(campagneId);
+    this.memoDejaConnus.set(campagneId, { cle: x.cle, le: Date.now(), res });
+    res.catch(() => this.memoDejaConnus.delete(campagneId));
+    return res;
+  }
+
+  private async calculerDejaConnus(campagneId: number) {
     await this.campagne(campagneId);
     const dossiers = await this.enroles.find({
       where: {
