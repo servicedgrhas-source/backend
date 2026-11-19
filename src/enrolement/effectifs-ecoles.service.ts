@@ -565,7 +565,7 @@ export class EffectifsEcolesService {
           departementId,
           departement:
             departementId === null
-              ? 'DEPPSA non renseignée'
+              ? 'DDEPPSA non renseignée'
               : (nomDep.get(departementId) ?? '?'),
           cycle: ((maj?.cycle ?? c0) || null) as CycleEcole | null,
           nom: maj?.nom ?? '',
@@ -602,7 +602,7 @@ export class EffectifsEcolesService {
         departementId: v.departementId,
         departement:
           v.departementId === null
-            ? 'DEPPSA non renseignée'
+            ? 'DDEPPSA non renseignée'
             : (nomDep.get(v.departementId) ?? '?'),
         effectif: g.effectif,
         sans: 0,
@@ -627,7 +627,7 @@ export class EffectifsEcolesService {
         departementId: p.departementId,
         departement:
           p.departementId === null
-            ? 'DEPPSA non renseignée'
+            ? 'DDEPPSA non renseignée'
             : (nomDep.get(p.departementId) ?? '?'),
         effectif: g.effectif,
         sans: 0,
@@ -895,7 +895,7 @@ export class EffectifsEcolesService {
       nom: nomAffiche(n0.join('|'), cycle),
       departement: d0
         ? (c.deps.find((d) => d.id === Number(d0))?.nom ?? '?')
-        : 'DEPPSA non renseignée',
+        : 'DDEPPSA non renseignée',
       cycle,
     };
   }
@@ -1068,10 +1068,11 @@ export class EffectifsEcolesService {
       groupes.set(r, [...(groupes.get(r) ?? []), parId.get(x)!]);
     }
     const aCreer: { cle: string; autreCle: string }[] = [];
-    const refuses: { ecoles: string; raison: string }[] = [];
+    // Les écoles de chaque groupe refusé : l'écran garde ces paires cochées, avec la raison (19/11/2026)
+    const refuses: { ecoles: string; raison: string; ids: string[] }[] = [];
     for (const membres of groupes.values()) {
       const refuser = (raison: string) =>
-        refuses.push({ ecoles: membres.map((e) => e.nom).join(' / '), raison });
+        refuses.push({ ecoles: membres.map((e) => e.nom).join(' / '), raison, ids: membres.map((e) => e.id) });
       if (membres.filter((e) => e.organigramme).length > 1) {
         refuser('deux écoles de l’organigramme');
         continue;
@@ -1245,7 +1246,7 @@ export class EffectifsEcolesService {
           )
         ).length
       )
-        throw new BadRequestException('DEPPSA inconnue.');
+        throw new BadRequestException('DDEPPSA inconnue.');
       if (d.cycle && !(d.cycle in CYCLES_ECOLE))
         throw new BadRequestException('Cycle inconnu.');
     }
@@ -1332,7 +1333,7 @@ export class EffectifsEcolesService {
     const dep = f.departementId
       ? c.deps.find((d) => d.id === f.departementId)?.nom
       : null;
-    const sous = `${libCycle}${dep ? ` · DEPPSA ${dep}` : ' · toutes les DEPPSA'}${f.seuilFiltre === 'AU_MOINS' ? ` · seulement les écoles d’au moins ${f.seuil} fonctionnaires ou contractuels` : f.seuilFiltre === 'MOINS' ? ` · seulement les écoles de moins de ${f.seuil} fonctionnaires ou contractuels` : ''} · situation au ${new Date().toLocaleDateString('fr-FR')}`;
+    const sous = `${libCycle}${dep ? ` · DDEPPSA ${dep}` : ' · toutes les DDEPPSA'}${f.seuilFiltre === 'AU_MOINS' ? ` · seulement les écoles d’au moins ${f.seuil} fonctionnaires ou contractuels` : f.seuilFiltre === 'MOINS' ? ` · seulement les écoles de moins de ${f.seuil} fonctionnaires ou contractuels` : ''} · situation au ${new Date().toLocaleDateString('fr-FR')}`;
 
     const wb = new ExcelJS.Workbook();
     wb.creator = 'SIGRHAS-MEPPSA';
@@ -1467,7 +1468,7 @@ export class EffectifsEcolesService {
     // 1. Par école, rangée par DEPPSA, avec un sous-total par DEPPSA
     const enTetes = [
       'N°',
-      'DEPPSA',
+      'DDEPPSA',
       'École',
       'Cycle',
       ...EFFECTIFS.map((k) => LIBELLES[k]),
@@ -1559,7 +1560,7 @@ export class EffectifsEcolesService {
     // l'atteignent pas, avec leur part ; personnel de ces écoles et sa part (DG, 18/11/2026)
     const { lignes: parDep, total: tot } = this.parDeppsa(tout, f.seuil);
     const e2 = [
-      'DEPPSA',
+      'DDEPPSA',
       'Écoles',
       `Au moins ${f.seuil} F/C`,
       '% des écoles',
@@ -1572,8 +1573,8 @@ export class EffectifsEcolesService {
       `Fonct. + contr. de ces écoles`,
       '% des fonct. + contr.',
     ];
-    const ws2 = feuille('Par DEPPSA', [22, 9, 11, 9, 11, 9, 11, 13, 12, 13, 11, 14, 9, 13, 10], true);
-    entete(ws2, e2.length, `ÉCOLES D’AU MOINS ${f.seuil} FONCTIONNAIRES OU CONTRACTUELS, PAR DEPPSA`);
+    const ws2 = feuille('Par DDEPPSA', [22, 9, 11, 9, 11, 9, 11, 13, 12, 13, 11, 14, 9, 13, 10], true);
+    entete(ws2, e2.length, `ÉCOLES D’AU MOINS ${f.seuil} FONCTIONNAIRES OU CONTRACTUELS, PAR DDEPPSA`);
     titres(ws2, 13, e2);
     l = 14;
     const pc = (v: number) => `${v.toLocaleString('fr-FR')} %`;
@@ -1603,7 +1604,7 @@ export class EffectifsEcolesService {
     // 3. Les personnes qu'on ne peut pas placer dans une école
     const ws3 = feuille('Sans école', [22, 16, 18, 22, 16, 10]);
     const e3 = [
-      'DEPPSA',
+      'DDEPPSA',
       'Effectif',
       'École non renseignée',
       'Administration (inspection, direction…)',
@@ -1644,13 +1645,13 @@ export class EffectifsEcolesService {
       ws3,
       l,
       e3.length,
-      'Ces personnes ne sont dans aucune école du tableau : leur école (ou lieu de service) n’est pas renseignée, ou elles travaillent dans une inspection, une direction ou un cabinet, ou leur « école » a été écartée (décision : pas une école). Toutes DEPPSA et tous cycles confondus.',
+      'Ces personnes ne sont dans aucune école du tableau : leur école (ou lieu de service) n’est pas renseignée, ou elles travaillent dans une inspection, une direction ou un cabinet, ou leur « école » a été écartée (décision : pas une école). Toutes DDEPPSA et tous cycles confondus.',
     );
 
     // 4. Les noms d'une même école écrits de plusieurs façons
     if (qualite) {
     const e4 = [
-      'DEPPSA',
+      'DDEPPSA',
       'Cycle',
       'Nom retenu',
       'Écriture rencontrée',
@@ -1683,12 +1684,12 @@ export class EffectifsEcolesService {
       ws4,
       l,
       e4.length,
-      'Chaque école réunit les écritures que le système a reconnues comme la même école (même DEPPSA, même nom une fois ôtés le libellé du cycle, les accents, la ponctuation et les articles). À corriger dans les fichiers d’origine pour n’en garder qu’une.',
+      'Chaque école réunit les écritures que le système a reconnues comme la même école (même DDEPPSA, même nom une fois ôtés le libellé du cycle, les accents, la ponctuation et les articles). À corriger dans les fichiers d’origine pour n’en garder qu’une.',
     );
 
     // 4 bis. Les écoles qui se ressemblent, à trancher (même école ou deux écoles)
     const e6 = [
-      'DEPPSA',
+      'DDEPPSA',
       'Cycle',
       'École',
       'Personnes',
@@ -1724,19 +1725,19 @@ export class EffectifsEcolesService {
       ws6,
       l,
       e6.length,
-      'Deux écoles de la même DEPPSA dont les noms se ressemblent : peut-être la même école écrite autrement, peut-être deux écoles. À trancher dans le système (Structures scolaires › Écoles à contrôler) : « même école » les compte ensemble, « deux écoles différentes » ne les propose plus.',
+      'Deux écoles de la même DDEPPSA dont les noms se ressemblent : peut-être la même école écrite autrement, peut-être deux écoles. À trancher dans le système (Structures scolaires › Écoles à contrôler) : « même école » les compte ensemble, « deux écoles différentes » ne les propose plus.',
     );
     }
 
     // 5. Reclassements dans les nouvelles DEPPSA
     const e5 = [
-      'DEPPSA de la base du personnel',
-      'Nouvelle DEPPSA',
+      'DDEPPSA de la base du personnel',
+      'Nouvelle DDEPPSA',
       'École',
       'Agents',
     ];
-    const ws5 = feuille('DEPPSA reclassées', [26, 20, 40, 10]);
-    entete(ws5, e5.length, 'AGENTS RECLASSÉS DANS LES NOUVELLES DEPPSA');
+    const ws5 = feuille('DDEPPSA reclassées', [26, 20, 40, 10]);
+    entete(ws5, e5.length, 'AGENTS RECLASSÉS DANS LES NOUVELLES DDEPPSA');
     titres(ws5, 13, e5);
     l = 14;
     for (const r of c.reclassees) ligne(ws5, l++, [r.de, r.vers, r.ecole, r.n]);
@@ -1745,7 +1746,7 @@ export class EffectifsEcolesService {
       ws5,
       l,
       e5.length,
-      'La base des fonctionnaires et des contractuels est encore sur les anciens départements. Un agent est compté dans une nouvelle DEPPSA (Congo-Oubangui, Djoué-Léfini, Nkéni-Alima) quand son école n’est connue que là, d’après l’organigramme et le registre. La fiche de l’agent n’est pas modifiée.',
+      'La base des fonctionnaires et des contractuels est encore sur les anciens départements. Un agent est compté dans une nouvelle DDEPPSA (Congo-Oubangui, Djoué-Léfini, Nkéni-Alima) quand son école n’est connue que là, d’après l’organigramme et le registre. La fiche de l’agent n’est pas modifiée.',
     );
 
     const contenu = Buffer.from(await wb.xlsx.writeBuffer());

@@ -1592,6 +1592,8 @@ export class EnrolementService implements OnApplicationBootstrap {
     // Un déjà connu dit OÙ il est connu (18/11/2026 : « Déjà connu : Deja afectés », texte tapé à
     // l'écartement, ne disait rien au lecteur) ; le texte tapé reste à part, en observation.
     if (quoi === 'non-retenus') {
+      // Le texte tapé à l'écartement, écrit correctement (« Deja afectés » → « Déjà affecté (e) »)
+      const dejaAffecte = (t: string) => t.replace(/d[ée]j[àa]\s+aff?[ée]ct[ée]e?s?(\s*\(e\))?/gi, 'Déjà affecté (e)');
       const connus = await this.comparateurConnus(campagneId);
       const dejaConnu = (nom: string, naissance: string | null) => {
         const t = connus(nom, naissance)[0];
@@ -1616,13 +1618,16 @@ export class EnrolementService implements OnApplicationBootstrap {
           naissance: jour(e.dateNaissance),
           ...this.ageDe(e.dateNaissance, c.annee),
           diplome: e.diplomeLibelle,
-          cycle: [e.cycle, e.specialite].filter(Boolean).join(' · ') || null,
+          // Cycle et spécialité séparés ; les départements choisis par le candidat (DG, 19/11/2026)
+          cycle: e.cycle || null,
+          specialite: e.specialite || null,
+          departementsChoisis: e.departementsSouhaitesNoms.join(', ') || null,
           motif: e.ecarteDejaConnu
             ? dejaConnu(e.nomComplet, e.dateNaissance)
             : (e.motifDecision ?? 'Non précisé'),
           // Ce qui avait été tapé à l'écartement (« Déjà connu : … »)
           observation: e.ecarteDejaConnu
-            ? (e.motifDecision ?? '').replace(/^D[ée]j[àa] connu\s*(:\s*)?/i, '').replace(/^\(recruté, volontaire ou enrôlé\)$/, '') || null
+            ? dejaAffecte((e.motifDecision ?? '').replace(/^D[ée]j[àa] connu\s*(:\s*)?/i, '').replace(/^\(recruté, volontaire ou enrôlé\)$/, '')) || null
             : null,
           decision: e.decidePar
             ? `${e.decidePar}${e.decideLe ? `, le ${jour(new Date(e.decideLe).toISOString())}` : ''}`
