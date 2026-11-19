@@ -247,6 +247,18 @@ export class ControleEcolesController {
     return this.ecoles.fusionner(u, d.paires);
   }
 
+  /** Rattacher à l'organigramme : les écoles hors organigramme et leurs écoles de l'organigramme proches. */
+  @Get('rattachement')
+  rattachement(@Query() q: Record<string, string | undefined>) {
+    const seuil = q.seuil === undefined ? undefined : Number(q.seuil);
+    return this.ecoles.rattachement(
+      this.filtres(q),
+      Math.max(1, Number(q.page) || 1),
+      Math.min(100, Number(q.taille) || 30),
+      seuil !== undefined && Number.isFinite(seuil) ? Math.max(0, Math.min(1, seuil)) : undefined,
+    );
+  }
+
   @Get('liste/:quoi')
   async liste(
     @Param('quoi') quoi: string,

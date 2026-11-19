@@ -935,6 +935,63 @@ export class EffectifsEcolesService {
     };
   }
 
+  /**
+   * Rattacher à l'organigramme (19/11/2026 : le but est que toute école des fichiers finisse dans
+   * une école de l'organigramme). Pour chaque école hors organigramme : les 3 écoles de
+   * l'organigramme de la même DDEPPSA (cycle compatible, pas déclarées « différentes ») dont le nom
+   * ressemble le plus. Rangées de la plus sûre à la moins sûre ; une école sans école proche à la fin.
+   */
+  private candidatsOrganigramme(c: Calcul, f: FiltresEcoles) {
+    const differentes = new Set(
+      c.decisions.filter((d) => d.type === 'DIFFERENTES').map((d) => paireCle(d.cle, d.autreCle)),
+    );
+    const orgsParDep = new Map<string, { e: EcoleCalculee; p: Map<string, number> }[]>();
+    for (const e of c.ecoles)
+      if (e.organigramme) {
+        const k = String(e.departementId ?? '');
+        orgsParDep.set(k, [...(orgsParDep.get(k) ?? []), { e, p: paires(e.cle) }]);
+      }
+    const hors = this.filtrer(c, { ...f, seuilFiltre: undefined }).filter((e) => !e.organigramme);
+    return hors
+      .map((e) => {
+        const pe = paires(e.cle);
+        const candidats = (orgsParDep.get(String(e.departementId ?? '')) ?? [])
+          .filter(({ e: o }) => !(e.cycle && o.cycle && e.cycle !== o.cycle) && !differentes.has(paireCle(e.id, o.id)))
+          .map(({ e: o, p: po }) => ({ id: o.id, nom: o.nom, cycle: o.cycle, total: o.total, score: ressemblance(e.cle, o.cle, pe, po) }))
+          .filter((x) => x.score >= 0.4)
+          .sort((a, b) => b.score - a.score || b.total - a.total)
+          .slice(0, 3);
+        return { e, candidats };
+      })
+      .sort(
+        (a, b) =>
+          (b.candidats[0]?.score ?? 0) - (a.candidats[0]?.score ?? 0) ||
+          b.e.total - a.e.total ||
+          a.e.nom.localeCompare(b.e.nom),
+      );
+  }
+
+  async rattachement(f: FiltresEcoles, page = 1, taille = 30, seuil?: number) {
+    const c = await this.calcul();
+    const toutes = this.candidatsOrganigramme(c, f);
+    const meilleur = (x: (typeof toutes)[number]) => x.candidats[0]?.score ?? 0;
+    return {
+      total: toutes.length,
+      nombres: {
+        tresProches: toutes.filter((x) => meilleur(x) >= 0.85).length,
+        proches: toutes.filter((x) => meilleur(x) >= 0.7 && meilleur(x) < 0.85).length,
+        lointaines: toutes.filter((x) => meilleur(x) > 0 && meilleur(x) < 0.7).length,
+        sansCandidat: toutes.filter((x) => !x.candidats.length).length,
+      },
+      /** Avec `seuil` : toutes les écoles (toutes pages) dont la meilleure école est au moins à ce score. */
+      choix:
+        seuil !== undefined
+          ? toutes.filter((x) => meilleur(x) >= seuil).map((x) => ({ a: x.e.id, b: x.candidats[0].id }))
+          : undefined,
+      ecoles: toutes.slice((page - 1) * taille, page * taille).map((x) => ({ ...this.publique(x.e), candidats: x.candidats })),
+    };
+  }
+
   /** Les inspections de l'organigramme, rangées par département puis par cycle. */
   async inspections() {
     const lignes = await this.ds.query<
