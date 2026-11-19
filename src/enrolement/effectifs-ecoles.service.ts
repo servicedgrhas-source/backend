@@ -1287,6 +1287,10 @@ export class EffectifsEcolesService {
       return { fusionnees: 0, groupes: 0, refuses, ignorees };
     const sources = new Set(aCreer.map((x) => x.cle));
     const paire = new Set(aCreer.map((x) => paireCle(x.cle, x.autreCle)));
+    // Les « même école » remplacées : leurs fiches reviennent d'abord (la fusion les reprend)
+    const enPlus = await this.defaireRemplacees(
+      (await this.ds.getRepository(DecisionEcole).find({ where: { type: 'JUMELEE' } })).filter((x) => sources.has(x.cle)),
+    );
     const lignes = await this.ds.transaction(async (em) => {
       const repo = em.getRepository(DecisionEcole);
       // Comme une décision seule : la nouvelle remplace l'ancienne « même école » de l'école, et
@@ -1320,7 +1324,7 @@ export class EffectifsEcolesService {
         motif: l.motif,
         enSerie: true,
       });
-    const fiches = await this.appliquerAuxFiches(u, c, lignes);
+    const fiches = await this.appliquerAuxFiches(u, c, lignes, enPlus);
     this.memoire.oublier();
     return {
       fiches,
@@ -1446,6 +1450,7 @@ export class EffectifsEcolesService {
             (x.type === 'DIFFERENTES' && memePaire(x))
           : x.type === d.type && x.cle === d.cle,
     );
+    const enPlus = await this.defaireRemplacees(remplacees.filter((x) => x.type === 'JUMELEE'));
     if (remplacees.length) await repo.delete(remplacees.map((x) => x.id));
     const motif = d.motif?.trim().slice(0, 500) || null;
     const maj = d.type === 'MISE_A_JOUR';
@@ -1476,7 +1481,7 @@ export class EffectifsEcolesService {
       motif,
     });
     // L'école gardée est dans l'organigramme : les fiches concernées sont mises à jour
-    const fiches = avantDecision ? await this.appliquerAuxFiches(u, avantDecision, [ligne]) : 0;
+    const fiches = avantDecision ? await this.appliquerAuxFiches(u, avantDecision, [ligne], enPlus) : 0;
     this.memoire.oublier();
     return { id: ligne.id, fiches };
   }
@@ -1494,6 +1499,8 @@ export class EffectifsEcolesService {
     u: UtilisateurConnecte,
     c: Calcul,
     decisions: { id: number; cle: string; autreCle: string }[],
+    /** Par école : les fiches d'une ancienne décision remplacée (remises juste avant). */
+    enPlus: Map<string, { cible: 'P' | 'V'; id: string }[]> = new Map(),
   ) {
     const codes = new Map(
       (await this.ds.query<{ id: number; code: string }[]>(`SELECT id, code FROM departement`)).map((d) => [d.id, d.code]),
@@ -1510,7 +1517,18 @@ export class EffectifsEcolesService {
       const st = c.structureDe.get(cible);
       // Décision nouvelle : ceux comptés dans l'école (avec ses jumelles d'avant) ; décision déjà
       // prise : ceux écrits sous ce nom-là
-      const gens = (c.decisions.some((x) => x.id === d.id) ? c.membresAvant.get(d.cle) : c.membres.get(d.cle)) ?? [];
+      const comptes = c.decisions.some((x) => x.id === d.id)
+        ? c.membresAvant.get(d.cle)
+        : c.membres.get(d.cle)?.length
+          ? c.membres.get(d.cle)
+          : c.membresAvant.get(d.cle);
+      const vus = new Set<string>();
+      const gens = [...(comptes ?? []), ...(enPlus.get(d.cle) ?? [])].filter((x) => {
+        const k = `${x.cible}${x.id}`;
+        if (vus.has(k)) return false;
+        vus.add(k);
+        return true;
+      });
       if (!st || !gens.length) continue;
       const lignes: { cible: string; refId: string; avant: unknown; apres: unknown }[] = [];
       const p = gens.filter((x) => x.cible === 'P').map((x) => Number(x.id));
@@ -1520,16 +1538,20 @@ export class EffectifsEcolesService {
       const dep = st.departementId;
       if (p.length) {
         const avant = await em.query<{ id: number; structureId: number | null; departementId: number | null; lieu: string | null; departement: string | null }[]>(
-          `SELECT id, "structureId", "departementId", donnees->>'LIEU_SERVICE' AS lieu, donnees->>'DEPARTEMENT' AS departement
-             FROM agent_recense WHERE id = ANY($1)`,
+          // Jamais une fiche déjà dans une école de l'organigramme, ni une fiche qu'une autre décision a déjà mise à jour
+          `SELECT a.id, a."structureId", a."departementId", a.donnees->>'LIEU_SERVICE' AS lieu, a.donnees->>'DEPARTEMENT' AS departement
+             FROM agent_recense a LEFT JOIN structure s ON s.id = a."structureId"
+            WHERE a.id = ANY($1) AND coalesce(s.type, '') <> 'ETABLISSEMENT'
+              AND NOT EXISTS (SELECT 1 FROM application_ecole x WHERE x.cible = 'P' AND x."refId" = a.id::text)`,
           [p],
         );
+        const pOk = avant.map((a) => a.id);
         const ajout: Record<string, string> = { LIEU_SERVICE: st.nom };
         if (dep !== null && codes.get(dep)) ajout.DEPARTEMENT = codes.get(dep)!;
         await em.query(
           `UPDATE agent_recense SET "structureId" = $2, "departementId" = coalesce($3, "departementId"),
                   donnees = donnees || $4::jsonb WHERE id = ANY($1)`,
-          [p, st.id, dep, JSON.stringify(ajout)],
+          [pOk, st.id, dep, JSON.stringify(ajout)],
         );
         for (const a of avant)
           lignes.push({
@@ -1541,12 +1563,15 @@ export class EffectifsEcolesService {
       }
       if (v.length) {
         const avant = await em.query<{ id: string; etablissement: string | null; departementId: number | null }[]>(
-          `SELECT id, etablissement, "departementId" FROM volontaire WHERE id = ANY($1::uuid[])`,
+          `SELECT v.id, v.etablissement, v."departementId" FROM volontaire v
+            WHERE v.id = ANY($1::uuid[])
+              AND NOT EXISTS (SELECT 1 FROM application_ecole x WHERE x.cible = 'V' AND x."refId" = v.id::text)`,
           [v],
         );
+        const vOk = avant.map((a) => a.id);
         await em.query(
           `UPDATE volontaire SET etablissement = $2, "departementId" = coalesce($3, "departementId") WHERE id = ANY($1::uuid[])`,
-          [v, st.nom, dep],
+          [vOk, st.nom, dep],
         );
         for (const a of avant)
           lignes.push({
@@ -1569,11 +1594,24 @@ export class EffectifsEcolesService {
       fiches += lignes.length;
       await this.journal.log(u, 'ECOLE_FICHES_MISES_A_JOUR', 'decision_ecole', d.id, {
         structureId: st.id,
-        personnel: p.length,
-        registre: v.length,
+        personnel: lignes.filter((x) => x.cible === 'P').length,
+        registre: lignes.filter((x) => x.cible === 'V').length,
       });
     }
     return fiches;
+  }
+
+  /**
+   * Avant de remplacer des décisions « même école » (l'école rattachée ailleurs) : leurs fiches
+   * reprennent leur valeur d'avant, et la nouvelle décision les reprend (par école).
+   */
+  private async defaireRemplacees(ids: { id: number; cle: string }[]) {
+    const enPlus = new Map<string, { cible: 'P' | 'V'; id: string }[]>();
+    for (const x of ids) {
+      const r = await this.defaireFiches(x.id);
+      if (r.refs.length) enPlus.set(x.cle, [...(enPlus.get(x.cle) ?? []), ...r.refs]);
+    }
+    return enPlus;
   }
 
   /** Défaire ce qu'une décision a écrit dans les fiches (seulement si personne n'y a touché depuis). */
@@ -1585,7 +1623,9 @@ export class EffectifsEcolesService {
       [decisionId],
     );
     let remises = 0;
+    const refs: { cible: 'P' | 'V'; id: string }[] = [];
     for (const l of lignes) {
+      refs.push({ cible: l.cible === 'P' ? 'P' : 'V', id: l.refId });
       const a = l.avant;
       const b = l.apres;
       if (l.cible === 'P') {
@@ -1610,7 +1650,7 @@ export class EffectifsEcolesService {
       }
     }
     await em.query(`DELETE FROM application_ecole WHERE "decisionId" = $1`, [decisionId]);
-    return { remises, total: lignes.length };
+    return { remises, total: lignes.length, refs };
     });
   }
 
