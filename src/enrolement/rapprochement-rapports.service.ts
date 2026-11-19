@@ -245,7 +245,9 @@ export class RapprochementRapportsService {
           // La ligne de dessous précise les colonnes groupées (Diplômes : Acad / prof…)
           const sous = rangs[i + 1] ?? [];
           const sousCols = sous.map(colonneDe);
-          if (sousCols.filter(Boolean).length >= 2 && !sousCols.includes('nom')) {
+          // (pas la première personne : sous « Noms et prénoms », une ligne de sous-titres est vide)
+          const sousNom = sous[cols.indexOf('nom')];
+          if (sousCols.filter(Boolean).length >= 2 && !sousCols.includes('nom') && vide(sousNom)) {
             sous.forEach((t, k) => {
               if (sousCols[k]) {
                 colonnes![k] = sousCols[k];
