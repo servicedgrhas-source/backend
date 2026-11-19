@@ -213,6 +213,15 @@ interface Calcul {
    */
   ressemblances: PaireEcoles[];
   decisions: LigneDecision[];
+  /**
+   * Les personnes comptées dans chaque école (clé) : fiche du personnel (P) ou du registre (V). Une
+   * personne du registre sans école écrite, comptée par sa fiche du personnel, est une P.
+   */
+  membres: Map<string, { cible: 'P' | 'V'; id: string }[]>;
+  /** Les mêmes, sous le nom d'école écrit (avant les jumelages). */
+  membresAvant: Map<string, { cible: 'P' | 'V'; id: string }[]>;
+  /** La structure (organigramme) de chaque école qui y est. */
+  structureDe: Map<string, { id: number; nom: string; departementId: number | null }>;
   /** Les écoles de l'organigramme où personne n'est encore compté (cibles possibles d'un rattachement). */
   organigrammeVides: { id: string; cle: string; nom: string; departementId: number | null; departement: string; cycle: CycleEcole | null }[];
   /** Personnes sans école : rien d'écrit, ou un lieu qui n'est pas une école (inspection…). */
@@ -382,24 +391,30 @@ export class EffectifsEcolesService {
       r: Resultat;
       fc: boolean;
       agentId?: number;
+      /** La fiche à corriger si l'école est rattachée : registre (V) ou personnel (P). */
+      ref?: { cible: 'P' | 'V'; id: string };
     }[] = [];
     for (const v of registre) {
       const fiche = ficheDe.get(v.id);
       if (fiche && fc(fiche.statut)) continue;
       const cycle = cycleDeCategorie(v.categorie);
       let r = lieuDe(v.departementId, null, v.etablissement, cycle);
-      if (r === 'SANS' && fiche)
+      let ref: { cible: 'P' | 'V'; id: string } = { cible: 'V', id: v.id };
+      if (r === 'SANS' && fiche) {
         r = lieuDe(
           v.departementId ?? fiche.departementId,
           fiche.structureId,
           fiche.lieu,
           cycle,
         );
+        ref = { cible: 'P', id: String(fiche.id) };
+      }
       gens.push({
         effectif:
           v.population === 'COMMUNAUTAIRE' ? 'communautaires' : 'volontaires',
         r,
         fc: false,
+        ref,
       });
     }
     for (const p of personnel) {
@@ -411,6 +426,7 @@ export class EffectifsEcolesService {
         r: lieuDe(p.departementId, p.structureId, p.lieu, cycle),
         fc: true,
         agentId: p.id,
+        ref: { cible: 'P', id: String(p.id) },
       });
     }
 
@@ -521,11 +537,18 @@ export class EffectifsEcolesService {
     // Les décisions prises sur les écoles : jumelées (comptées avec une autre), écartées (pas une
     // école), mises à jour (nom, DEPPSA ou cycle corrigés)
     const dec = lireDecisions(decisions);
+    // Qui est écrit sous chaque nom d'école, avant les jumelages (pour mettre à jour les fiches
+    // d'après une décision déjà prise)
+    const membresAvant = new Map<string, { cible: 'P' | 'V'; id: string }[]>();
     for (const g of gens)
       if (typeof g.r === 'object') {
-        const k = dec.racine(
-          `${g.r.departementId ?? ''}|${g.r.cycle ?? ''}|${g.r.cle}`,
-        );
+        const k0 = `${g.r.departementId ?? ''}|${g.r.cycle ?? ''}|${g.r.cle}`;
+        if (g.ref && !g.r.structureId) {
+          const l = membresAvant.get(k0);
+          if (l) l.push(g.ref);
+          else membresAvant.set(k0, [g.ref]);
+        }
+        const k = dec.racine(k0);
         if (dec.ecartees.has(k)) g.r = 'ECARTEE';
         else g.r.groupe = k;
       }
@@ -552,10 +575,17 @@ export class EffectifsEcolesService {
       EcoleCalculee & { structureId: number | null }
     >();
     const sans = new Map<string, Calcul['sansEcole'][number]>();
+    const membres = new Map<string, { cible: 'P' | 'V'; id: string }[]>();
     for (const g of gens) {
       if (typeof g.r !== 'object') continue;
       const r = g.r;
       const k = r.groupe ?? '';
+      // Les fiches d'une personne qui n'est pas déjà rattachée à une structure de l'organigramme
+      if (g.ref && !r.structureId) {
+        const l = membres.get(k);
+        if (l) l.push(g.ref);
+        else membres.set(k, [g.ref]);
+      }
       let e = ecoles.get(k);
       if (!e) {
         const [d0, c0, ...n0] = k.split('|');
@@ -730,8 +760,16 @@ export class EffectifsEcolesService {
           cycle,
         };
       });
+    const structureDe = new Map<string, { id: number; nom: string; departementId: number | null }>();
+    for (const [k, sid] of structureParEcole) {
+      const st = structures.get(sid);
+      if (st) structureDe.set(k, { id: st.id, nom: st.nom, departementId: st.departementId });
+    }
     return {
       le: Date.now(),
+      membres,
+      membresAvant,
+      structureDe,
       organigrammeVides,
       ecoles: liste,
       ressemblances,
@@ -1282,8 +1320,10 @@ export class EffectifsEcolesService {
         motif: l.motif,
         enSerie: true,
       });
+    const fiches = await this.appliquerAuxFiches(u, c, lignes);
     this.memoire.oublier();
     return {
+      fiches,
       fusionnees: lignes.length,
       groupes: nbGroupes,
       refuses,
@@ -1364,6 +1404,8 @@ export class EffectifsEcolesService {
     )
       throw new BadRequestException('Choisissez l’autre école.');
     const repo = this.ds.getRepository(DecisionEcole);
+    // Le calcul d'avant la décision : qui est compté dans l'école rattachée (fiches à mettre à jour)
+    const avantDecision = d.type === 'JUMELEE' ? await this.calcul() : null;
     const existantes = await repo.find({ order: { id: 'ASC' } });
     if (d.type === 'JUMELEE') {
       const dec = lireDecisions(
@@ -1433,11 +1475,174 @@ export class EffectifsEcolesService {
       cycle: ligne.cycle,
       motif,
     });
+    // L'école gardée est dans l'organigramme : les fiches concernées sont mises à jour
+    const fiches = avantDecision ? await this.appliquerAuxFiches(u, avantDecision, [ligne]) : 0;
     this.memoire.oublier();
-    return { id: ligne.id };
+    return { id: ligne.id, fiches };
   }
 
   /** Annuler une décision : l'école est de nouveau comptée comme avant. */
+  /**
+   * Mettre nos bases à jour d'après des décisions « même école » (19/11/2026 : le contrôle des
+   * écoles est dans Structures et besoins, il doit réactualiser nos bases) : quand l'école gardée
+   * est dans l'organigramme, les fiches des personnes comptées dans l'école rattachée prennent
+   * cette structure — fiche du personnel : structure, lieu de service, DDEPPSA ; registre :
+   * établissement, DDEPPSA. Chaque fiche garde sa valeur d'avant (annuler la décision la remet).
+   * `c` : le calcul d'AVANT les décisions (qui y est compté).
+   */
+  private async appliquerAuxFiches(
+    u: UtilisateurConnecte,
+    c: Calcul,
+    decisions: { id: number; cle: string; autreCle: string }[],
+  ) {
+    const codes = new Map(
+      (await this.ds.query<{ id: number; code: string }[]>(`SELECT id, code FROM departement`)).map((d) => [d.id, d.code]),
+    );
+    let fiches = 0;
+    for (const d of decisions) {
+      // L'école gardée, au bout des jumelages déjà faits
+      let cible = d.autreCle;
+      for (let i = 0; i < 20; i++) {
+        const suite = c.decisions.find((x) => x.type === 'JUMELEE' && x.cle === cible && x.id !== d.id)?.autreCle;
+        if (!suite || suite === d.cle) break;
+        cible = suite;
+      }
+      const st = c.structureDe.get(cible);
+      // Décision nouvelle : ceux comptés dans l'école (avec ses jumelles d'avant) ; décision déjà
+      // prise : ceux écrits sous ce nom-là
+      const gens = (c.decisions.some((x) => x.id === d.id) ? c.membresAvant.get(d.cle) : c.membres.get(d.cle)) ?? [];
+      if (!st || !gens.length) continue;
+      const lignes: { cible: string; refId: string; avant: unknown; apres: unknown }[] = [];
+      const p = gens.filter((x) => x.cible === 'P').map((x) => Number(x.id));
+      const v = gens.filter((x) => x.cible === 'V').map((x) => x.id);
+      await this.tableApplications();
+      await this.ds.transaction(async (em) => {
+      const dep = st.departementId;
+      if (p.length) {
+        const avant = await em.query<{ id: number; structureId: number | null; departementId: number | null; lieu: string | null; departement: string | null }[]>(
+          `SELECT id, "structureId", "departementId", donnees->>'LIEU_SERVICE' AS lieu, donnees->>'DEPARTEMENT' AS departement
+             FROM agent_recense WHERE id = ANY($1)`,
+          [p],
+        );
+        const ajout: Record<string, string> = { LIEU_SERVICE: st.nom };
+        if (dep !== null && codes.get(dep)) ajout.DEPARTEMENT = codes.get(dep)!;
+        await em.query(
+          `UPDATE agent_recense SET "structureId" = $2, "departementId" = coalesce($3, "departementId"),
+                  donnees = donnees || $4::jsonb WHERE id = ANY($1)`,
+          [p, st.id, dep, JSON.stringify(ajout)],
+        );
+        for (const a of avant)
+          lignes.push({
+            cible: 'P',
+            refId: String(a.id),
+            avant: { structureId: a.structureId, departementId: a.departementId, LIEU_SERVICE: a.lieu, DEPARTEMENT: a.departement },
+            apres: { structureId: st.id, departementId: dep ?? a.departementId, LIEU_SERVICE: st.nom, DEPARTEMENT: ajout.DEPARTEMENT ?? a.departement },
+          });
+      }
+      if (v.length) {
+        const avant = await em.query<{ id: string; etablissement: string | null; departementId: number | null }[]>(
+          `SELECT id, etablissement, "departementId" FROM volontaire WHERE id = ANY($1::uuid[])`,
+          [v],
+        );
+        await em.query(
+          `UPDATE volontaire SET etablissement = $2, "departementId" = coalesce($3, "departementId") WHERE id = ANY($1::uuid[])`,
+          [v, st.nom, dep],
+        );
+        for (const a of avant)
+          lignes.push({
+            cible: 'V',
+            refId: a.id,
+            avant: { etablissement: a.etablissement, departementId: a.departementId },
+            apres: { etablissement: st.nom, departementId: dep ?? a.departementId },
+          });
+      }
+      for (let i = 0; i < lignes.length; i += 500) {
+        const lot = lignes.slice(i, i + 500);
+        await em.query(
+          `INSERT INTO application_ecole ("decisionId", cible, "refId", avant, apres, par)
+           SELECT $1, x.cible, x."refId", x.avant, x.apres, $2
+             FROM jsonb_to_recordset($3::jsonb) AS x(cible text, "refId" text, avant jsonb, apres jsonb)`,
+          [d.id, u.nom, JSON.stringify(lot)],
+        );
+      }
+      });
+      fiches += lignes.length;
+      await this.journal.log(u, 'ECOLE_FICHES_MISES_A_JOUR', 'decision_ecole', d.id, {
+        structureId: st.id,
+        personnel: p.length,
+        registre: v.length,
+      });
+    }
+    return fiches;
+  }
+
+  /** Défaire ce qu'une décision a écrit dans les fiches (seulement si personne n'y a touché depuis). */
+  private async defaireFiches(decisionId: number) {
+    await this.tableApplications();
+    return this.ds.transaction(async (em) => {
+    const lignes = await em.query<{ id: number; cible: string; refId: string; avant: Record<string, unknown>; apres: Record<string, unknown> }[]>(
+      `SELECT id, cible, "refId", avant, apres FROM application_ecole WHERE "decisionId" = $1`,
+      [decisionId],
+    );
+    let remises = 0;
+    for (const l of lignes) {
+      const a = l.avant;
+      const b = l.apres;
+      if (l.cible === 'P') {
+        const ajout: Record<string, unknown> = {};
+        const retire: string[] = [];
+        for (const k of ['LIEU_SERVICE', 'DEPARTEMENT'])
+          if (a[k] === null || a[k] === undefined) retire.push(k);
+          else ajout[k] = a[k];
+        const r = await em.query<unknown[]>(
+          `UPDATE agent_recense SET "structureId" = $2, "departementId" = $3, donnees = (donnees - $4::text[]) || $5::jsonb
+            WHERE id = $1 AND "structureId" IS NOT DISTINCT FROM $6 AND donnees->>'LIEU_SERVICE' IS NOT DISTINCT FROM $7 RETURNING id`,
+          [Number(l.refId), a.structureId ?? null, a.departementId ?? null, retire, JSON.stringify(ajout), b.structureId ?? null, b.LIEU_SERVICE ?? null],
+        );
+        if (r.length) remises++;
+      } else {
+        const r = await em.query<unknown[]>(
+          `UPDATE volontaire SET etablissement = $2, "departementId" = $3
+            WHERE id = $1::uuid AND etablissement IS NOT DISTINCT FROM $4 RETURNING id`,
+          [l.refId, a.etablissement ?? null, a.departementId ?? null, b.etablissement ?? null],
+        );
+        if (r.length) remises++;
+      }
+    }
+    await em.query(`DELETE FROM application_ecole WHERE "decisionId" = $1`, [decisionId]);
+    return { remises, total: lignes.length };
+    });
+  }
+
+  /** La table des fiches mises à jour (créée par la migration ; ici aussi, si la base est synchronisée). */
+  private tablePrete = false;
+  private async tableApplications() {
+    if (this.tablePrete) return;
+    await this.ds.query(
+      `CREATE TABLE IF NOT EXISTS "application_ecole" ("id" SERIAL NOT NULL, "decisionId" integer NOT NULL, "cible" character varying NOT NULL, "refId" character varying NOT NULL, "avant" jsonb NOT NULL DEFAULT '{}', "apres" jsonb NOT NULL DEFAULT '{}', "par" character varying, "le" TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT now(), CONSTRAINT "PK_application_ecole" PRIMARY KEY ("id"))`,
+    );
+    await this.ds.query(`CREATE INDEX IF NOT EXISTS "IDX_application_ecole_decision" ON "application_ecole" ("decisionId")`);
+    this.tablePrete = true;
+  }
+
+  /**
+   * Les décisions « même école » déjà prises, avant que le contrôle mette les fiches à jour : les
+   * appliquer maintenant (une décision déjà appliquée n'est pas refaite).
+   */
+  async appliquerDecisionsPassees(u: UtilisateurConnecte) {
+    if (u.role !== 'ADMIN' && !ROLES_CONTROLE.includes(u.role))
+      throw new ForbiddenException('Réservé au contrôle (chef de service, directeur, bureau d’études, DG).');
+    const c = await this.calcul();
+    await this.tableApplications();
+    const faites = new Set(
+      (await this.ds.query<{ d: number }[]>(`SELECT DISTINCT "decisionId" AS d FROM application_ecole`)).map((x) => x.d),
+    );
+    const aFaire = c.decisions.filter((d) => d.type === 'JUMELEE' && !faites.has(d.id));
+    const fiches = await this.appliquerAuxFiches(u, c, aFaire);
+    this.memoire.oublier();
+    return { decisions: aFaire.length, fiches };
+  }
+
   async annuler(u: UtilisateurConnecte, id: number) {
     const repo = this.ds.getRepository(DecisionEcole);
     const d = await repo.findOne({ where: { id } });
@@ -1448,14 +1653,17 @@ export class EffectifsEcolesService {
       !ROLES_CONTROLE.includes(u.role)
     )
       throw new ForbiddenException('Réservé au contrôle.');
+    // Les fiches mises à jour par cette décision reprennent leur valeur d'avant
+    const defait = await this.defaireFiches(id);
     await repo.delete(id);
     await this.journal.log(u, 'ECOLE_DECISION_ANNULEE', 'decision_ecole', id, {
       type: d.type,
       cle: d.cle,
       autreCle: d.autreCle || null,
+      fichesRemises: defait.remises,
     });
     this.memoire.oublier();
-    return { ok: true };
+    return { ok: true, fichesRemises: defait.remises };
   }
 
   /**

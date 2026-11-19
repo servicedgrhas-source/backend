@@ -242,6 +242,12 @@ export class ControleEcolesController {
   }
 
   /** Fusionner les paires cochées (décisions « même école » en série). */
+  /** Mettre les fiches à jour d'après les décisions « même école » prises avant le 19/11/2026. */
+  @Post('decisions/appliquer-passees')
+  appliquerPassees(@Utilisateur() u: UtilisateurConnecte) {
+    return this.ecoles.appliquerDecisionsPassees(u);
+  }
+
   @Post('decisions/fusion')
   fusionner(@Utilisateur() u: UtilisateurConnecte, @Body() d: FusionBody) {
     return this.ecoles.fusionner(u, d.paires);
