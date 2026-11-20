@@ -431,13 +431,18 @@ export class RecensementService {
     const fp = this.filtrePerimetre(await this.perimetre(u));
     const params: unknown[] = [...fp.params];
     let perimetre = fp.sql;
-    fp.params.forEach((_, i) => (perimetre = perimetre.replace('$X', `$${i + 1}`)));
+    fp.params.forEach(
+      (_, i) => (perimetre = perimetre.replace('$X', `$${i + 1}`)),
+    );
     const p = (v: unknown) => {
       params.push(v);
       return `$${params.length}`;
     };
     const parNom = mots
-      .map((m) => `a."nomNormalise" LIKE ${p(`%${m.replace(/[\\%_]/g, '\\$&')}%`)}`)
+      .map(
+        (m) =>
+          `a."nomNormalise" LIKE ${p(`%${m.replace(/[\\%_]/g, '\\$&')}%`)}`,
+      )
       .join(' AND ');
     const code = p(`%${brut.toUpperCase().replace(/[\\%_]/g, '\\$&')}%`);
     const lignes = await this.agents.query<
@@ -1087,11 +1092,16 @@ export class RecensementService {
     const donnees = this.lireDonnees(c, brutes);
     const champs = Object.fromEntries(
       Object.entries(donnees)
-        .filter(([k, v]) => JSON.stringify(a.donnees[k] ?? null) !== JSON.stringify(v))
+        .filter(
+          ([k, v]) =>
+            JSON.stringify(a.donnees[k] ?? null) !== JSON.stringify(v),
+        )
         .map(([k, v]) => [k, { avant: a.donnees[k] ?? null, apres: v }]),
     );
     if (!Object.keys(champs).length)
-      throw new BadRequestException('La fiche a déjà ces valeurs : rien à proposer.');
+      throw new BadRequestException(
+        'La fiche a déjà ces valeurs : rien à proposer.',
+      );
     const m = await this.agents.manager.save(ModificationRecensement, {
       agentId: a.id,
       faitePar: u.nom,
@@ -1099,10 +1109,16 @@ export class RecensementService {
       proposition: true,
       source: source.slice(0, 500),
     });
-    await this.journal.log(u, 'RECENSEMENT_PROPOSITION', 'agent_recense', a.id, {
-      champs: Object.keys(champs),
-      source,
-    });
+    await this.journal.log(
+      u,
+      'RECENSEMENT_PROPOSITION',
+      'agent_recense',
+      a.id,
+      {
+        champs: Object.keys(champs),
+        source,
+      },
+    );
     return { id: m.id, rubriques: Object.keys(champs) };
   }
 
@@ -1242,7 +1258,10 @@ export class RecensementService {
             appliquees += Object.keys(donnees).length;
           } catch (e) {
             // Refusée (doublon, valeur…) : la proposition reste à contrôler
-            erreurs.push({ id: m.id, message: `${a.nomComplet} : ${(e as Error).message}` });
+            erreurs.push({
+              id: m.id,
+              message: `${a.nomComplet} : ${(e as Error).message}`,
+            });
             continue;
           }
       } else if (decision === 'REJETER' && !m.proposition) {

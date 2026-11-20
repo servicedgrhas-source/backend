@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Body,
   Controller,
   Get,
@@ -29,6 +30,23 @@ export class PropositionsBmController {
   @Get('propositions-ajout')
   agents() {
     return this.prop.liste('AGENT');
+  }
+
+  /** Valider ou rejeter les propositions cochées (par paquets, depuis l'écran). */
+  @Roles(...CONTROLE)
+  @Post('propositions-ajout/lot')
+  lotAgents(
+    @Utilisateur() u: UtilisateurConnecte,
+    @Body() b: { action?: string; ids?: unknown; note?: string },
+  ) {
+    if (b?.action !== 'VALIDER' && b?.action !== 'REJETER')
+      throw new BadRequestException('Action inconnue.');
+    const ids = Array.isArray(b.ids)
+      ? b.ids.filter((x): x is number => Number.isInteger(x)).slice(0, 200)
+      : [];
+    if (!ids.length)
+      throw new BadRequestException('Cochez au moins une proposition.');
+    return this.prop.lot(u, b.action, ids, String(b.note ?? ''), 'AGENT');
   }
 
   @Roles(...CONTROLE)

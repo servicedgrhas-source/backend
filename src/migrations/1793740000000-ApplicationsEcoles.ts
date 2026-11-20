@@ -13,7 +13,9 @@ export class ApplicationsEcoles1793740000000 implements MigrationInterface {
     await q.query(
       `CREATE TABLE IF NOT EXISTS "application_ecole" ("id" SERIAL NOT NULL, "decisionId" integer NOT NULL, "cible" character varying NOT NULL, "refId" character varying NOT NULL, "avant" jsonb NOT NULL DEFAULT '{}', "apres" jsonb NOT NULL DEFAULT '{}', "par" character varying, "le" TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT now(), CONSTRAINT "PK_application_ecole" PRIMARY KEY ("id"))`,
     );
-    await q.query(`CREATE INDEX IF NOT EXISTS "IDX_application_ecole_decision" ON "application_ecole" ("decisionId")`);
+    await q.query(
+      `CREATE INDEX IF NOT EXISTS "IDX_application_ecole_decision" ON "application_ecole" ("decisionId")`,
+    );
   }
 
   public async down(q: QueryRunner): Promise<void> {

@@ -113,8 +113,12 @@ describe('Écoles écrites à la main (Banque mondiale, 16/11/2026)', () => {
     expect(faute('MOUYONDZI', 'MOYONDZI')).toBe(true);
     expect(faute('MOUNGALI 2', 'MOUNGALI 3')).toBe(false);
     // Deux groupes : deux écoles, pas une faute de frappe
-    expect(faute('NOTRE DAME DE FATIMA A', 'NOTRE DAME DE FATIMA B')).toBe(false);
-    expect(faute('NOTRE DAME DE FATIMA B', 'NOTRE DAME DE FATIAMA B')).toBe(true);
+    expect(faute('NOTRE DAME DE FATIMA A', 'NOTRE DAME DE FATIMA B')).toBe(
+      false,
+    );
+    expect(faute('NOTRE DAME DE FATIMA B', 'NOTRE DAME DE FATIAMA B')).toBe(
+      true,
+    );
     expect(faute('NKAYI', 'NKAY')).toBe(false);
     expect(faute('LOUDIMA GARE', 'LOUDIMA POSTE')).toBe(false);
   });
@@ -144,7 +148,11 @@ describe('Écoles qui se ressemblent', () => {
 });
 
 describe('Probabilité que deux écoles soient la même', () => {
-  const e = (nom: string, organigramme = false, cycle: string | null = 'PRESCOLAIRE') => ({
+  const e = (
+    nom: string,
+    organigramme = false,
+    cycle: string | null = 'PRESCOLAIRE',
+  ) => ({
     cle: cleEcole(nom),
     organigramme,
     cycle,
@@ -162,17 +170,31 @@ describe('Probabilité que deux écoles soient la même', () => {
     ['EP Abala Centre', 'EP Abala-Ndolo', 'A_VERIFIER'],
     ['EP Kayes-Centre B', 'EP BODISSA DE KAYES', 'A_VERIFIER'],
     ['CEP Kinkala', 'INTERNAT DU LYCEE DE KINKALA', 'PEU_PROBABLE'],
-    ['CEP Sibiti', "L'INSPECTION DE L'ENSEIGNEMENT PRIMAIRE SIBITI A", 'PEU_PROBABLE'],
+    [
+      'CEP Sibiti',
+      "L'INSPECTION DE L'ENSEIGNEMENT PRIMAIRE SIBITI A",
+      'PEU_PROBABLE',
+    ],
     ['CEP Makola Caserne', 'CEP Makola Centre', 'PEU_PROBABLE'],
     ['EP LIBERTE A', 'EP LIBERTE B', 'PEU_PROBABLE'],
   ])('%s / %s → %s', (a, b, niveau) => {
     const cycle = /^EP/.test(a) ? 'PRIMAIRE' : 'PRESCOLAIRE';
-    expect(vraisemblance(e(a, false, cycle), e(b, false, cycle)).niveau).toBe(niveau);
+    expect(vraisemblance(e(a, false, cycle), e(b, false, cycle)).niveau).toBe(
+      niveau,
+    );
   });
   it('deux écoles de l’organigramme : peu probable', () => {
-    expect(vraisemblance(e('CEP Makola Centre', true), e('CEP Makola Village', true)).niveau).toBe('PEU_PROBABLE');
+    expect(
+      vraisemblance(e('CEP Makola Centre', true), e('CEP Makola Village', true))
+        .niveau,
+    ).toBe('PEU_PROBABLE');
   });
   it('un CEG écrit en toutes lettres : la même école', () => {
-    expect(vraisemblance(e('CEG OUESSO', false, 'COLLEGE'), e("COLLEGE D'ENSEIGNEMENT GENERAL DE OUESSO", false, 'COLLEGE')).niveau).toBe('TRES_PROBABLE');
+    expect(
+      vraisemblance(
+        e('CEG OUESSO', false, 'COLLEGE'),
+        e("COLLEGE D'ENSEIGNEMENT GENERAL DE OUESSO", false, 'COLLEGE'),
+      ).niveau,
+    ).toBe('TRES_PROBABLE');
   });
 });

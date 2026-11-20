@@ -327,10 +327,7 @@ export function ressemblance(
  * plus probable à la moins probable, en cochant).
  */
 export type Vraisemblance =
-  | 'TRES_PROBABLE'
-  | 'PROBABLE'
-  | 'A_VERIFIER'
-  | 'PEU_PROBABLE';
+  'TRES_PROBABLE' | 'PROBABLE' | 'A_VERIFIER' | 'PEU_PROBABLE';
 
 export const RANG_VRAISEMBLANCE: Record<Vraisemblance, number> = {
   TRES_PROBABLE: 0,
@@ -551,12 +548,8 @@ export function vraisemblance(
   const alignes = (x: string[], y: string[]) =>
     x.length === y.length &&
     x.every((m, i) => motProche(m, y[i]) || initiale(m, y[i]));
-  if (
-    alignes(ua, ub) ||
-    alignes(utiles(ma, true), utiles(mb, true))
-  ) {
-    const pareil =
-      ua.length === ub.length && ua.every((x, i) => x === ub[i]);
+  if (alignes(ua, ub) || alignes(utiles(ma, true), utiles(mb, true))) {
+    const pareil = ua.length === ub.length && ua.every((x, i) => x === ub[i]);
     if (pareil && chefLieu)
       return {
         niveau: 'PROBABLE',

@@ -112,7 +112,10 @@ export class EffectifsEcolesController {
 
   /** Proposer d'ajouter une école hors organigramme à l'organigramme : le DG valide ou rejette. */
   @Post('propositions')
-  proposer(@Utilisateur() u: UtilisateurConnecte, @Body() d: PropositionEcoleBody) {
+  proposer(
+    @Utilisateur() u: UtilisateurConnecte,
+    @Body() d: PropositionEcoleBody,
+  ) {
     return this.propositions.proposerEcole(u, d);
   }
 
@@ -183,7 +186,10 @@ export class ControleEcolesController {
 
   /** Proposer d'ajouter une école hors organigramme à l'organigramme : le DG valide ou rejette. */
   @Post('propositions')
-  proposer(@Utilisateur() u: UtilisateurConnecte, @Body() d: PropositionEcoleBody) {
+  proposer(
+    @Utilisateur() u: UtilisateurConnecte,
+    @Body() d: PropositionEcoleBody,
+  ) {
     return this.propositions.proposerEcole(u, d);
   }
 
@@ -261,7 +267,9 @@ export class ControleEcolesController {
       this.filtres(q),
       Math.max(1, Number(q.page) || 1),
       Math.min(100, Number(q.taille) || 30),
-      seuil !== undefined && Number.isFinite(seuil) ? Math.max(0, Math.min(1, seuil)) : undefined,
+      seuil !== undefined && Number.isFinite(seuil)
+        ? Math.max(0, Math.min(1, seuil))
+        : undefined,
     );
   }
 
@@ -277,12 +285,20 @@ export class ControleEcolesController {
       Math.min(100, Number(q.taille) || 30),
     );
     // L'état de la proposition d'ajout à l'organigramme de chaque école
-    const p = await this.propositions.enAttente('ECOLE', r.ecoles.map((e) => e.id));
+    const p = await this.propositions.enAttente(
+      'ECOLE',
+      r.ecoles.map((e) => e.id),
+    );
     return {
       ...r,
       ecoles: r.ecoles.map((e) => {
         const x = p.get(e.id);
-        return { ...e, proposition: x ? { etat: x.etat, note: x.note, controlePar: x.controlePar } : null };
+        return {
+          ...e,
+          proposition: x
+            ? { etat: x.etat, note: x.note, controlePar: x.controlePar }
+            : null,
+        };
       }),
     };
   }

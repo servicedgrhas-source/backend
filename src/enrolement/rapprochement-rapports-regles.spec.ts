@@ -60,7 +60,11 @@ describe('Valeurs du rapport', () => {
   it('les parties du rapport', () => {
     expect(partieDe('A2 - Secteur privé').secteur).toBe('PRIVE');
     expect(partieDe('I-3 Secteur Conventionné').secteur).toBe('CONVENTIONNE');
-    expect(partieDe('Personnel administratif en service dans les centres d’éducation du préscolaire')).toEqual({
+    expect(
+      partieDe(
+        'Personnel administratif en service dans les centres d’éducation du préscolaire',
+      ),
+    ).toEqual({
       secteur: null,
       cycle: 'PRESCOLAIRE',
       rubrique: 'ADMINISTRATIF',
@@ -68,8 +72,14 @@ describe('Valeurs du rapport', () => {
   });
   it('la naissance', () => {
     expect(naissanceDe('1987')).toEqual({ annee: 1987, date: null });
-    expect(naissanceDe('6/2/1987')).toEqual({ annee: 1987, date: '1987-02-06' });
-    expect(naissanceDe('1987-02-06')).toEqual({ annee: 1987, date: '1987-02-06' });
+    expect(naissanceDe('6/2/1987')).toEqual({
+      annee: 1987,
+      date: '1987-02-06',
+    });
+    expect(naissanceDe('1987-02-06')).toEqual({
+      annee: 1987,
+      date: '1987-02-06',
+    });
     expect(naissanceDe('/')).toEqual({ annee: null, date: null });
     // Dates impossibles des rapports : pas de date (l'import ne bloque plus), l'année si plausible
     expect(naissanceDe('20/20/1978')).toEqual({ annee: 1978, date: null });
@@ -86,35 +96,45 @@ describe('Valeurs du rapport', () => {
 describe('Comparer un nom du rapport à la base', () => {
   const c = (a: string, b: string) => compareNoms(motsDuNom(a), motsDuNom(b));
   it('des prénoms en plus dans la base', () => {
-    expect(c('MABIALA PEMBE Glavie', 'MABIALA PEMBE Laurette Glavie').complet).toBe(true);
+    expect(
+      c('MABIALA PEMBE Glavie', 'MABIALA PEMBE Laurette Glavie').complet,
+    ).toBe(true);
   });
   it('une lettre de plus ou de moins', () => {
     expect(c('TSOKO Juslie Evane', 'NTSOKO Juslie Evane').complet).toBe(true);
     expect(c('NGANGOYE Espoir', 'NGANGOYE Espoire').complet).toBe(true);
   });
   it('un nom proche mais pas complet', () => {
-    const r = c('LEMBE OKOMBA Michelle Patricia', 'LEMBA-OKOMBA Michelle Patience');
+    const r = c(
+      'LEMBE OKOMBA Michelle Patricia',
+      'LEMBA-OKOMBA Michelle Patience',
+    );
     expect(r.score).toBeGreaterThan(0.75);
   });
   it('deux personnes différentes', () => {
-    expect(c('MINGA MAMPILA Zoe', 'DIAYANDI Kevin Odilon').score).toBeLessThan(0.4);
+    expect(c('MINGA MAMPILA Zoe', 'DIAYANDI Kevin Odilon').score).toBeLessThan(
+      0.4,
+    );
   });
 });
 
 describe('Autres informations du bottin', () => {
   it('lit genre, nationalité, situation, enfants, échelon, diplômes', () => {
-    const r = infosDuRapport({
-      Genre: 'F',
-      Nat: 'Cong',
-      'Situat matri': 'Célibataire',
-      'Situation (écrite)': 'C.04',
-      'G/E': 'I.C 1er',
-      Catégorie: '2',
-      Prof: 'CFEEN-CAP',
-      Acad: 'BAC A4',
-      Recr: '2023',
-      Téléphone: '06 649 12 52',
-    }, 'Enseig.');
+    const r = infosDuRapport(
+      {
+        Genre: 'F',
+        Nat: 'Cong',
+        'Situat matri': 'Célibataire',
+        'Situation (écrite)': 'C.04',
+        'G/E': 'I.C 1er',
+        Catégorie: '2',
+        Prof: 'CFEEN-CAP',
+        Acad: 'BAC A4',
+        Recr: '2023',
+        Téléphone: '06 649 12 52',
+      },
+      'Enseig.',
+    );
     expect(r).toEqual({
       GENRE: 'F',
       NATIONALITE: 'Congolaise',
@@ -129,10 +149,18 @@ describe('Autres informations du bottin', () => {
     });
   });
   it('« C3 » du Niari, « M » seul, échelon en colonne', () => {
-    expect(infosDuRapport({ 'Situat matri': 'C3', Échelon: '7e' })).toEqual({ SITUATION_MATRIMONIALE: 'CELIBATAIRE', NOMBRE_ENFANTS: '3', ECHELON: '7' });
-    expect(infosDuRapport({ 'Situat matri': 'M' })).toEqual({ SITUATION_MATRIMONIALE: 'MARIE' });
+    expect(infosDuRapport({ 'Situat matri': 'C3', Échelon: '7e' })).toEqual({
+      SITUATION_MATRIMONIALE: 'CELIBATAIRE',
+      NOMBRE_ENFANTS: '3',
+      ECHELON: '7',
+    });
+    expect(infosDuRapport({ 'Situat matri': 'M' })).toEqual({
+      SITUATION_MATRIMONIALE: 'MARIE',
+    });
   });
   it('laisse le douteux : « Active », « ? », année seule', () => {
-    expect(infosDuRapport({ Recr: '2014', Genre: '?', Prof: '2023' }, 'Active')).toEqual({});
+    expect(
+      infosDuRapport({ Recr: '2014', Genre: '?', Prof: '2023' }, 'Active'),
+    ).toEqual({});
   });
 });

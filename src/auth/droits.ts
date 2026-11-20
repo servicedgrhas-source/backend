@@ -114,7 +114,11 @@ export const RUBRIQUES_API: Record<string, string[]> = {
   '/enrolement/regularisations': ['enrolement/regularisations'],
   '/enrolement/tableau': ['enrolement/tableau', 'enrolement/guide'],
   '/enrolement/configuration': ['enrolement/configuration'],
-  '/recensement': ['recensement/tableau', 'recensement/modifications', 'propositions-ajout'],
+  '/recensement': [
+    'recensement/tableau',
+    'recensement/modifications',
+    'propositions-ajout',
+  ],
   '/personnel': [],
   '/personnel/agents': [
     'recensement/agents',

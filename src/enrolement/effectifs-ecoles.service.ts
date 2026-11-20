@@ -221,9 +221,19 @@ interface Calcul {
   /** Les mêmes, sous le nom d'école écrit (avant les jumelages). */
   membresAvant: Map<string, { cible: 'P' | 'V'; id: string }[]>;
   /** La structure (organigramme) de chaque école qui y est. */
-  structureDe: Map<string, { id: number; nom: string; departementId: number | null }>;
+  structureDe: Map<
+    string,
+    { id: number; nom: string; departementId: number | null }
+  >;
   /** Les écoles de l'organigramme où personne n'est encore compté (cibles possibles d'un rattachement). */
-  organigrammeVides: { id: string; cle: string; nom: string; departementId: number | null; departement: string; cycle: CycleEcole | null }[];
+  organigrammeVides: {
+    id: string;
+    cle: string;
+    nom: string;
+    departementId: number | null;
+    departement: string;
+    cycle: CycleEcole | null;
+  }[];
   /** Personnes sans école : rien d'écrit, ou un lieu qui n'est pas une école (inspection…). */
   sansEcole: {
     departementId: number | null;
@@ -756,14 +766,25 @@ export class EffectifsEcolesService {
           cle: n0.join('|'),
           nom: nomAffiche(st.nom, cycle),
           departementId,
-          departement: departementId === null ? 'DDEPPSA non renseignée' : (nomDep.get(departementId) ?? '?'),
+          departement:
+            departementId === null
+              ? 'DDEPPSA non renseignée'
+              : (nomDep.get(departementId) ?? '?'),
           cycle,
         };
       });
-    const structureDe = new Map<string, { id: number; nom: string; departementId: number | null }>();
+    const structureDe = new Map<
+      string,
+      { id: number; nom: string; departementId: number | null }
+    >();
     for (const [k, sid] of structureParEcole) {
       const st = structures.get(sid);
-      if (st) structureDe.set(k, { id: st.id, nom: st.nom, departementId: st.departementId });
+      if (st)
+        structureDe.set(k, {
+          id: st.id,
+          nom: st.nom,
+          departementId: st.departementId,
+        });
     }
     return {
       le: Date.now(),
@@ -819,7 +840,8 @@ export class EffectifsEcolesService {
       (e) =>
         (!f.cycle || (f.cycle === 'SANS' ? !e.cycle : e.cycle === f.cycle)) &&
         (!f.departementId || e.departementId === f.departementId) &&
-        (!f.seuilFiltre || (f.seuilFiltre === 'AU_MOINS') === atteintLeSeuil(e, f.seuil)) &&
+        (!f.seuilFiltre ||
+          (f.seuilFiltre === 'AU_MOINS') === atteintLeSeuil(e, f.seuil)) &&
         (!r || sansAccents(e.nom).toUpperCase().includes(r)),
     );
   }
@@ -892,7 +914,15 @@ export class EffectifsEcolesService {
     });
     const lignes = [...m.values()];
     const total = lignes.reduce((t, d) => {
-      for (const k of ['ecoles', 'auMoins', 'moins', 'total', 'personnelAuMoins', 'fcAuMoins', ...EFFECTIFS] as const)
+      for (const k of [
+        'ecoles',
+        'auMoins',
+        'moins',
+        'total',
+        'personnelAuMoins',
+        'fcAuMoins',
+        ...EFFECTIFS,
+      ] as const)
         t[k] += d[k];
       return t;
     }, vide('Total'));
@@ -980,8 +1010,8 @@ export class EffectifsEcolesService {
     taille = 30,
   ) {
     const c = await this.calcul();
-    const toutes = this.filtrer(c, { ...f, seuilFiltre: undefined }).filter((e) =>
-      quoi === 'harmoniser' ? e.ecritures > 1 : !e.organigramme,
+    const toutes = this.filtrer(c, { ...f, seuilFiltre: undefined }).filter(
+      (e) => (quoi === 'harmoniser' ? e.ecritures > 1 : !e.organigramme),
     );
     // Les plus nombreuses d'abord : ce sont elles qui comptent le plus
     toutes.sort((a, b) => b.total - a.total || a.nom.localeCompare(b.nom));
@@ -1000,12 +1030,26 @@ export class EffectifsEcolesService {
    * ressemble le plus. Rangées de la plus sûre à la moins sûre ; une école sans école proche à la fin.
    */
   /** Les propositions de rattachement, gardées tant que le calcul des écoles ne change pas. */
-  private readonly memoCandidats = new WeakMap<object, Map<string, ReturnType<EffectifsEcolesService['calculerCandidats']>>>();
+  private readonly memoCandidats = new WeakMap<
+    object,
+    Map<string, ReturnType<EffectifsEcolesService['calculerCandidats']>>
+  >();
   private candidatsOrganigramme(c: Calcul, f: FiltresEcoles) {
-    const k = JSON.stringify([f.cycle ?? '', f.departementId ?? '', f.recherche ?? '']);
+    const k = JSON.stringify([
+      f.cycle ?? '',
+      f.departementId ?? '',
+      f.recherche ?? '',
+    ]);
     // La liste des écoles du calcul est le même objet tant que le calcul n'est pas refait
     let m = this.memoCandidats.get(c.ecoles);
-    if (!m) this.memoCandidats.set(c.ecoles, (m = new Map()));
+    if (!m)
+      this.memoCandidats.set(
+        c.ecoles,
+        (m = new Map<
+          string,
+          ReturnType<EffectifsEcolesService['calculerCandidats']>
+        >()),
+      );
     let r = m.get(k);
     if (!r) m.set(k, (r = this.calculerCandidats(c, f)));
     return r;
@@ -1013,7 +1057,9 @@ export class EffectifsEcolesService {
 
   private calculerCandidats(c: Calcul, f: FiltresEcoles) {
     const differentes = new Set(
-      c.decisions.filter((d) => d.type === 'DIFFERENTES').map((d) => paireCle(d.cle, d.autreCle)),
+      c.decisions
+        .filter((d) => d.type === 'DIFFERENTES')
+        .map((d) => paireCle(d.cle, d.autreCle)),
     );
     // Toutes les écoles de l'organigramme, de TOUTES les DDEPPSA (19/11/2026 : « EP Bolouaka » des
     // fichiers de la Cuvette est dans Congo-Oubangui, « CEG Bodouango » des Plateaux dans
@@ -1027,17 +1073,25 @@ export class EffectifsEcolesService {
     orgs.forEach((o, i) => {
       for (const k of o.p.keys()) index.set(k, [...(index.get(k) ?? []), i]);
     });
-    const hors = this.filtrer(c, { ...f, seuilFiltre: undefined }).filter((e) => !e.organigramme);
+    const hors = this.filtrer(c, { ...f, seuilFiltre: undefined }).filter(
+      (e) => !e.organigramme,
+    );
     return hors
       .map((e) => {
         const pe = paires(e.cle);
         const communes = new Map<number, number>();
-        for (const k of pe.keys()) for (const i of index.get(k) ?? []) communes.set(i, (communes.get(i) ?? 0) + 1);
+        for (const k of pe.keys())
+          for (const i of index.get(k) ?? [])
+            communes.set(i, (communes.get(i) ?? 0) + 1);
         const candidats = [...communes.entries()]
           .sort((x, y) => y[1] - x[1])
           .slice(0, 60)
           .map(([i]) => orgs[i])
-          .filter(({ e: o }) => !(e.cycle && o.cycle && e.cycle !== o.cycle) && !differentes.has(paireCle(e.id, o.id)))
+          .filter(
+            ({ e: o }) =>
+              !(e.cycle && o.cycle && e.cycle !== o.cycle) &&
+              !differentes.has(paireCle(e.id, o.id)),
+          )
           .map(({ e: o, p: po }) => ({
             id: o.id,
             nom: o.nom,
@@ -1049,7 +1103,13 @@ export class EffectifsEcolesService {
           }))
           .filter((x) => x.score >= 0.4)
           // À ressemblance égale (à 3 points près), la même DDEPPSA d'abord
-          .sort((x, y) => Math.round((y.score - x.score) * 33) || Number(y.memeDdeppsa) - Number(x.memeDdeppsa) || y.score - x.score || y.total - x.total)
+          .sort(
+            (x, y) =>
+              Math.round((y.score - x.score) * 33) ||
+              Number(y.memeDdeppsa) - Number(x.memeDdeppsa) ||
+              y.score - x.score ||
+              y.total - x.total,
+          )
           .slice(0, 3);
         return { e, candidats };
       })
@@ -1069,16 +1129,22 @@ export class EffectifsEcolesService {
       total: toutes.length,
       nombres: {
         tresProches: toutes.filter((x) => meilleur(x) >= 0.85).length,
-        proches: toutes.filter((x) => meilleur(x) >= 0.7 && meilleur(x) < 0.85).length,
-        lointaines: toutes.filter((x) => meilleur(x) > 0 && meilleur(x) < 0.7).length,
+        proches: toutes.filter((x) => meilleur(x) >= 0.7 && meilleur(x) < 0.85)
+          .length,
+        lointaines: toutes.filter((x) => meilleur(x) > 0 && meilleur(x) < 0.7)
+          .length,
         sansCandidat: toutes.filter((x) => !x.candidats.length).length,
       },
       /** Avec `seuil` : toutes les écoles (toutes pages) dont la meilleure école est au moins à ce score. */
       choix:
         seuil !== undefined
-          ? toutes.filter((x) => meilleur(x) >= seuil).map((x) => ({ a: x.e.id, b: x.candidats[0].id }))
+          ? toutes
+              .filter((x) => meilleur(x) >= seuil)
+              .map((x) => ({ a: x.e.id, b: x.candidats[0].id }))
           : undefined,
-      ecoles: toutes.slice((page - 1) * taille, page * taille).map((x) => ({ ...this.publique(x.e), candidats: x.candidats })),
+      ecoles: toutes
+        .slice((page - 1) * taille, page * taille)
+        .map((x) => ({ ...this.publique(x.e), candidats: x.candidats })),
     };
   }
 
@@ -1187,13 +1253,30 @@ export class EffectifsEcolesService {
     if (!Array.isArray(liste) || !liste.length)
       throw new BadRequestException('Cochez au moins une paire.');
     if (liste.length > 3000)
-      throw new BadRequestException('Trop de paires d’un coup (3 000 au plus).');
+      throw new BadRequestException(
+        'Trop de paires d’un coup (3 000 au plus).',
+      );
     const c = await this.calcul();
-    const parId = new Map<string, EcoleCalculee>(c.ecoles.map((e) => [e.id, e]));
+    const parId = new Map<string, EcoleCalculee>(
+      c.ecoles.map((e) => [e.id, e]),
+    );
     // Les écoles de l'organigramme où personne n'est encore compté : cibles possibles
     for (const v of c.organigrammeVides)
       if (!parId.has(v.id))
-        parId.set(v.id, { ...v, nomCorrige: false, organigramme: true, volontaires: 0, communautaires: 0, contractuels: 0, fonctionnaires: 0, total: 0, ecritures: 0, jumelees: 0, proche: null, variantes: new Map() });
+        parId.set(v.id, {
+          ...v,
+          nomCorrige: false,
+          organigramme: true,
+          volontaires: 0,
+          communautaires: 0,
+          contractuels: 0,
+          fonctionnaires: 0,
+          total: 0,
+          ecritures: 0,
+          jumelees: 0,
+          proche: null,
+          variantes: new Map(),
+        });
     // Les groupes : les paires cochées qui partagent une école
     const pere = new Map<string, string>();
     const chef = (x: string): string => {
@@ -1227,14 +1310,25 @@ export class EffectifsEcolesService {
       const a = String(p?.a ?? '');
       const b = String(p?.b ?? '');
       if (a === b || !parId.has(a) || !parId.has(b)) continue;
-      for (const [x, y] of [[a, b], [b, a]]) voisins.set(x, (voisins.get(x) ?? new Set()).add(y));
+      for (const [x, y] of [
+        [a, b],
+        [b, a],
+      ])
+        voisins.set(x, (voisins.get(x) ?? new Set()).add(y));
     }
     let nbGroupes = 0;
     /** Fusionner un ensemble d'écoles sous la préférée (sauf cycles mélangés dans un groupe de plus de deux). */
     const fusionnerEnsemble = (membres: EcoleCalculee[]) => {
       if (membres.length < 2) return;
-      if (membres.length > 2 && new Set(membres.map((e) => e.cycle).filter(Boolean)).size > 1) {
-        refuses.push({ ecoles: membres.map((e) => e.nom).join(' / '), raison: 'des cycles différents dans le même groupe', ids: membres.map((e) => e.id) });
+      if (
+        membres.length > 2 &&
+        new Set(membres.map((e) => e.cycle).filter(Boolean)).size > 1
+      ) {
+        refuses.push({
+          ecoles: membres.map((e) => e.nom).join(' / '),
+          raison: 'des cycles différents dans le même groupe',
+          ids: membres.map((e) => e.id),
+        });
         return;
       }
       const [garde, ...autres] = [...membres].sort(preference);
@@ -1256,17 +1350,31 @@ export class EffectifsEcolesService {
       for (const o of orgs)
         for (const o2 of orgs)
           if (o.id < o2.id && voisins.get(o.id)?.has(o2.id))
-            refuses.push({ ecoles: `${o.nom} / ${o2.nom}`, raison: 'ce sont deux écoles de l’organigramme, donc deux écoles officielles différentes : « Deux écoles différentes »', ids: [o.id, o2.id] });
+            refuses.push({
+              ecoles: `${o.nom} / ${o2.nom}`,
+              raison:
+                'ce sont deux écoles de l’organigramme, donc deux écoles officielles différentes : « Deux écoles différentes »',
+              ids: [o.id, o2.id],
+            });
       for (let tour = 0; tour < membres.length; tour++) {
         let change = false;
         for (const x of membres) {
           if (rattachee.has(x.id) || ambigues.has(x.id)) continue;
-          const cibles = new Set([...(voisins.get(x.id) ?? [])].map((v) => rattachee.get(v)).filter((v): v is string => !!v));
-          const orgsVoisines = [...(voisins.get(x.id) ?? [])].filter((v) => parId.get(v)?.organigramme);
+          const cibles = new Set(
+            [...(voisins.get(x.id) ?? [])]
+              .map((v) => rattachee.get(v))
+              .filter((v): v is string => !!v),
+          );
+          const orgsVoisines = [...(voisins.get(x.id) ?? [])].filter(
+            (v) => parId.get(v)?.organigramme,
+          );
           if (orgsVoisines.length > 1) {
             ambigues.add(x.id);
             refuses.push({
-              ecoles: [x.nom, ...orgsVoisines.map((v) => parId.get(v)!.nom)].join(' / '),
+              ecoles: [
+                x.nom,
+                ...orgsVoisines.map((v) => parId.get(v)!.nom),
+              ].join(' / '),
               raison: `« ${x.nom} » est cochée avec plusieurs écoles de l’organigramme (${orgsVoisines.map((v) => `« ${parId.get(v)!.nom} »`).join(', ')}) : gardez-la avec la bonne, avec le bouton « Même école » de cette paire-là`,
               ids: [x.id, ...orgsVoisines],
             });
@@ -1280,16 +1388,24 @@ export class EffectifsEcolesService {
       }
       for (const x of membres)
         if (!rattachee.has(x.id) && !ambigues.has(x.id))
-          refuses.push({ ecoles: x.nom, raison: `« ${x.nom} » n’est reliée qu’à des écoles laissées de côté : tranchez sa paire ici`, ids: [x.id, ...(voisins.get(x.id) ?? [])] });
-      for (const o of orgs) fusionnerEnsemble(membres.filter((x) => rattachee.get(x.id) === o.id));
+          refuses.push({
+            ecoles: x.nom,
+            raison: `« ${x.nom} » n’est reliée qu’à des écoles laissées de côté : tranchez sa paire ici`,
+            ids: [x.id, ...(voisins.get(x.id) ?? [])],
+          });
+      for (const o of orgs)
+        fusionnerEnsemble(membres.filter((x) => rattachee.get(x.id) === o.id));
     }
-    if (!aCreer.length)
-      return { fusionnees: 0, groupes: 0, refuses, ignorees };
+    if (!aCreer.length) return { fusionnees: 0, groupes: 0, refuses, ignorees };
     const sources = new Set(aCreer.map((x) => x.cle));
     const paire = new Set(aCreer.map((x) => paireCle(x.cle, x.autreCle)));
     // Les « même école » remplacées : leurs fiches reviennent d'abord (la fusion les reprend)
     const enPlus = await this.defaireRemplacees(
-      (await this.ds.getRepository(DecisionEcole).find({ where: { type: 'JUMELEE' } })).filter((x) => sources.has(x.cle)),
+      (
+        await this.ds
+          .getRepository(DecisionEcole)
+          .find({ where: { type: 'JUMELEE' } })
+      ).filter((x) => sources.has(x.cle)),
     );
     const lignes = await this.ds.transaction(async (em) => {
       const repo = em.getRepository(DecisionEcole);
@@ -1450,7 +1566,9 @@ export class EffectifsEcolesService {
             (x.type === 'DIFFERENTES' && memePaire(x))
           : x.type === d.type && x.cle === d.cle,
     );
-    const enPlus = await this.defaireRemplacees(remplacees.filter((x) => x.type === 'JUMELEE'));
+    const enPlus = await this.defaireRemplacees(
+      remplacees.filter((x) => x.type === 'JUMELEE'),
+    );
     if (remplacees.length) await repo.delete(remplacees.map((x) => x.id));
     const motif = d.motif?.trim().slice(0, 500) || null;
     const maj = d.type === 'MISE_A_JOUR';
@@ -1481,7 +1599,9 @@ export class EffectifsEcolesService {
       motif,
     });
     // L'école gardée est dans l'organigramme : les fiches concernées sont mises à jour
-    const fiches = avantDecision ? await this.appliquerAuxFiches(u, avantDecision, [ligne], enPlus) : 0;
+    const fiches = avantDecision
+      ? await this.appliquerAuxFiches(u, avantDecision, [ligne], enPlus)
+      : 0;
     this.memoire.oublier();
     return { id: ligne.id, fiches };
   }
@@ -1503,14 +1623,20 @@ export class EffectifsEcolesService {
     enPlus: Map<string, { cible: 'P' | 'V'; id: string }[]> = new Map(),
   ) {
     const codes = new Map(
-      (await this.ds.query<{ id: number; code: string }[]>(`SELECT id, code FROM departement`)).map((d) => [d.id, d.code]),
+      (
+        await this.ds.query<{ id: number; code: string }[]>(
+          `SELECT id, code FROM departement`,
+        )
+      ).map((d) => [d.id, d.code]),
     );
     let fiches = 0;
     for (const d of decisions) {
       // L'école gardée, au bout des jumelages déjà faits
       let cible = d.autreCle;
       for (let i = 0; i < 20; i++) {
-        const suite = c.decisions.find((x) => x.type === 'JUMELEE' && x.cle === cible && x.id !== d.id)?.autreCle;
+        const suite = c.decisions.find(
+          (x) => x.type === 'JUMELEE' && x.cle === cible && x.id !== d.id,
+        )?.autreCle;
         if (!suite || suite === d.cle) break;
         cible = suite;
       }
@@ -1523,80 +1649,124 @@ export class EffectifsEcolesService {
           ? c.membres.get(d.cle)
           : c.membresAvant.get(d.cle);
       const vus = new Set<string>();
-      const gens = [...(comptes ?? []), ...(enPlus.get(d.cle) ?? [])].filter((x) => {
-        const k = `${x.cible}${x.id}`;
-        if (vus.has(k)) return false;
-        vus.add(k);
-        return true;
-      });
+      const gens = [...(comptes ?? []), ...(enPlus.get(d.cle) ?? [])].filter(
+        (x) => {
+          const k = `${x.cible}${x.id}`;
+          if (vus.has(k)) return false;
+          vus.add(k);
+          return true;
+        },
+      );
       if (!st || !gens.length) continue;
-      const lignes: { cible: string; refId: string; avant: unknown; apres: unknown }[] = [];
+      const lignes: {
+        cible: string;
+        refId: string;
+        avant: unknown;
+        apres: unknown;
+      }[] = [];
       const p = gens.filter((x) => x.cible === 'P').map((x) => Number(x.id));
       const v = gens.filter((x) => x.cible === 'V').map((x) => x.id);
       await this.tableApplications();
       await this.ds.transaction(async (em) => {
-      const dep = st.departementId;
-      if (p.length) {
-        const avant = await em.query<{ id: number; structureId: number | null; departementId: number | null; lieu: string | null; departement: string | null }[]>(
-          // Jamais une fiche déjà dans une école de l'organigramme, ni une fiche qu'une autre décision a déjà mise à jour
-          `SELECT a.id, a."structureId", a."departementId", a.donnees->>'LIEU_SERVICE' AS lieu, a.donnees->>'DEPARTEMENT' AS departement
+        const dep = st.departementId;
+        if (p.length) {
+          const avant = await em.query<
+            {
+              id: number;
+              structureId: number | null;
+              departementId: number | null;
+              lieu: string | null;
+              departement: string | null;
+            }[]
+          >(
+            // Jamais une fiche déjà dans une école de l'organigramme, ni une fiche qu'une autre décision a déjà mise à jour
+            `SELECT a.id, a."structureId", a."departementId", a.donnees->>'LIEU_SERVICE' AS lieu, a.donnees->>'DEPARTEMENT' AS departement
              FROM agent_recense a LEFT JOIN structure s ON s.id = a."structureId"
             WHERE a.id = ANY($1) AND coalesce(s.type, '') <> 'ETABLISSEMENT'
               AND NOT EXISTS (SELECT 1 FROM application_ecole x WHERE x.cible = 'P' AND x."refId" = a.id::text)`,
-          [p],
-        );
-        const pOk = avant.map((a) => a.id);
-        const ajout: Record<string, string> = { LIEU_SERVICE: st.nom };
-        if (dep !== null && codes.get(dep)) ajout.DEPARTEMENT = codes.get(dep)!;
-        await em.query(
-          `UPDATE agent_recense SET "structureId" = $2, "departementId" = coalesce($3, "departementId"),
+            [p],
+          );
+          const pOk = avant.map((a) => a.id);
+          const ajout: Record<string, string> = { LIEU_SERVICE: st.nom };
+          if (dep !== null && codes.get(dep))
+            ajout.DEPARTEMENT = codes.get(dep)!;
+          await em.query(
+            `UPDATE agent_recense SET "structureId" = $2, "departementId" = coalesce($3, "departementId"),
                   donnees = donnees || $4::jsonb WHERE id = ANY($1)`,
-          [pOk, st.id, dep, JSON.stringify(ajout)],
-        );
-        for (const a of avant)
-          lignes.push({
-            cible: 'P',
-            refId: String(a.id),
-            avant: { structureId: a.structureId, departementId: a.departementId, LIEU_SERVICE: a.lieu, DEPARTEMENT: a.departement },
-            apres: { structureId: st.id, departementId: dep ?? a.departementId, LIEU_SERVICE: st.nom, DEPARTEMENT: ajout.DEPARTEMENT ?? a.departement },
-          });
-      }
-      if (v.length) {
-        const avant = await em.query<{ id: string; etablissement: string | null; departementId: number | null }[]>(
-          `SELECT v.id, v.etablissement, v."departementId" FROM volontaire v
+            [pOk, st.id, dep, JSON.stringify(ajout)],
+          );
+          for (const a of avant)
+            lignes.push({
+              cible: 'P',
+              refId: String(a.id),
+              avant: {
+                structureId: a.structureId,
+                departementId: a.departementId,
+                LIEU_SERVICE: a.lieu,
+                DEPARTEMENT: a.departement,
+              },
+              apres: {
+                structureId: st.id,
+                departementId: dep ?? a.departementId,
+                LIEU_SERVICE: st.nom,
+                DEPARTEMENT: ajout.DEPARTEMENT ?? a.departement,
+              },
+            });
+        }
+        if (v.length) {
+          const avant = await em.query<
+            {
+              id: string;
+              etablissement: string | null;
+              departementId: number | null;
+            }[]
+          >(
+            `SELECT v.id, v.etablissement, v."departementId" FROM volontaire v
             WHERE v.id = ANY($1::uuid[])
               AND NOT EXISTS (SELECT 1 FROM application_ecole x WHERE x.cible = 'V' AND x."refId" = v.id::text)`,
-          [v],
-        );
-        const vOk = avant.map((a) => a.id);
-        await em.query(
-          `UPDATE volontaire SET etablissement = $2, "departementId" = coalesce($3, "departementId") WHERE id = ANY($1::uuid[])`,
-          [vOk, st.nom, dep],
-        );
-        for (const a of avant)
-          lignes.push({
-            cible: 'V',
-            refId: a.id,
-            avant: { etablissement: a.etablissement, departementId: a.departementId },
-            apres: { etablissement: st.nom, departementId: dep ?? a.departementId },
-          });
-      }
-      for (let i = 0; i < lignes.length; i += 500) {
-        const lot = lignes.slice(i, i + 500);
-        await em.query(
-          `INSERT INTO application_ecole ("decisionId", cible, "refId", avant, apres, par)
+            [v],
+          );
+          const vOk = avant.map((a) => a.id);
+          await em.query(
+            `UPDATE volontaire SET etablissement = $2, "departementId" = coalesce($3, "departementId") WHERE id = ANY($1::uuid[])`,
+            [vOk, st.nom, dep],
+          );
+          for (const a of avant)
+            lignes.push({
+              cible: 'V',
+              refId: a.id,
+              avant: {
+                etablissement: a.etablissement,
+                departementId: a.departementId,
+              },
+              apres: {
+                etablissement: st.nom,
+                departementId: dep ?? a.departementId,
+              },
+            });
+        }
+        for (let i = 0; i < lignes.length; i += 500) {
+          const lot = lignes.slice(i, i + 500);
+          await em.query(
+            `INSERT INTO application_ecole ("decisionId", cible, "refId", avant, apres, par)
            SELECT $1, x.cible, x."refId", x.avant, x.apres, $2
              FROM jsonb_to_recordset($3::jsonb) AS x(cible text, "refId" text, avant jsonb, apres jsonb)`,
-          [d.id, u.nom, JSON.stringify(lot)],
-        );
-      }
+            [d.id, u.nom, JSON.stringify(lot)],
+          );
+        }
       });
       fiches += lignes.length;
-      await this.journal.log(u, 'ECOLE_FICHES_MISES_A_JOUR', 'decision_ecole', d.id, {
-        structureId: st.id,
-        personnel: lignes.filter((x) => x.cible === 'P').length,
-        registre: lignes.filter((x) => x.cible === 'V').length,
-      });
+      await this.journal.log(
+        u,
+        'ECOLE_FICHES_MISES_A_JOUR',
+        'decision_ecole',
+        d.id,
+        {
+          structureId: st.id,
+          personnel: lignes.filter((x) => x.cible === 'P').length,
+          registre: lignes.filter((x) => x.cible === 'V').length,
+        },
+      );
     }
     return fiches;
   }
@@ -1609,7 +1779,8 @@ export class EffectifsEcolesService {
     const enPlus = new Map<string, { cible: 'P' | 'V'; id: string }[]>();
     for (const x of ids) {
       const r = await this.defaireFiches(x.id);
-      if (r.refs.length) enPlus.set(x.cle, [...(enPlus.get(x.cle) ?? []), ...r.refs]);
+      if (r.refs.length)
+        enPlus.set(x.cle, [...(enPlus.get(x.cle) ?? []), ...r.refs]);
     }
     return enPlus;
   }
@@ -1618,39 +1789,62 @@ export class EffectifsEcolesService {
   private async defaireFiches(decisionId: number) {
     await this.tableApplications();
     return this.ds.transaction(async (em) => {
-    const lignes = await em.query<{ id: number; cible: string; refId: string; avant: Record<string, unknown>; apres: Record<string, unknown> }[]>(
-      `SELECT id, cible, "refId", avant, apres FROM application_ecole WHERE "decisionId" = $1`,
-      [decisionId],
-    );
-    let remises = 0;
-    const refs: { cible: 'P' | 'V'; id: string }[] = [];
-    for (const l of lignes) {
-      refs.push({ cible: l.cible === 'P' ? 'P' : 'V', id: l.refId });
-      const a = l.avant;
-      const b = l.apres;
-      if (l.cible === 'P') {
-        const ajout: Record<string, unknown> = {};
-        const retire: string[] = [];
-        for (const k of ['LIEU_SERVICE', 'DEPARTEMENT'])
-          if (a[k] === null || a[k] === undefined) retire.push(k);
-          else ajout[k] = a[k];
-        const r = await em.query<unknown[]>(
-          `UPDATE agent_recense SET "structureId" = $2, "departementId" = $3, donnees = (donnees - $4::text[]) || $5::jsonb
+      const lignes = await em.query<
+        {
+          id: number;
+          cible: string;
+          refId: string;
+          avant: Record<string, unknown>;
+          apres: Record<string, unknown>;
+        }[]
+      >(
+        `SELECT id, cible, "refId", avant, apres FROM application_ecole WHERE "decisionId" = $1`,
+        [decisionId],
+      );
+      let remises = 0;
+      const refs: { cible: 'P' | 'V'; id: string }[] = [];
+      for (const l of lignes) {
+        refs.push({ cible: l.cible === 'P' ? 'P' : 'V', id: l.refId });
+        const a = l.avant;
+        const b = l.apres;
+        if (l.cible === 'P') {
+          const ajout: Record<string, unknown> = {};
+          const retire: string[] = [];
+          for (const k of ['LIEU_SERVICE', 'DEPARTEMENT'])
+            if (a[k] === null || a[k] === undefined) retire.push(k);
+            else ajout[k] = a[k];
+          const r = await em.query<unknown[]>(
+            `UPDATE agent_recense SET "structureId" = $2, "departementId" = $3, donnees = (donnees - $4::text[]) || $5::jsonb
             WHERE id = $1 AND "structureId" IS NOT DISTINCT FROM $6 AND donnees->>'LIEU_SERVICE' IS NOT DISTINCT FROM $7 RETURNING id`,
-          [Number(l.refId), a.structureId ?? null, a.departementId ?? null, retire, JSON.stringify(ajout), b.structureId ?? null, b.LIEU_SERVICE ?? null],
-        );
-        if (r.length) remises++;
-      } else {
-        const r = await em.query<unknown[]>(
-          `UPDATE volontaire SET etablissement = $2, "departementId" = $3
+            [
+              Number(l.refId),
+              a.structureId ?? null,
+              a.departementId ?? null,
+              retire,
+              JSON.stringify(ajout),
+              b.structureId ?? null,
+              b.LIEU_SERVICE ?? null,
+            ],
+          );
+          if (r.length) remises++;
+        } else {
+          const r = await em.query<unknown[]>(
+            `UPDATE volontaire SET etablissement = $2, "departementId" = $3
             WHERE id = $1::uuid AND etablissement IS NOT DISTINCT FROM $4 RETURNING id`,
-          [l.refId, a.etablissement ?? null, a.departementId ?? null, b.etablissement ?? null],
-        );
-        if (r.length) remises++;
+            [
+              l.refId,
+              a.etablissement ?? null,
+              a.departementId ?? null,
+              b.etablissement ?? null,
+            ],
+          );
+          if (r.length) remises++;
+        }
       }
-    }
-    await em.query(`DELETE FROM application_ecole WHERE "decisionId" = $1`, [decisionId]);
-    return { remises, total: lignes.length, refs };
+      await em.query(`DELETE FROM application_ecole WHERE "decisionId" = $1`, [
+        decisionId,
+      ]);
+      return { remises, total: lignes.length, refs };
     });
   }
 
@@ -1661,7 +1855,9 @@ export class EffectifsEcolesService {
     await this.ds.query(
       `CREATE TABLE IF NOT EXISTS "application_ecole" ("id" SERIAL NOT NULL, "decisionId" integer NOT NULL, "cible" character varying NOT NULL, "refId" character varying NOT NULL, "avant" jsonb NOT NULL DEFAULT '{}', "apres" jsonb NOT NULL DEFAULT '{}', "par" character varying, "le" TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT now(), CONSTRAINT "PK_application_ecole" PRIMARY KEY ("id"))`,
     );
-    await this.ds.query(`CREATE INDEX IF NOT EXISTS "IDX_application_ecole_decision" ON "application_ecole" ("decisionId")`);
+    await this.ds.query(
+      `CREATE INDEX IF NOT EXISTS "IDX_application_ecole_decision" ON "application_ecole" ("decisionId")`,
+    );
     this.tablePrete = true;
   }
 
@@ -1671,13 +1867,21 @@ export class EffectifsEcolesService {
    */
   async appliquerDecisionsPassees(u: UtilisateurConnecte) {
     if (u.role !== 'ADMIN' && !ROLES_CONTROLE.includes(u.role))
-      throw new ForbiddenException('Réservé au contrôle (chef de service, directeur, bureau d’études, DG).');
+      throw new ForbiddenException(
+        'Réservé au contrôle (chef de service, directeur, bureau d’études, DG).',
+      );
     const c = await this.calcul();
     await this.tableApplications();
     const faites = new Set(
-      (await this.ds.query<{ d: number }[]>(`SELECT DISTINCT "decisionId" AS d FROM application_ecole`)).map((x) => x.d),
+      (
+        await this.ds.query<{ d: number }[]>(
+          `SELECT DISTINCT "decisionId" AS d FROM application_ecole`,
+        )
+      ).map((x) => x.d),
     );
-    const aFaire = c.decisions.filter((d) => d.type === 'JUMELEE' && !faites.has(d.id));
+    const aFaire = c.decisions.filter(
+      (d) => d.type === 'JUMELEE' && !faites.has(d.id),
+    );
     const fiches = await this.appliquerAuxFiches(u, c, aFaire);
     this.memoire.oublier();
     return { decisions: aFaire.length, fiches };
@@ -1711,7 +1915,10 @@ export class EffectifsEcolesService {
    * ressemblent » (travail de la DGRHAS sur ses données) ne vont que dans l'Excel d'Écoles à
    * contrôler (`qualite`), pas dans celui remis à la Banque mondiale (18/11/2026).
    */
-  async excel(f: FiltresEcoles, qualite = false): Promise<{ nom: string; contenu: Buffer }> {
+  async excel(
+    f: FiltresEcoles,
+    qualite = false,
+  ): Promise<{ nom: string; contenu: Buffer }> {
     const c = await this.calcul();
     const ecoles = this.filtrer(c, f);
     const tout = this.filtrer(c, { ...f, seuilFiltre: undefined });
@@ -1963,8 +2170,16 @@ export class EffectifsEcolesService {
       `Fonct. + contr. de ces écoles`,
       '% des fonct. + contr.',
     ];
-    const ws2 = feuille('Par DDEPPSA', [22, 9, 11, 9, 11, 9, 11, 13, 12, 13, 11, 14, 9, 13, 10], true);
-    entete(ws2, e2.length, `ÉCOLES D’AU MOINS ${f.seuil} FONCTIONNAIRES OU CONTRACTUELS, PAR DDEPPSA`);
+    const ws2 = feuille(
+      'Par DDEPPSA',
+      [22, 9, 11, 9, 11, 9, 11, 13, 12, 13, 11, 14, 9, 13, 10],
+      true,
+    );
+    entete(
+      ws2,
+      e2.length,
+      `ÉCOLES D’AU MOINS ${f.seuil} FONCTIONNAIRES OU CONTRACTUELS, PAR DDEPPSA`,
+    );
     titres(ws2, 13, e2);
     l = 14;
     const pc = (v: number) => `${v.toLocaleString('fr-FR')} %`;
@@ -1982,7 +2197,13 @@ export class EffectifsEcolesService {
       pc(d.partFcAuMoins),
     ];
     for (const d of parDep) ligne(ws2, l++, [d.departement, ...valeurs(d)]);
-    ligne(ws2, l++, [dep ? 'TOTAL' : 'TOTAL (tout le territoire)', ...valeurs(tot)], true, 'FFD9EAD3');
+    ligne(
+      ws2,
+      l++,
+      [dep ? 'TOTAL' : 'TOTAL (tout le territoire)', ...valeurs(tot)],
+      true,
+      'FFD9EAD3',
+    );
     l++;
     note(
       ws2,
@@ -2040,83 +2261,83 @@ export class EffectifsEcolesService {
 
     // 4. Les noms d'une même école écrits de plusieurs façons
     if (qualite) {
-    const e4 = [
-      'DDEPPSA',
-      'Cycle',
-      'Nom retenu',
-      'Écriture rencontrée',
-      'Personnes',
-    ];
-    const ws4 = feuille('Noms à harmoniser', [20, 15, 36, 50, 11]);
-    entete(ws4, e4.length, 'NOMS D’ÉCOLES À HARMONISER');
-    titres(ws4, 13, e4);
-    l = 14;
-    for (const e of tout.filter((x) => x.ecritures > 1)) {
-      const v = [...e.variantes.entries()].sort((a, b) => b[1] - a[1]);
-      v.forEach(([ecrit, k], j) =>
-        ligne(
-          ws4,
-          l++,
-          [
-            j ? '' : e.departement,
-            j ? '' : e.cycle ? CYCLES_ECOLE[e.cycle] : '—',
-            j ? '' : e.nom,
-            ecrit,
-            k,
-          ],
-          false,
-          j ? undefined : GRIS,
-        ),
+      const e4 = [
+        'DDEPPSA',
+        'Cycle',
+        'Nom retenu',
+        'Écriture rencontrée',
+        'Personnes',
+      ];
+      const ws4 = feuille('Noms à harmoniser', [20, 15, 36, 50, 11]);
+      entete(ws4, e4.length, 'NOMS D’ÉCOLES À HARMONISER');
+      titres(ws4, 13, e4);
+      l = 14;
+      for (const e of tout.filter((x) => x.ecritures > 1)) {
+        const v = [...e.variantes.entries()].sort((a, b) => b[1] - a[1]);
+        v.forEach(([ecrit, k], j) =>
+          ligne(
+            ws4,
+            l++,
+            [
+              j ? '' : e.departement,
+              j ? '' : e.cycle ? CYCLES_ECOLE[e.cycle] : '—',
+              j ? '' : e.nom,
+              ecrit,
+              k,
+            ],
+            false,
+            j ? undefined : GRIS,
+          ),
+        );
+      }
+      l++;
+      note(
+        ws4,
+        l,
+        e4.length,
+        'Chaque école réunit les écritures que le système a reconnues comme la même école (même DDEPPSA, même nom une fois ôtés le libellé du cycle, les accents, la ponctuation et les articles). À corriger dans les fichiers d’origine pour n’en garder qu’une.',
       );
-    }
-    l++;
-    note(
-      ws4,
-      l,
-      e4.length,
-      'Chaque école réunit les écritures que le système a reconnues comme la même école (même DDEPPSA, même nom une fois ôtés le libellé du cycle, les accents, la ponctuation et les articles). À corriger dans les fichiers d’origine pour n’en garder qu’une.',
-    );
 
-    // 4 bis. Les écoles qui se ressemblent, à trancher (même école ou deux écoles)
-    const e6 = [
-      'DDEPPSA',
-      'Cycle',
-      'École',
-      'Personnes',
-      'Ressemble à',
-      'Personnes',
-      'Ressemblance',
-    ];
-    const ws6 = feuille(
-      'Écoles qui se ressemblent',
-      [20, 14, 34, 11, 34, 11, 13],
-      true,
-    );
-    entete(ws6, e6.length, 'ÉCOLES QUI SE RESSEMBLENT (À TRANCHER)');
-    titres(ws6, 13, e6);
-    l = 14;
-    const parId = new Map(c.ecoles.map((e) => [e.id, e]));
-    for (const p of this.pairesFiltrees(c, f)) {
-      const a = parId.get(p.a);
-      const b = parId.get(p.b);
-      if (!a || !b) continue;
-      ligne(ws6, l++, [
-        a.departement,
-        a.cycle ? CYCLES_ECOLE[a.cycle] : '—',
-        a.nom,
-        a.total,
-        b.nom,
-        b.total,
-        `${Math.round(p.score * 100)} %`,
-      ]);
-    }
-    l++;
-    note(
-      ws6,
-      l,
-      e6.length,
-      'Deux écoles de la même DDEPPSA dont les noms se ressemblent : peut-être la même école écrite autrement, peut-être deux écoles. À trancher dans le système (Structures scolaires › Écoles à contrôler) : « même école » les compte ensemble, « deux écoles différentes » ne les propose plus.',
-    );
+      // 4 bis. Les écoles qui se ressemblent, à trancher (même école ou deux écoles)
+      const e6 = [
+        'DDEPPSA',
+        'Cycle',
+        'École',
+        'Personnes',
+        'Ressemble à',
+        'Personnes',
+        'Ressemblance',
+      ];
+      const ws6 = feuille(
+        'Écoles qui se ressemblent',
+        [20, 14, 34, 11, 34, 11, 13],
+        true,
+      );
+      entete(ws6, e6.length, 'ÉCOLES QUI SE RESSEMBLENT (À TRANCHER)');
+      titres(ws6, 13, e6);
+      l = 14;
+      const parId = new Map(c.ecoles.map((e) => [e.id, e]));
+      for (const p of this.pairesFiltrees(c, f)) {
+        const a = parId.get(p.a);
+        const b = parId.get(p.b);
+        if (!a || !b) continue;
+        ligne(ws6, l++, [
+          a.departement,
+          a.cycle ? CYCLES_ECOLE[a.cycle] : '—',
+          a.nom,
+          a.total,
+          b.nom,
+          b.total,
+          `${Math.round(p.score * 100)} %`,
+        ]);
+      }
+      l++;
+      note(
+        ws6,
+        l,
+        e6.length,
+        'Deux écoles de la même DDEPPSA dont les noms se ressemblent : peut-être la même école écrite autrement, peut-être deux écoles. À trancher dans le système (Structures scolaires › Écoles à contrôler) : « même école » les compte ensemble, « deux écoles différentes » ne les propose plus.',
+      );
     }
 
     // 5. Reclassements dans les nouvelles DEPPSA

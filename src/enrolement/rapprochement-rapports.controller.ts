@@ -13,14 +13,7 @@ import {
   UseInterceptors,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
-import {
-  IsIn,
-  IsInt,
-  IsOptional,
-  IsString,
-  IsUUID,
-  Min,
-} from 'class-validator';
+import { IsIn, IsInt, IsOptional, IsUUID, Min } from 'class-validator';
 import type { Response } from 'express';
 import {
   Roles,
@@ -31,7 +24,8 @@ import {
 import { RapprochementRapportsService } from './rapprochement-rapports.service';
 
 class DecisionBody {
-  @IsOptional() @IsIn(['CONFIRME', 'AUTRE_FICHE', 'ABSENT', null])
+  @IsOptional()
+  @IsIn(['CONFIRME', 'AUTRE_FICHE', 'ABSENT', null])
   decision: string | null;
   @IsOptional() @IsInt() @Min(1) agentId?: number;
   @IsOptional() @IsUUID() volontaireId?: string;
@@ -173,12 +167,21 @@ export class RapprochementRapportsController {
   lot(
     @Utilisateur() u: UtilisateurConnecte,
     @Param('id', ParseIntPipe) id: number,
-    @Body() b: { action?: string; ids?: unknown; rubriques?: unknown; infos?: unknown; remplacer?: unknown; proposer?: unknown },
+    @Body()
+    b: {
+      action?: string;
+      ids?: unknown;
+      rubriques?: unknown;
+      infos?: unknown;
+      remplacer?: unknown;
+      proposer?: unknown;
+    },
   ) {
     const ids = Array.isArray(b?.ids)
       ? b.ids.filter((x): x is number => Number.isInteger(x)).slice(0, 20000)
       : [];
-    const liste = (v: unknown) => (Array.isArray(v) ? v.map(String).slice(0, 50) : undefined);
+    const liste = (v: unknown) =>
+      Array.isArray(v) ? v.map(String).slice(0, 50) : undefined;
     return this.rap.lot(u, id, String(b?.action ?? ''), ids, {
       rubriques: liste(b?.rubriques),
       infos: liste(b?.infos),

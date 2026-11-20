@@ -129,7 +129,11 @@ export function naissanceDe(v: string | null | undefined): {
   const plausible = (a: number) => a >= 1930 && a <= new Date().getFullYear();
   const reelle = (a: number, m: number, j: number) => {
     const x = new Date(Date.UTC(a, m - 1, j));
-    return x.getUTCFullYear() === a && x.getUTCMonth() === m - 1 && x.getUTCDate() === j;
+    return (
+      x.getUTCFullYear() === a &&
+      x.getUTCMonth() === m - 1 &&
+      x.getUTCDate() === j
+    );
   };
   const d = /^(\d{1,2})[/.-](\d{1,2})[/.-](\d{4})$/.exec(t);
   const iso = /^(\d{4})-(\d{2})-(\d{2})/.exec(t);
@@ -184,7 +188,11 @@ export function motSemblable(a: string, b: string) {
   const n = Math.min(a.length, b.length);
   if (n >= 4 && ecart(a, b) === 1) return 0.9;
   // « NTSOKO » / « TSOKO » : une lettre de plus au début
-  if (n >= 4 && (a.endsWith(b) || b.endsWith(a)) && Math.abs(a.length - b.length) === 1)
+  if (
+    n >= 4 &&
+    (a.endsWith(b) || b.endsWith(a)) &&
+    Math.abs(a.length - b.length) === 1
+  )
     return 0.9;
   const p = (s: string) => {
     const m = new Map<string, number>();
@@ -269,7 +277,20 @@ export function infosDuRapport(
   fonction?: string | null,
 ): Record<string, string> {
   const cases = Object.entries(donnees ?? {})
-    .map(([k, v]) => [aPlat(k), (typeof v === 'string' ? v : v === null || v === undefined ? '' : JSON.stringify(v)).replace(/\s+/g, ' ').trim()] as const)
+    .map(
+      ([k, v]) =>
+        [
+          aPlat(k),
+          (typeof v === 'string'
+            ? v
+            : v === null || v === undefined
+              ? ''
+              : JSON.stringify(v)
+          )
+            .replace(/\s+/g, ' ')
+            .trim(),
+        ] as const,
+    )
     .filter(([, v]) => !vide(v) && !/\?/.test(v));
   const lire = (re: RegExp) => cases.find(([t]) => re.test(t))?.[1] ?? '';
   const r: Record<string, string> = {};
@@ -282,17 +303,36 @@ export function infosDuRapport(
   if (lieu && /[A-Za-z]{2}/.test(lieu)) r.LIEU_NAISSANCE = lieu.slice(0, 120);
   // Nationalité : « Cg », « Cong », « C » = congolaise
   const nat = aPlat(lire(/^NAT/));
-  if (/^(C|CG|CGSE|CONG|CONGO|CONGOLAIS|CONGOLAISE)$/.test(nat)) r.NATIONALITE = 'Congolaise';
+  if (/^(C|CG|CGSE|CONG|CONGO|CONGOLAIS|CONGOLAISE)$/.test(nat))
+    r.NATIONALITE = 'Congolaise';
   else if (nat.length >= 5 && !/^CONT/.test(nat)) r.NATIONALITE = lire(/^NAT/);
   // Situation matrimoniale et enfants : « C.04 », « M2 », « Célibataire »
-  const MATRI: Record<string, string> = { C: 'CELIBATAIRE', M: 'MARIE', D: 'DIVORCE', V: 'VEUF' };
-  for (const [, brut] of cases.filter(([t]) => /^SITU/.test(t)).sort(([a], [b]) => Number(/MATRI/.test(b)) - Number(/MATRI/.test(a)))) {
+  const MATRI: Record<string, string> = {
+    C: 'CELIBATAIRE',
+    M: 'MARIE',
+    D: 'DIVORCE',
+    V: 'VEUF',
+  };
+  for (const [, brut] of cases
+    .filter(([t]) => /^SITU/.test(t))
+    .sort(([a], [b]) => Number(/MATRI/.test(b)) - Number(/MATRI/.test(a)))) {
     const s = aPlat(brut);
-    const m = /^(CELIB|MARI|DIVOR|VEU)/.exec(s) ?? /^([CMDV])(?: ?0?(\d{1,2}))?$/.exec(s);
+    const m =
+      /^(CELIB|MARI|DIVOR|VEU)/.exec(s) ??
+      /^([CMDV])(?: ?0?(\d{1,2}))?$/.exec(s);
     if (!m) continue;
-    const k = m[1].startsWith('CELIB') ? 'C' : m[1].startsWith('MARI') ? 'M' : m[1].startsWith('DIVOR') ? 'D' : m[1].startsWith('VEU') ? 'V' : m[1];
+    const k = m[1].startsWith('CELIB')
+      ? 'C'
+      : m[1].startsWith('MARI')
+        ? 'M'
+        : m[1].startsWith('DIVOR')
+          ? 'D'
+          : m[1].startsWith('VEU')
+            ? 'V'
+            : m[1];
     r.SITUATION_MATRIMONIALE ??= MATRI[k];
-    if (m[2] !== undefined && r.NOMBRE_ENFANTS === undefined) r.NOMBRE_ENFANTS = String(Number(m[2]));
+    if (m[2] !== undefined && r.NOMBRE_ENFANTS === undefined)
+      r.NOMBRE_ENFANTS = String(Number(m[2]));
   }
   const enfants = lire(/ENFANT/);
   if (/^\d{1,2}$/.test(enfants)) r.NOMBRE_ENFANTS = String(Number(enfants));
@@ -304,7 +344,9 @@ export function infosDuRapport(
   const fa = aPlat(f);
   if (fa && !/^(ACTIVE?|FINAL|COMM?|VOL|BEN)\b/.test(fa)) {
     r.FONCTION = /^ENS/.test(fa)
-      ? /ANTE$/.test(fa) ? 'Enseignante' : 'Enseignant'
+      ? /ANTE$/.test(fa)
+        ? 'Enseignante'
+        : 'Enseignant'
       : /^SECR/.test(fa)
         ? 'Secrétaire'
         : /^GESTION/.test(fa)
@@ -318,18 +360,31 @@ export function infosDuRapport(
   if (/^[123]$/.test(cat)) r.CATEGORIE = ['I', 'II', 'III'][Number(cat) - 1];
   else if (/^(I|II|III)$/.test(cat)) r.CATEGORIE = cat;
   const ech = /^(\d{1,2})(ER|E|EME)?$/.exec(aPlat(lire(/^ECHELON$|^ECH$/)));
-  const ge = /(?:^|[^0-9])(\d{1,2}) ?(?:ER|E|EME)?$/.exec(aPlat(lire(/^G ?\/ ?E$/)));
+  const ge = /(?:^|[^0-9])(\d{1,2}) ?(?:ER|E|EME)?$/.exec(
+    aPlat(lire(/^G ?\/ ?E$/)),
+  );
   if (ech) r.ECHELON = String(Number(ech[1]));
   else if (ge) r.ECHELON = String(Number(ge[1]));
   const ind = lire(/^IND/).replace(/\s/g, '');
   if (/^\d{2,4}$/.test(ind)) r.INDICE_SOLDE = ind;
   // Diplômes
   const prof = lire(/^PROF/);
-  if (/[A-Za-z]{2}/.test(prof)) r.DIPLOME_PRO = prof.replace(/\s*[-/]\s*/g, ' ').trim();
+  if (/[A-Za-z]{2}/.test(prof))
+    r.DIPLOME_PRO = prof.replace(/\s*[-/]\s*/g, ' ').trim();
   const acad = aPlat(lire(/ACAD/));
-  const d = /^(CEPE|BEPC|PEPC|BEMG|BET|BEMT|BAC|LIC|LICENCE|DEUG|BTS|MAITRISE|MASTER)(?: (.+))?$/.exec(acad);
+  const d =
+    /^(CEPE|BEPC|PEPC|BEMG|BET|BEMT|BAC|LIC|LICENCE|DEUG|BTS|MAITRISE|MASTER)(?: (.+))?$/.exec(
+      acad,
+    );
   if (d) {
-    const code = { PEPC: 'BEPC', BEMG: 'BEPC', BEMT: 'BET', LIC: 'LICENCE', DEUG: 'LICENCE' }[d[1]] ?? d[1];
+    const code =
+      {
+        PEPC: 'BEPC',
+        BEMG: 'BEPC',
+        BEMT: 'BET',
+        LIC: 'LICENCE',
+        DEUG: 'LICENCE',
+      }[d[1]] ?? d[1];
     if (d[1] !== 'DEUG') r.AUTRES_DIPLOMES = `${code} | ${d[2] ?? ''} | |`;
   }
   // Recrutement : seulement une date complète

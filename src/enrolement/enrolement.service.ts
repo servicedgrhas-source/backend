@@ -1504,7 +1504,14 @@ export class EnrolementService implements OnApplicationBootstrap {
    * la page) : refaits seulement quand les dossiers de la campagne changent, ou après 10 minutes
    * (les autres bases — personnel, registre, recrutés — bougent peu).
    */
-  private readonly memoDejaConnus = new Map<number, { cle: string; le: number; res: Promise<ReturnType<EnrolementService['dossierConnu']>[]> }>();
+  private readonly memoDejaConnus = new Map<
+    number,
+    {
+      cle: string;
+      le: number;
+      res: Promise<ReturnType<EnrolementService['dossierConnu']>[]>;
+    }
+  >();
   async dejaConnus(campagneId: number) {
     const [x] = await this.enroles.query<{ cle: string }[]>(
       `SELECT count(*) || '|' || coalesce(max("modifieLe")::text, '') AS cle FROM enrole WHERE "campagneId" = $1`,
@@ -1612,11 +1619,16 @@ export class EnrolementService implements OnApplicationBootstrap {
     // l'écartement, ne disait rien au lecteur) ; le texte tapé reste à part, en observation.
     if (quoi === 'non-retenus') {
       // Le texte tapé à l'écartement, écrit correctement (« Deja afectés » → « Déjà affecté (e) »)
-      const dejaAffecte = (t: string) => t.replace(/d[ée]j[àa]\s+aff?[ée]ct[ée]e?s?(\s*\(e\))?/gi, 'Déjà affecté (e)');
+      const dejaAffecte = (t: string) =>
+        t.replace(
+          /d[ée]j[àa]\s+aff?[ée]ct[ée]e?s?(\s*\(e\))?/gi,
+          'Déjà affecté (e)',
+        );
       const connus = await this.comparateurConnus(campagneId);
       const dejaConnu = (nom: string, naissance: string | null) => {
         const t = connus(nom, naissance)[0];
-        if (!t) return 'Déjà connu (plus retrouvé aujourd’hui dans nos bases : à revoir)';
+        if (!t)
+          return 'Déjà connu (plus retrouvé aujourd’hui dans nos bases : à revoir)';
         const ou = [t.etablissement, t.departement].filter(Boolean).join(', ');
         const quoiT =
           t.source === 'Recrutement (Fonction publique)'
@@ -1649,14 +1661,20 @@ export class EnrolementService implements OnApplicationBootstrap {
             : (e.motifDecision ?? 'Non précisé'),
           // Ce qui avait été tapé à l'écartement (« Déjà connu : … »)
           observation: e.ecarteDejaConnu
-            ? dejaAffecte((e.motifDecision ?? '').replace(/^D[ée]j[àa] connu\s*(:\s*)?/i, '').replace(/^\(recruté, volontaire ou enrôlé\)$/, '')) || null
+            ? dejaAffecte(
+                (e.motifDecision ?? '')
+                  .replace(/^D[ée]j[àa] connu\s*(:\s*)?/i, '')
+                  .replace(/^\(recruté, volontaire ou enrôlé\)$/, ''),
+              ) || null
             : null,
           decision: e.decidePar
             ? `${e.decidePar}${e.decideLe ? `, le ${jour(new Date(e.decideLe).toISOString())}` : ''}`
             : null,
         }),
       );
-      const deja = lignes.filter((l) => l.observation !== null || /^D[ée]j[àa]/i.test(l.motif)).length;
+      const deja = lignes.filter(
+        (l) => l.observation !== null || /^D[ée]j[àa]/i.test(l.motif),
+      ).length;
       return {
         titre: `LISTE DES NON RETENUS — ENRÔLEMENT ${c.annee}`,
         sousTitre: `Enrôlement ${c.annee} (${c.anneeScolaire}) · ${lignes.length.toLocaleString('fr-FR')} non retenu(s) : ${deja.toLocaleString('fr-FR')} déjà connu(s) ailleurs, ${(lignes.length - deja).toLocaleString('fr-FR')} pour un autre motif`,
