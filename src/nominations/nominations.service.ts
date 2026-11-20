@@ -231,6 +231,7 @@ export class NominationsService {
         statut: true,
         nouveauPoste: true,
         departementId: true,
+        categorie: true,
       },
     });
     const actives = lignes.filter(
@@ -247,10 +248,14 @@ export class NominationsService {
         for (const n of g)
           res.set(
             n.id,
-            `Proposé(e) ${g.length} fois : ${g
+            // « nommé(e) 2 fois cette année : aussi Inspecteur délégué… (IDCAP) des CEG — Bouenza 2 »
+            `Nommé(e) ${g.length} fois cette année : aussi ${g
               .filter((x) => x.id !== n.id)
-              .map((x) => x.nouveauPoste ?? '?')
-              .join(', ')}`,
+              .map(
+                (x) =>
+                  `${CATEGORIE.get(x.categorie)?.libelle ?? x.categorie} — ${x.nouveauPoste ?? 'poste ?'}`,
+              )
+              .join(' ; ')}`,
           );
     return res;
   }
