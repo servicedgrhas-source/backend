@@ -286,6 +286,36 @@ export function nomOfficiel(nom: string, cycle: string): string {
   }
 }
 
+/** Même écriture aux accents, aux majuscules et à la ponctuation près (« LEWEME » / « Léwémé »). */
+export function memeEcriture(a: string, b: string): boolean {
+  const k = (x: string) =>
+    normaliser(x)
+      .replace(/[^A-Z0-9]+/g, ' ')
+      .trim();
+  return k(a) === k(b);
+}
+
+/**
+ * Le nom du répertoire avec les accents de nos noms (DGRHAS, 20/11/2026 : on garde nos accents) :
+ * « ECOLE PRIMAIRE DE LEWEME » et « École primaire Léwémé » → « ECOLE PRIMAIRE DE LÉWÉMÉ ».
+ */
+export function avecAccents(nom: string, sources: string[]): string {
+  const accent = /[^\p{ASCII}]/u;
+  const accentues = new Map<string, string>();
+  for (const src of sources)
+    for (const m of src.match(/[\p{L}\p{N}]+/gu) ?? [])
+      if (accent.test(m) && !accentues.has(normaliser(m)))
+        accentues.set(normaliser(m), m);
+  return nom.replace(/[\p{L}\p{N}]+/gu, (mot) => {
+    if (accent.test(mot)) return mot;
+    const a = accentues.get(normaliser(mot));
+    if (!a) return mot;
+    if (mot === mot.toUpperCase()) return a.toLocaleUpperCase('fr');
+    if (mot === mot.toLowerCase()) return a.toLocaleLowerCase('fr');
+    return mot[0] + a.slice(1).toLocaleLowerCase('fr');
+  });
+}
+
 /** Localité du répertoire : district à la campagne, arrondissement (ou commune) en ville. */
 function localiteDe(
   commune: string,
@@ -556,10 +586,16 @@ export class RepertoireEcolesService {
         const insp = s.parentId ? inspParId.get(s.parentId) : undefined;
         const sur =
           (c.r === 1 && (c.loc || !s.localite)) || (c.r >= 0.95 && c.loc);
+        // Seuls les accents ou les majuscules changent : notre nom est gardé ; sinon le nom du
+        // répertoire, avec nos accents
+        const nomPropose = memeEcriture(s.nom, l.nomPropose)
+          ? s.nom
+          : avecAccents(l.nomPropose, [s.nom, ...(s.anciensNoms ?? [])]);
         const etat: EtatRepertoire =
-          s.nom === l.nomPropose ? 'IDENTIQUE' : sur ? 'RENOMMER' : 'PROBABLE';
+          s.nom === nomPropose ? 'IDENTIQUE' : sur ? 'RENOMMER' : 'PROBABLE';
         propositions.push({
           ...base,
+          nomPropose,
           etat,
           ressemblance: Math.round(c.r * 100),
           memeLocalite: c.loc,

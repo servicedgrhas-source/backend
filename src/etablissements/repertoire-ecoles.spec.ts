@@ -1,4 +1,6 @@
 import {
+  avecAccents,
+  memeEcriture,
   cleNomEcole,
   nomOfficiel,
   ressemblanceEcoles,
@@ -66,6 +68,30 @@ describe('Répertoire officiel des écoles', () => {
         cleNomEcole('ISAAC BALENDE'),
       ),
     ).toBeGreaterThanOrEqual(0.88);
+  });
+
+  it('garde nos accents (DGRHAS, 20/11/2026)', () => {
+    expect(memeEcriture('École primaire KOLO', 'École primaire Kolo')).toBe(
+      true,
+    );
+    expect(
+      memeEcriture(
+        'Centre d’alphabétisation LEWEME',
+        "Centre d'Alphabetisation Léwémé",
+      ),
+    ).toBe(true);
+    expect(memeEcriture('EP DE KIMANDOU', 'École primaire Kimandou')).toBe(
+      false,
+    );
+    expect(
+      avecAccents('Centre d’alphabétisation MAYEYE CENTRE', [
+        "Centre d'Alphabetisation Mayéyé centre",
+      ]),
+    ).toBe('Centre d’alphabétisation MAYÉYÉ CENTRE');
+    expect(
+      avecAccents('ECOLE PRIMAIRE DE LISSIEMI', ['École primaire Lissiémi']),
+    ).toBe('ÉCOLE PRIMAIRE DE LISSIÉMI');
+    expect(avecAccents('EP Kolo', ['École primaire Kolo'])).toBe('EP Kolo');
   });
 
   it('réunit les initiales et garde « Centre » à confirmer', () => {
