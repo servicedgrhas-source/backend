@@ -92,6 +92,8 @@ import { BesoinsAdministratifsService } from './etablissements/besoins-administr
 import { NominationsController } from './nominations/nominations.controller';
 import { NominationsService } from './nominations/nominations.service';
 import { SuiviController } from './etablissements/suivi.controller';
+import { RepertoireEcolesController } from './etablissements/repertoire-ecoles.controller';
+import { RepertoireEcolesService } from './etablissements/repertoire-ecoles.service';
 import { SuiviService } from './etablissements/suivi.service';
 import { DemandesController } from './circuit/demandes.controller';
 import { DemandesService } from './circuit/demandes.service';
@@ -151,6 +153,7 @@ import { ReferentielsService } from './referentiels/referentiels.service';
     BesoinsAdministratifsController,
     NominationsController,
     SuiviController,
+    RepertoireEcolesController,
     CoreController,
     ConfigurationController,
     AffectationController,
@@ -239,6 +242,7 @@ import { ReferentielsService } from './referentiels/referentiels.service';
     BesoinsAdministratifsService,
     NominationsService,
     SuiviService,
+    RepertoireEcolesService,
     DemandesService,
     PrestationsService,
     ExcelRecensementService,

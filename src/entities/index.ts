@@ -973,6 +973,13 @@ export class Structure {
    */
   @Column({ type: 'varchar', nullable: true }) typeLocalite: string | null;
   @Column({ type: 'varchar', nullable: true }) localite: string | null;
+  /** Zone du répertoire officiel des établissements (URBAINE ou RURALE). */
+  @Column({ type: 'varchar', nullable: true }) zone: string | null;
+  /**
+   * Noms d'avant (DGRHAS, 20/11/2026) : une école renommée d'après le répertoire officiel reste
+   * reconnue sous ses anciens noms (lieux de service des fiches, fichiers des DDEPPSA…).
+   */
+  @Column({ type: 'jsonb', default: () => "'[]'" }) anciensNoms: string[];
   /** Responsable en poste (fiche du personnel) : le proviseur, le chef de service… Vide : poste vacant. */
   @Column({ type: 'int', nullable: true }) responsableId: number | null;
   /** Le responsable n'assure qu'un intérim. */

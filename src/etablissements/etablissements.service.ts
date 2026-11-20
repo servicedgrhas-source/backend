@@ -335,7 +335,8 @@ export class EtablissementsService {
       .filter(Boolean)
       .slice(0, 5))
       ajouter(
-        `translate(upper(s.nom || ' ' || coalesce(s.localite, '') || ' ' || coalesce(s.code, '')), 'ÀÁÂÄÃÉÈÊËÍÌÎÏÓÒÔÖÕÚÙÛÜÇ', 'AAAAAEEEEIIIIOOOOOUUUUC') LIKE $X`,
+        // Les anciens noms (avant le répertoire officiel) restent cherchables
+        `translate(upper(s.nom || ' ' || coalesce(s.localite, '') || ' ' || coalesce(s.code, '') || ' ' || s."anciensNoms"::text), 'ÀÁÂÄÃÉÈÊËÍÌÎÏÓÒÔÖÕÚÙÛÜÇ', 'AAAAAEEEEIIIIOOOOOUUUUC') LIKE $X`,
         `%${m}%`,
       );
     const lignes = await this.structures.query<

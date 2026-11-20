@@ -308,11 +308,17 @@ export class EffectifsEcolesService {
           type: string;
           cycle: string | null;
           departementId: number | null;
+          anciensNoms: string[] | null;
         }>(
-          `SELECT id, nom, type, cycle, "departementId" FROM structure WHERE actif`,
+          `SELECT id, nom, type, cycle, "departementId", "anciensNoms" FROM structure WHERE actif`,
         )
       ).map((s) => [s.id, s]),
     );
+    // Une école renommée d'après le répertoire officiel reste reconnue sous ses anciens noms
+    const nomsDe = (s: { nom: string; anciensNoms: string[] | null }) => [
+      s.nom,
+      ...(s.anciensNoms ?? []),
+    ];
     const personnel = await q<{
       id: number;
       statut: string;
@@ -463,13 +469,14 @@ export class EffectifsEcolesService {
     };
     for (const s of structures.values())
       if (s.type === 'ETABLISSEMENT')
-        noter(
-          s.departementId,
-          (s.cycle && s.cycle in CYCLES_ECOLE
-            ? (s.cycle as CycleEcole)
-            : null) ?? cycleDuNom(s.nom),
-          cleEcole(s.nom),
-        );
+        for (const nom of nomsDe(s))
+          noter(
+            s.departementId,
+            (s.cycle && s.cycle in CYCLES_ECOLE
+              ? (s.cycle as CycleEcole)
+              : null) ?? cycleDuNom(s.nom),
+            cleEcole(nom),
+          );
     for (const g of gens)
       if (!g.fc && typeof g.r === 'object')
         noter(g.r.departementId, g.r.cycle, g.r.cle);
@@ -521,11 +528,12 @@ export class EffectifsEcolesService {
     };
     for (const s of structures.values())
       if (s.type === 'ETABLISSEMENT')
-        peser(
-          `${s.departementId ?? ''}|${(s.cycle && s.cycle in CYCLES_ECOLE ? s.cycle : null) ?? cycleDuNom(s.nom) ?? ''}`,
-          cleEcole(s.nom),
-          1_000_000,
-        );
+        for (const nom of nomsDe(s))
+          peser(
+            `${s.departementId ?? ''}|${(s.cycle && s.cycle in CYCLES_ECOLE ? s.cycle : null) ?? cycleDuNom(s.nom) ?? ''}`,
+            cleEcole(nom),
+            1_000_000,
+          );
     for (const g of gens)
       if (typeof g.r === 'object')
         peser(`${g.r.departementId ?? ''}|${g.r.cycle ?? ''}`, g.r.cle, 1);
@@ -574,11 +582,13 @@ export class EffectifsEcolesService {
         cycleDuNom(s.nom) ??
         '';
       const groupe = `${s.departementId ?? ''}|${cycle}`;
-      const cle0 = cleEcole(s.nom);
-      const k = dec.racine(
-        `${groupe}|${versCle.get(`${groupe}|${cle0}`) ?? cle0}`,
-      );
-      if (!structureParEcole.has(k)) structureParEcole.set(k, s.id);
+      for (const nom of nomsDe(s)) {
+        const cle0 = cleEcole(nom);
+        const k = dec.racine(
+          `${groupe}|${versCle.get(`${groupe}|${cle0}`) ?? cle0}`,
+        );
+        if (!structureParEcole.has(k)) structureParEcole.set(k, s.id);
+      }
     }
     const ecoles = new Map<
       string,

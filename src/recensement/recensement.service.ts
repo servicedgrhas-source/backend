@@ -279,7 +279,15 @@ export class RecensementService {
           actif: true,
           type: In(['ETABLISSEMENT', 'INSPECTION', 'DDEPPSA']),
         },
-        select: ['id', 'type', 'nom', 'sigle', 'cycle', 'departementId'],
+        select: [
+          'id',
+          'type',
+          'nom',
+          'sigle',
+          'cycle',
+          'departementId',
+          'anciensNoms',
+        ],
       }),
     );
     const paires = fiches

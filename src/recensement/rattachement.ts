@@ -15,6 +15,8 @@ export interface StructureRattachable {
   sigle: string;
   cycle: string | null;
   departementId: number | null;
+  /** Noms d'avant le répertoire officiel : toujours reconnus. */
+  anciensNoms?: string[] | null;
 }
 
 type Nature = 'DD' | 'INS' | 'LYC' | 'COL' | 'PRE' | 'ALP' | 'PRI';
@@ -100,7 +102,7 @@ export class IndexStructures {
             ? (NATURE_CYCLE[s.cycle ?? ''] ?? nature(texte(s.nom)))
             : null;
       if (!nat) continue;
-      for (const t of new Set([s.nom, s.sigle])) {
+      for (const t of new Set([s.nom, s.sigle, ...(s.anciensNoms ?? [])])) {
         const k = coeur(texte(t));
         if (!k) continue;
         const cle = `${nat}|${k}`;

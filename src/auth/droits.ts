@@ -148,6 +148,8 @@ export const RUBRIQUES_API: Record<string, string[]> = {
   '/ecoles': ['etablissements'],
   // Volet Banque mondiale : décisions de comptage, n'écrit pas dans nos bases
   '/ecoles/a-controler': ['ecoles-controle'],
+  // Répertoire officiel des établissements (20/11/2026) : noms et écoles manquantes
+  '/ecoles/repertoire': ['ecoles-repertoire'],
   '/ecoles/besoins': ['etablissements/besoins'],
   '/enrolement/besoins': ['enrolement/besoins'],
   '/notes/affectation': ['notes', 'notes/preparer/affectation'],

@@ -206,7 +206,11 @@ export class ImportStructuresService {
         (s) =>
           s.type === 'ETABLISSEMENT' &&
           s.departementId === depId &&
-          cleNom(s) === cleCompacte(nom),
+          (cleNom(s) === cleCompacte(nom) ||
+            // Nom d'avant le répertoire officiel
+            (s.anciensNoms ?? []).some(
+              (a) => cleCompacte(a) === cleCompacte(nom),
+            )),
       );
 
     const r: RapportImportStructures = {
