@@ -2811,7 +2811,7 @@ export const PRESTATIONS: DefinitionPrestation[] = [
     libelle: 'Indemnité de fonction',
     famille: 'PRIME',
     pourQui:
-      'Un agent nommé à un poste de responsabilité (directeur d’école, chef de service…) : il demande l’indemnité attachée à cette fonction.',
+      'Un agent nommé à un poste de responsabilité (directeur d’école, proviseur, directeur…) : il demande l’indemnité attachée à cette fonction.',
     acte: 'Soit-transmis au Budget',
     niveauDecision: 'DGRHAS',
     signataire: LE_DG,

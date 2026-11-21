@@ -151,7 +151,8 @@ export class PrestationsService {
       // Signé par le responsable du lieu de service : dit en clair avant le dépôt
       signataire: p.signataire.replace(
         '{decideur.poste}',
-        'responsable du lieu de service (chef d’établissement, chef de service…)',
+        // Un chef de service ne délivre pas de certificat (DG, 21/11/2026)
+        'responsable du lieu de service (chef d’établissement, directeur…)',
       ),
       circuit: this.circuitEnClair(reglages.get(p.code)).map((e) => ({
         ...e,
