@@ -297,20 +297,24 @@ export class EtablissementsService {
       statut: string | null;
       genre: string | null;
       fonction: string | null;
+      /** Le grade vient de la nomination : déjà écrit en abrégé (« Inst C »), gardé tel quel. */
+      gradeNomination?: boolean;
     },
     observation: string | null,
   ): string | null {
     const genre = a.genre;
     // Un contractuel prend sa qualification (« Instituteur » → « Inst. C. »)
-    const g = gradeAbrege(a.grade, {
-      statut: a.statut,
-      // « Directeur », « Directrice » : un poste, pas un métier
-      qualification: /^(DIRECT|PROVISEUR|CHEF|RESPONSABLE|CENSEUR)/i.test(
-        a.fonction ?? '',
-      )
-        ? null
-        : a.fonction,
-    });
+    const g = a.gradeNomination
+      ? a.grade?.trim() || null
+      : gradeAbrege(a.grade, {
+          statut: a.statut,
+          // « Directeur », « Directrice » : un poste, pas un métier
+          qualification: /^(DIRECT|PROVISEUR|CHEF|RESPONSABLE|CENSEUR)/i.test(
+            a.fonction ?? '',
+          )
+            ? null
+            : a.fonction,
+        });
     const ge = [g, a.echelon?.trim()].filter(Boolean).join(' ');
     const o = observation ? OBSERVATIONS[observation as Observation] : null;
     const obs = o
@@ -652,16 +656,21 @@ export class EtablissementsService {
                 echelon: string | null;
                 genre: string | null;
                 fonction: string | null;
+                gradeNomination: boolean;
                 observation: string | null;
               }[]
             >(
               // Grade, échelon et observation de la nomination (« Inst. A. 1/Promu (e) », DG 21/11/2026)
-              `SELECT a.id, a."nomComplet" AS nom, a.statut, a.donnees->>'GRADE' AS grade,
-                      a.donnees->>'ECHELON' AS echelon, a.donnees->>'FONCTION' AS fonction, coalesce(a.donnees->>'GENRE', n.genre) AS genre,
+              // Le grade et l'échelon de la nomination d'abord (ceux de la note), sinon ceux de la fiche
+              `SELECT a.id, a."nomComplet" AS nom, a.statut,
+                      coalesce(nullif(n.grade, ''), a.donnees->>'GRADE') AS grade,
+                      nullif(n.grade, '') IS NOT NULL AS "gradeNomination",
+                      coalesce(nullif(n.echelon, ''), a.donnees->>'ECHELON') AS echelon,
+                      a.donnees->>'FONCTION' AS fonction, coalesce(n.genre, a.donnees->>'GENRE') AS genre,
                       n.observation
                  FROM agent_recense a
                  LEFT JOIN LATERAL (
-                   SELECT observation, genre FROM nomination
+                   SELECT observation, genre, grade, echelon FROM nomination
                     WHERE "agentId" = a.id AND statut = 'VALIDEE'
                     ORDER BY annee DESC, id DESC LIMIT 1
                  ) n ON true
