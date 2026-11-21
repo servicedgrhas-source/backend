@@ -1253,17 +1253,41 @@ export class EffectifsEcolesService {
       ? filtrees.filter((p) => p.niveau === niveau)
       : filtrees;
     const parId = new Map(c.ecoles.map((e) => [e.id, e]));
+    // L'école de l'organigramme de chaque côté (son nom) : deux écritures d'une même école le disent
+    const ecoleOrg = (id: string) => {
+      const sid = c.structureEcole?.get(id);
+      return sid === undefined
+        ? null
+        : {
+            id: sid,
+            nom:
+              c.structureDe.get(id)?.nom ??
+              [...c.structureDe.values()].find((s) => s.id === sid)?.nom ??
+              null,
+          };
+    };
     return {
       total: toutes.length,
       niveaux,
-      paires: toutes.slice((page - 1) * taille, page * taille).map((p) => ({
-        score: p.score,
-        niveau: p.niveau,
-        raison: p.raison,
-        garder: p.garder,
-        a: this.detail(parId.get(p.a)!),
-        b: this.detail(parId.get(p.b)!),
-      })),
+      paires: toutes.slice((page - 1) * taille, page * taille).map((p) => {
+        const oa = ecoleOrg(p.a);
+        const ob = ecoleOrg(p.b);
+        return {
+          score: p.score,
+          niveau: p.niveau,
+          raison: p.raison,
+          garder: p.garder,
+          memeEcole: !!oa && oa.id === ob?.id,
+          a: {
+            ...this.detail(parId.get(p.a)!),
+            ecoleOrganigramme: oa?.nom ?? null,
+          },
+          b: {
+            ...this.detail(parId.get(p.b)!),
+            ecoleOrganigramme: ob?.nom ?? null,
+          },
+        };
+      }),
     };
   }
 
