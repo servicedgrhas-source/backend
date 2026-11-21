@@ -1,4 +1,4 @@
-import { Controller, Get, HttpCode, Post } from '@nestjs/common';
+import { Body, Controller, Get, HttpCode, Post } from '@nestjs/common';
 import {
   Roles,
   ROLES_TRAITEMENT,
@@ -24,5 +24,20 @@ export class NomsEcolesController {
   @HttpCode(200)
   appliquer(@Utilisateur() u: UtilisateurConnecte) {
     return this.service.appliquer(u);
+  }
+
+  /** Fusionner deux écoles enregistrées deux fois : DG (et administrateurs). */
+  @Roles('DG')
+  @Post('fusionner')
+  @HttpCode(200)
+  fusionner(
+    @Utilisateur() u: UtilisateurConnecte,
+    @Body() corps: { garder?: unknown; fermer?: unknown },
+  ) {
+    return this.service.fusionner(
+      u,
+      Number(corps?.garder),
+      Number(corps?.fermer),
+    );
   }
 }

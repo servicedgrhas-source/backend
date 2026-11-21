@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { BadRequestException, Injectable } from '@nestjs/common';
 import { DataSource } from 'typeorm';
 import type { UtilisateurConnecte } from '../auth/auth';
 import { nomEcole, sansTypeEcole } from '../common/nom-ecole';
@@ -141,5 +141,109 @@ export class NomsEcolesService {
         .map((x) => ({ avant: x.s.nom, apres: x.apres })),
     });
     return { renommees: lots.length };
+  }
+
+  /**
+   * Fusionner deux écoles enregistrées deux fois (DG, 21/11/2026) : on garde « garder », tout ce qui
+   * pointait vers « fermer » passe à « garder » (agents, classes, salles, bâtiments, présence,
+   * emplois du temps, besoins, comptes, demandes…), puis « fermer » est fermée ; son nom reste
+   * reconnu (anciens noms). Ce qui existe déjà des deux côtés (même semaine de présence, même année
+   * d'emploi du temps, même poste du cadre organique) reste à l'école fermée et est compté.
+   */
+  async fusionner(u: UtilisateurConnecte, garderId: number, fermerId: number) {
+    if (!garderId || !fermerId || garderId === fermerId)
+      throw new BadRequestException('Choisissez deux écoles différentes.');
+    const [g, f] = await Promise.all(
+      [garderId, fermerId].map(async (id) => {
+        const [s] = await this.ds.query<
+          {
+            id: number;
+            nom: string;
+            type: string;
+            cycle: string | null;
+            departementId: number | null;
+            actif: boolean;
+            responsableId: number | null;
+            anciensNoms: string[] | null;
+          }[]
+        >(
+          `SELECT id, nom, type, cycle, "departementId", actif, "responsableId", "anciensNoms" FROM structure WHERE id = $1`,
+          [id],
+        );
+        return s;
+      }),
+    );
+    if (!g || !f) throw new BadRequestException('École introuvable.');
+    if (g.type !== 'ETABLISSEMENT' || f.type !== 'ETABLISSEMENT')
+      throw new BadRequestException('Seules deux écoles se fusionnent.');
+    if (!g.actif || !f.actif)
+      throw new BadRequestException('L’une des deux écoles est déjà fermée.');
+    if (g.cycle !== f.cycle || g.departementId !== f.departementId)
+      throw new BadRequestException(
+        'Les deux écoles n’ont pas le même cycle ou le même département : ce ne sont pas des doublons.',
+      );
+    const res: Record<string, number> = {};
+    await this.ds.transaction(async (m) => {
+      const deplacer = async (table: string, colonne: string, cle?: string) => {
+        const sql = cle
+          ? `UPDATE ${table} t SET "${colonne}" = $1 WHERE t."${colonne}" = $2
+               AND NOT EXISTS (SELECT 1 FROM ${table} x WHERE x."${colonne}" = $1 AND x.${cle} = t.${cle})`
+          : `UPDATE ${table} SET "${colonne}" = $1 WHERE "${colonne}" = $2`;
+        const r = await m.query<[unknown[], number]>(sql, [g.id, f.id]);
+        const n = Array.isArray(r) ? Number(r[1] ?? 0) : 0;
+        if (n) res[table] = (res[table] ?? 0) + n;
+      };
+      // Les tables qui citent une structure (relevé du 21/11/2026)
+      for (const t of [
+        'agent_recense',
+        'batiment',
+        'salle',
+        'classe',
+        'besoin_personnel',
+        'evaluation_agent',
+        'horaire_agent',
+        'presence',
+        'utilisateur',
+      ])
+        await deplacer(t, 'structureId');
+      await deplacer('demande_mutation', 'structureOrigineId');
+      await deplacer('structure', 'parentId');
+      // Une seule ligne par école : on ne déplace que ce que l'école gardée n'a pas déjà
+      await deplacer('semaine_presence', 'structureId', 'lundi');
+      await deplacer('emploi_du_temps', 'structureId', '"anneeScolaire"');
+      await deplacer('cadre_organique', 'structureId', 'poste');
+      const restes = await m.query<{ n: number }[]>(
+        `SELECT (SELECT count(*) FROM semaine_presence WHERE "structureId" = $1)
+              + (SELECT count(*) FROM emploi_du_temps WHERE "structureId" = $1)
+              + (SELECT count(*) FROM cadre_organique WHERE "structureId" = $1) AS n`,
+        [f.id],
+      );
+      const anciens = [
+        ...new Set([...(g.anciensNoms ?? []), f.nom, ...(f.anciensNoms ?? [])]),
+      ].filter((x) => x && x !== g.nom);
+      await m.query(
+        `UPDATE structure SET "anciensNoms" = $2::jsonb,
+                "responsableId" = coalesce("responsableId", $3)
+          WHERE id = $1`,
+        [g.id, JSON.stringify(anciens), f.responsableId],
+      );
+      await m.query(
+        `UPDATE structure SET actif = false, "responsableId" = NULL WHERE id = $1`,
+        [f.id],
+      );
+      res.restes = Number(restes[0]?.n ?? 0);
+    });
+    await this.journal.log(u, 'ECOLES_FUSION', 'structure', String(g.id), {
+      gardee: { id: g.id, nom: g.nom },
+      fermee: { id: f.id, nom: f.nom },
+      ...res,
+    });
+    return {
+      gardee: g.nom,
+      fermee: f.nom,
+      agents: res.agent_recense ?? 0,
+      deplaces: res,
+      restes: res.restes ?? 0,
+    };
   }
 }
