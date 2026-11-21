@@ -16,6 +16,11 @@ import {
 import { matiereEnseignant, reconnaitreMatiere } from './matieres';
 import type { ListeExportee } from '../common/export-liste';
 import { normaliser } from '../common/texte';
+import {
+  gradeAbrege,
+  OBSERVATIONS,
+  type Observation,
+} from '../nominations/categories';
 import { JournalService, ParametresService } from '../core/core.service';
 import { Batiment, Classe, Referentiel, Salle, Structure } from '../entities';
 import { RecensementService } from '../recensement/recensement.service';
@@ -279,6 +284,43 @@ export class EtablissementsService {
             : a.fonctionStructure,
       })),
     };
+  }
+
+  /**
+   * « Inst. A. 1/Promu (e) » : grade abrégé et échelon, puis l'observation de sa nomination validée
+   * (au féminin pour une femme, « (e) » si le genre n'est pas connu), comme dans les nominations.
+   */
+  ligneGrade(
+    a: {
+      grade: string | null;
+      echelon: string | null;
+      statut: string | null;
+      genre: string | null;
+      fonction: string | null;
+    },
+    observation: string | null,
+  ): string | null {
+    const genre = a.genre;
+    // Un contractuel prend sa qualification (« Instituteur » → « Inst. C. »)
+    const g = gradeAbrege(a.grade, {
+      statut: a.statut,
+      // « Directeur », « Directrice » : un poste, pas un métier
+      qualification: /^(DIRECT|PROVISEUR|CHEF|RESPONSABLE|CENSEUR)/i.test(
+        a.fonction ?? '',
+      )
+        ? null
+        : a.fonction,
+    });
+    const ge = [g, a.echelon?.trim()].filter(Boolean).join(' ');
+    const o = observation ? OBSERVATIONS[observation as Observation] : null;
+    const obs = o
+      ? /^F/i.test(genre ?? '')
+        ? o.feminin
+        : /^M/i.test(genre ?? '')
+          ? o.libelle
+          : `${o.libelle} (e)`
+      : null;
+    return [ge, obs].filter(Boolean).join('/') || null;
   }
 
   /* ------------------------------ Accès ------------------------------ */
@@ -601,12 +643,35 @@ export class EtablissementsService {
           ? this.structures.findOne({ where: { id: s.parentId } })
           : null,
         s.responsableId
-          ? this.structures.query<{ id: number; nom: string }[]>(
-              `SELECT id, "nomComplet" AS nom FROM agent_recense WHERE id = $1`,
+          ? this.structures.query<
+              {
+                id: number;
+                nom: string;
+                statut: string | null;
+                grade: string | null;
+                echelon: string | null;
+                genre: string | null;
+                fonction: string | null;
+                observation: string | null;
+              }[]
+            >(
+              // Grade, échelon et observation de la nomination (« Inst. A. 1/Promu (e) », DG 21/11/2026)
+              `SELECT a.id, a."nomComplet" AS nom, a.statut, a.donnees->>'GRADE' AS grade,
+                      a.donnees->>'ECHELON' AS echelon, a.donnees->>'FONCTION' AS fonction, coalesce(a.donnees->>'GENRE', n.genre) AS genre,
+                      n.observation
+                 FROM agent_recense a
+                 LEFT JOIN LATERAL (
+                   SELECT observation, genre FROM nomination
+                    WHERE "agentId" = a.id AND statut = 'VALIDEE'
+                    ORDER BY annee DESC, id DESC LIMIT 1
+                 ) n ON true
+                WHERE a.id = $1`,
               [s.responsableId],
             )
           : [],
       ]);
+    const r = responsable[0];
+    const ligneResponsable = r ? this.ligneGrade(r, r.observation) : null;
     const matieresCycle = ['COLLEGE', 'LYCEE'].includes(s.cycle ?? '')
       ? (await this.programmes(s.cycle!)).matieres
       : null;
@@ -619,8 +684,14 @@ export class EtablissementsService {
         localite: s.localite,
         departementId: s.departementId,
         inspection: parent ? { id: parent.id, nom: parent.nom } : null,
-        posteResponsable: posteResponsable(s),
-        responsable: responsable[0] ?? null,
+        // « Directeur(trice) d'école » (DG, 21/11/2026)
+        posteResponsable: posteResponsable(s).replace(
+          /^Directeur\b/,
+          'Directeur(trice)',
+        ),
+        responsable: r
+          ? { id: r.id, nom: r.nom, grade: ligneResponsable }
+          : null,
         responsableInterim: s.responsableInterim,
       },
       annee,
