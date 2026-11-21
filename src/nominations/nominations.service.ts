@@ -16,6 +16,7 @@ import { enTexte, normaliser } from '../common/texte';
 import { JournalService, ParametresService } from '../core/core.service';
 import { AgentRecense, Departement, Nomination } from '../entities';
 import { RecensementService } from '../recensement/recensement.service';
+import { PlacementNominationsService } from './placement.service';
 import {
   CATEGORIE,
   CATEGORIES_NOMINATION,
@@ -73,6 +74,7 @@ export class NominationsService {
     private readonly params: ParametresService,
     private readonly journal: JournalService,
     private readonly rattachement: RattachementService,
+    private readonly placement: PlacementNominationsService,
   ) {}
 
   private dgrhas(u: UtilisateurConnecte) {
@@ -931,7 +933,16 @@ export class NominationsService {
         'Choisissez : valider, rejeter, ou remettre en proposition.',
       );
     const lignes = await this.noms.find({ where: { id: In(ids) } });
-    const res = { faites: 0, erreurs: [] as string[] };
+    const res = {
+      faites: 0,
+      erreurs: [] as string[],
+      placement: null as null | {
+        placees: number;
+        responsables: number;
+        aTraiter: number;
+      },
+    };
+    const validees: number[] = [];
     const doublons = lignes.length
       ? await this.doublonsDe(lignes[0].annee)
       : new Map<number, string>();
@@ -960,7 +971,11 @@ export class NominationsService {
       });
       await this.noms.save(n);
       res.faites++;
+      if (decision === 'VALIDEE') validees.push(n.id);
     }
+    // Le nommé prend son poste dans l'organigramme et sa fiche suit (école reconnue sans doute)
+    if (validees.length)
+      res.placement = await this.placement.placerValidees(u, validees);
     await this.journal.log(u, 'NOMINATIONS_DECISION', 'nomination', null, {
       decision,
       faites: res.faites,

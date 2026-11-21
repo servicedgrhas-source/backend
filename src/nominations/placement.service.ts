@@ -262,6 +262,39 @@ export class PlacementNominationsService {
   }
 
   /**
+   * Placement d'office à la validation (DG, 21/11/2026 : « quand on nomme quelqu'un d'autre, ça doit
+   * être à jour ») : les nominations validées dont la structure est reconnue sans doute (« À placer »)
+   * prennent effet tout de suite, le nouveau responsable remplaçant l'ancien. Les cas douteux
+   * (à confirmer, conflit, sans fiche, introuvable) restent dans « Placer les nommés ».
+   */
+  async placerValidees(u: UtilisateurConnecte, ids: number[]) {
+    const vide = { placees: 0, responsables: 0, aTraiter: 0 };
+    if (!ids.length) return vide;
+    const annees = await this.nominations.query<{ annee: string }[]>(
+      `SELECT DISTINCT annee FROM nomination WHERE id = ANY($1) AND statut = 'VALIDEE'`,
+      [ids],
+    );
+    const res = { ...vide };
+    for (const { annee } of annees) {
+      const r = await this.analyse(annee);
+      if (r.annee !== annee) continue;
+      const voulues = new Set(ids);
+      const lignes = r.nominations.filter((n) => voulues.has(n.id));
+      const placer = lignes
+        .filter((n) => n.etat === 'A_PLACER')
+        .map((n) => n.id);
+      res.aTraiter += lignes.filter(
+        (n) => !['A_PLACER', 'DEJA_FAIT', 'SANS_STRUCTURE'].includes(n.etat),
+      ).length;
+      if (!placer.length) continue;
+      const a = await this.appliquer(u, annee, { placer, ajouter: [] });
+      res.placees += a.placees;
+      res.responsables += a.responsables;
+    }
+    return res;
+  }
+
+  /**
    * Enregistre ce que la DGRHAS a coché : le chef devient le responsable de sa structure, la fiche
    * de chaque nommé est rattachée à sa structure avec sa fonction (et son département s'il change) ;
    * une école de la note absente de l'organigramme est ajoutée dans l'inspection choisie.
