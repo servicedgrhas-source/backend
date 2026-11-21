@@ -532,8 +532,8 @@ export class RepertoireEcolesService {
       const i = s.parentId ? inspParId.get(s.parentId) : undefined;
       if (i) ajouterInsp(`${s.departementId}|${s.cycle}`, i);
     }
-    // Rien pour ce cycle : les inspections du département sans cycle écrit
-    const dejaVus = new Set(inspectionsDe.keys());
+    // Les inspections du département sans cycle écrit : elles tiennent tous les cycles de leur
+    // circonscription (Likouala : « Inspection EPENA » a des CEG, des EP et des CEP)
     for (const s of inspections)
       if (!s.cycle)
         for (const c of [
@@ -543,8 +543,13 @@ export class RepertoireEcolesService {
           'LYCEE',
           'ALPHABETISATION',
         ])
-          if (!dejaVus.has(`${s.departementId}|${c}`))
-            ajouterInsp(`${s.departementId}|${c}`, s);
+          ajouterInsp(`${s.departementId}|${c}`, s);
+    // L'inspection du primaire (IEP, IEPA : préscolaire, primaire et alphabétisation) tient aussi
+    // les CEP et les CA de sa circonscription (« CEP Loukolela » → « Inspection IEPA Loukoléla »)
+    for (const s of inspections)
+      if (s.cycle === 'PRIMAIRE')
+        for (const c of ['PRESCOLAIRE', 'ALPHABETISATION'])
+          ajouterInsp(`${s.departementId}|${c}`, s);
     const proposerInspection = (l: LigneRepertoire) => {
       for (const k of [l.locCle, l.communeCle]) {
         const m = inspLoc.get(`${l.departementId}|${l.cycle}|${k}`);
@@ -556,9 +561,20 @@ export class RepertoireEcolesService {
           pourquoi: `${n} des ${tot} écoles de ce cycle à ${l.localite} y sont déjà rattachées`,
         };
       }
-      const seules = (
-        inspectionsDe.get(`${l.departementId}|${l.cycle}`) ?? []
-      ).filter((s) => s.cycle === l.cycle);
+      // L'inspection de la localité (« CEP Loukolela » → « Inspection IEPA Loukoléla »)
+      const permises = inspectionsDe.get(`${l.departementId}|${l.cycle}`) ?? [];
+      for (const k of [l.locCle, l.communeCle]) {
+        if (!k || k.length < 4) continue;
+        const ici = permises.filter(
+          (s) => locCle(s.localite) === k || locCle(s.nom).endsWith(k),
+        );
+        if (ici.length === 1)
+          return {
+            id: ici[0].id,
+            pourquoi: `l’inspection de ${l.localite ?? 'cette localité'}`,
+          };
+      }
+      const seules = permises.filter((s) => s.cycle === l.cycle);
       if (seules.length === 1)
         return {
           id: seules[0].id,
