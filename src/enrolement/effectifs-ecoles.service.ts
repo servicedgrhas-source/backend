@@ -220,6 +220,8 @@ interface Calcul {
   membres: Map<string, { cible: 'P' | 'V'; id: string }[]>;
   /** Les mêmes, sous le nom d'école écrit (avant les jumelages). */
   membresAvant: Map<string, { cible: 'P' | 'V'; id: string }[]>;
+  /** L'école de l'organigramme de chaque école comptée (deux écritures d'une même école : même id). */
+  structureEcole: Map<string, number | undefined>;
   /** La structure (organigramme) de chaque école qui y est. */
   structureDe: Map<
     string,
@@ -825,6 +827,7 @@ export class EffectifsEcolesService {
       membres,
       membresAvant,
       structureDe,
+      structureEcole: structureDeLEcole,
       organigrammeVides,
       ecoles: liste,
       ressemblances,
@@ -1370,7 +1373,17 @@ export class EffectifsEcolesService {
       nbGroupes++;
     };
     for (const membres of groupes.values()) {
-      const orgs = membres.filter((e) => e.organigramme);
+      // Deux écritures d'une même école de l'organigramme (« RIGOBERT NGOUOLALI » et « CEP DE
+      // RIGOBERT NGOLALI », 21/11/2026) : une seule école ; la première la représente, les autres
+      // la rejoignent comme des écoles hors organigramme
+      const representant = new Map<number, string>();
+      const orgs = membres.filter((e) => {
+        if (!e.organigramme) return false;
+        const sid = c.structureEcole?.get(e.id);
+        if (sid === undefined) return true;
+        if (!representant.has(sid)) representant.set(sid, e.id);
+        return representant.get(sid) === e.id;
+      });
       if (orgs.length <= 1) {
         fusionnerEnsemble(membres);
         continue;
@@ -1399,8 +1412,8 @@ export class EffectifsEcolesService {
               .map((v) => rattachee.get(v))
               .filter((v): v is string => !!v),
           );
-          const orgsVoisines = [...(voisins.get(x.id) ?? [])].filter(
-            (v) => parId.get(v)?.organigramme,
+          const orgsVoisines = [...(voisins.get(x.id) ?? [])].filter((v) =>
+            orgs.some((o) => o.id === v),
           );
           if (orgsVoisines.length > 1) {
             ambigues.add(x.id);
