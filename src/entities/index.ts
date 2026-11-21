@@ -993,6 +993,14 @@ export class Structure {
     creneaux?: string;
     heuresEnseignant?: number;
   } | null;
+  /** Position GPS prélevée sur place (mission de terrain, 21/11/2026). */
+  @Column({ type: 'double precision', nullable: true }) latitude: number | null;
+  @Column({ type: 'double precision', nullable: true }) longitude:
+    number | null;
+  /** Précision annoncée par l'appareil, en mètres. */
+  @Column({ type: 'real', nullable: true }) precisionGps: number | null;
+  @Column({ type: 'timestamptz', nullable: true }) localiseLe: Date | null;
+  @Column({ type: 'varchar', nullable: true }) localisePar: string | null;
   @Column({ type: 'boolean', default: true }) actif: boolean;
   /** Rang parmi les structures du même niveau (flèches « monter / descendre »). */
   @Column({ type: 'int', default: 0 }) ordre: number;
@@ -1764,6 +1772,14 @@ export class Batiment {
   /** BON, MOYEN, MAUVAIS. */
   @Column({ default: 'BON' }) etat: string;
   @Column({ type: 'text', nullable: true }) observation: string | null;
+  /** Position GPS prélevée sur place (mission de terrain, 21/11/2026). */
+  @Column({ type: 'double precision', nullable: true }) latitude: number | null;
+  @Column({ type: 'double precision', nullable: true }) longitude:
+    number | null;
+  /** Précision annoncée par l'appareil, en mètres. */
+  @Column({ type: 'real', nullable: true }) precisionGps: number | null;
+  @Column({ type: 'timestamptz', nullable: true }) localiseLe: Date | null;
+  @Column({ type: 'varchar', nullable: true }) localisePar: string | null;
   @CreateDateColumn() creeLe: Date;
   @UpdateDateColumn() modifieLe: Date;
 }

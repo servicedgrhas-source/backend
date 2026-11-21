@@ -3411,6 +3411,11 @@ export class NotesService {
     // Note signée : elle entre dans la fiche du personnel de chaque personne (sans faire attendre)
     if (n.module === 'AFFECTATION')
       void this.personnel.synchroniser().catch(() => undefined);
+    // Note de nomination signée (la première fois) : les nommés prennent leur poste (DG, 21/11/2026)
+    if (n.module === 'NOMINATION' && n.statut === 'VALIDEE') {
+      const placement = await this.nomSvc.placerNoteSignee(u, id);
+      return { ok: true, placement };
+    }
     return { ok: true };
   }
 

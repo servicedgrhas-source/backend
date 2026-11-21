@@ -193,6 +193,29 @@ export class EtablissementsController {
     return this.service.fiche(u, id, annee);
   }
 
+  /** Position GPS de l'école (mission de terrain) ; null / null l'efface. */
+  @Put(':id/localisation')
+  localiser(
+    @Utilisateur() u: UtilisateurConnecte,
+    @Param('id', ParseIntPipe) id: number,
+    @Body()
+    dto: { latitude?: unknown; longitude?: unknown; precision?: unknown },
+  ) {
+    return this.service.localiser(u, id, dto);
+  }
+
+  /** Position GPS d'un bâtiment de l'école (une annexe peut être ailleurs). */
+  @Put(':id/batiments/:x/localisation')
+  localiserBatiment(
+    @Utilisateur() u: UtilisateurConnecte,
+    @Param('id', ParseIntPipe) id: number,
+    @Param('x', ParseIntPipe) x: number,
+    @Body()
+    dto: { latitude?: unknown; longitude?: unknown; precision?: unknown },
+  ) {
+    return this.service.localiser(u, id, dto, x);
+  }
+
   @Post(':id/classes/ouvrir')
   ouvrir(
     @Utilisateur() u: UtilisateurConnecte,

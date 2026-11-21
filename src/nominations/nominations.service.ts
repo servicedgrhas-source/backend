@@ -973,15 +973,30 @@ export class NominationsService {
       res.faites++;
       if (decision === 'VALIDEE') validees.push(n.id);
     }
-    // Le nommé prend son poste dans l'organigramme et sa fiche suit (école reconnue sans doute)
-    if (validees.length)
-      res.placement = await this.placement.placerValidees(u, validees);
+    // Le nommé ne prend son poste qu'à la signature de la note (DG, 21/11/2026 : « tant que ce n'est
+    // pas signé, il peut y avoir changement à tout moment ») : voir placerNoteSignee
+    void validees;
     await this.journal.log(u, 'NOMINATIONS_DECISION', 'nomination', null, {
       decision,
       faites: res.faites,
       erreurs: res.erreurs.length,
     });
     return res;
+  }
+
+  /**
+   * Note de nomination signée (DG, 21/11/2026) : ses nommés prennent leur poste dans l'organigramme ;
+   * le nouveau responsable remplace l'ancien, la fiche suit. Seules les écoles reconnues sans doute ;
+   * les autres restent dans « Placer les nommés ». Les relevés ne paraissent pas dans la note.
+   */
+  async placerNoteSignee(u: UtilisateurConnecte, noteId: string) {
+    const ids = (
+      await this.noms.query<{ id: number }[]>(
+        `SELECT id FROM nomination WHERE "noteId" = $1 AND statut = 'VALIDEE' AND observation <> 'RELEVE'`,
+        [noteId],
+      )
+    ).map((x) => x.id);
+    return this.placement.placerValidees(u, ids);
   }
 
   /* ------------------------------ Notes de service ------------------------------ */

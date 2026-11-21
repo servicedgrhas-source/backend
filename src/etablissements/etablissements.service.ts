@@ -327,6 +327,62 @@ export class EtablissementsService {
     return [ge, obs].filter(Boolean).join('/') || null;
   }
 
+  /* ------------------------------ Localisation (GPS) ------------------------------ */
+
+  /**
+   * Position GPS d'une école ou d'un de ses bâtiments (DG, 21/11/2026), prélevée sur place par la
+   * mission de terrain (bouton « Prélever la localisation ») ou saisie à la main. Une position hors du
+   * Congo est refusée (erreur de saisie) ; null efface la position.
+   */
+  async localiser(
+    u: UtilisateurConnecte,
+    id: number,
+    dto: { latitude?: unknown; longitude?: unknown; precision?: unknown },
+    batimentId?: number,
+  ) {
+    const s = await this.structure(u, id);
+    const efface = dto.latitude === null && dto.longitude === null;
+    const lat = Number(dto.latitude);
+    const lng = Number(dto.longitude);
+    if (!efface) {
+      if (!Number.isFinite(lat) || !Number.isFinite(lng))
+        throw new BadRequestException('Position GPS illisible.');
+      // Le Congo et ses abords : latitude −5,5 à 4, longitude 10,5 à 19,5
+      if (lat < -5.5 || lat > 4 || lng < 10.5 || lng > 19.5)
+        throw new BadRequestException(
+          `Cette position (${lat.toFixed(5)}, ${lng.toFixed(5)}) n’est pas au Congo : vérifiez les chiffres (latitude puis longitude).`,
+        );
+    }
+    const prec = Number(dto.precision);
+    const valeurs = efface
+      ? {
+          latitude: null,
+          longitude: null,
+          precisionGps: null,
+          localiseLe: null,
+          localisePar: null,
+        }
+      : {
+          latitude: lat,
+          longitude: lng,
+          precisionGps: Number.isFinite(prec) ? Math.round(prec) : null,
+          localiseLe: new Date(),
+          localisePar: u.nom,
+        };
+    if (batimentId) {
+      const b = await this.batiments.findOne({
+        where: { id: batimentId, structureId: s.id },
+      });
+      if (!b) throw new NotFoundException('Bâtiment introuvable.');
+      await this.batiments.update(b.id, valeurs);
+    } else await this.structures.update(s.id, valeurs);
+    await this.journal.log(u, 'ECOLE_LOCALISEE', 'structure', String(s.id), {
+      batimentId: batimentId ?? null,
+      ...valeurs,
+    });
+    return valeurs;
+  }
+
   /* ------------------------------ Accès ------------------------------ */
 
   /** Structure du périmètre du compte (DGRHAS : toutes ; DDEPPSA : son département ; chef : la sienne). */
@@ -693,6 +749,12 @@ export class EtablissementsService {
         localite: s.localite,
         departementId: s.departementId,
         inspection: parent ? { id: parent.id, nom: parent.nom } : null,
+        // Position GPS de l'école (mission de terrain)
+        latitude: s.latitude,
+        longitude: s.longitude,
+        precisionGps: s.precisionGps,
+        localiseLe: s.localiseLe,
+        localisePar: s.localisePar,
         // « Directeur(trice) d'école » (DG, 21/11/2026)
         posteResponsable: posteResponsable(s).replace(
           /^Directeur\b/,
