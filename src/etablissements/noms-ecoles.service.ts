@@ -4,6 +4,7 @@ import type { UtilisateurConnecte } from '../auth/auth';
 import { nomEcole, sansTypeEcole } from '../common/nom-ecole';
 import { normaliser } from '../common/texte';
 import { JournalService } from '../core/core.service';
+import { cleEcole } from '../nominations/placement';
 
 interface Ecole {
   id: number;
@@ -18,6 +19,20 @@ interface Ecole {
   anciensNoms: string[] | null;
   agents: number;
 }
+
+/**
+ * Clé d'un nom d'école pour trouver les doublons (21/11/2026) : sans le type, chiffres romains en
+ * chiffres et lettre de groupe détachée (« II-B » = « 2B » = « 2 B »), lettres doublées réduites
+ * (« KINSSOUNDI » = « KINSOUNDI »), l'ordre des mots sans importance (« JOSEPH NKEOUA »).
+ */
+export const cleDoublon = (nom: string) =>
+  cleEcole(normaliser(sansTypeEcole(nom)).replace(/(\d)([A-D])\b/g, '$1 $2'))
+    .split(' ')
+    .filter(Boolean)
+    // Lettres doublées réduites après les chiffres romains (« II » est déjà devenu « 2 »)
+    .map((m) => m.replace(/([A-Z])\1+/g, '$1'))
+    .sort()
+    .join(' ');
 
 const cle = (s: string) =>
   normaliser(s)
@@ -65,7 +80,7 @@ export class NomsEcolesService {
     for (const s of ecoles) {
       if (!s.cycle) continue;
       // L'ordre des mots ne compte pas (« CA JOSEPH NKEOUA » = « CA NKEOUA JOSEPH », 21/11/2026)
-      const mots = cle(sansTypeEcole(s.nom)).split(' ').sort().join(' ');
+      const mots = cleDoublon(s.nom);
       const k = `${s.departementId}|${s.cycle}|${mots}`;
       groupes.set(k, [...(groupes.get(k) ?? []), s]);
     }

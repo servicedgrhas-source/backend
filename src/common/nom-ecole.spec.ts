@@ -45,6 +45,9 @@ describe('Nom des écoles', () => {
     );
     expect(nomEcole('PRIMAIRE', 'EP P.M.D.')).toBe('EP P.M.D.');
     expect(sansTypeEcole('EPP Ngoko')).toBe('Ngoko');
+    expect(nomEcole('ALPHABETISATION', 'CA ALPHA MOUKONDO')).toBe(
+      'CA MOUKONDO',
+    );
     expect(sansTypeEcole('École')).toBe('École');
     expect(nomEcole(null, 'École primaire X')).toBe('École primaire X');
   });

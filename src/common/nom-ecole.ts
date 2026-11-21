@@ -48,6 +48,8 @@ const TYPES = [
   `centre\\s+${D}${A}lph${A}b${E}tis${A}tion(\\s+et\\s+(de\\s+)?r${E}scol${A}ris${A}tion)?`,
   `centre\\s+${D}${A}lph${A}b\\.?`,
   `${A}lph${A}b${E}tis${A}tion`,
+  // « CA ALPHA MOUKONDO » : « Alpha » est le type, pas le nom
+  `${A}lph${A}`,
   `c\\.?\\s?${A}\\b\\.?`,
   // « Centre de Souanké », « CENTRE 31 JUILLET » : le type ; « Centre-Ville » reste un nom
   `centre(?=\\s+(de|du|d['’]|\\d))`,
