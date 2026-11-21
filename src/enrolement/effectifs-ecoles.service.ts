@@ -699,6 +699,13 @@ export class EffectifsEcolesService {
     // Le nom affiché : le nom corrigé, sinon celui de l'organigramme, sinon l'écriture la plus
     // fréquente, abrégée
     const ordreDep = new Map(deps.map((d) => [d.id, d.ordre]));
+    // L'école de l'organigramme de chaque école comptée (pour reconnaître deux écritures d'une même école)
+    const structureDeLEcole = new Map(
+      [...ecoles.values()].map((e) => [
+        e.id,
+        e.structureId ?? structureParEcole.get(e.id),
+      ]),
+    );
     const liste: EcoleCalculee[] = [...ecoles.values()].map((e) => {
       const sid = e.structureId ?? structureParEcole.get(e.id);
       const s = sid ? structures.get(sid) : undefined;
@@ -743,11 +750,28 @@ export class EffectifsEcolesService {
           if (dec.differentes.has(paireCle(x.id, y.id))) continue;
           const score = ressemblance(x.cle, y.cle, p[a], p[b]);
           if (score < SEUIL_RESSEMBLANCE) continue;
+          // Deux écritures d'une même école de l'organigramme (« RIGOBERT NGOUOLALI » et « CEP DE
+          // RIGOBERT NGOLALI ») : la même école, pas deux écoles déjà enregistrées (21/11/2026)
+          const sx = structureDeLEcole.get(x.id);
+          const sy = structureDeLEcole.get(y.id);
+          const memeStructure = sx !== undefined && sx === sy;
           ressemblances.push({
             a: x.id,
             b: y.id,
             score,
-            ...vraisemblance(x, y),
+            ...(memeStructure
+              ? {
+                  niveau: 'TRES_PROBABLE' as const,
+                  raison:
+                    'Deux écritures de la même école de l’organigramme : les fiches seront rattachées à cette école.',
+                }
+              : x.organigramme && y.organigramme
+                ? {
+                    niveau: 'PEU_PROBABLE' as const,
+                    raison:
+                      'Deux écoles distinctes de l’organigramme : si c’est la même, fusionnez-les dans Structures › Noms des écoles (onglet « En double »).',
+                  }
+                : vraisemblance(x, y)),
             garder: preference(x, y) <= 0 ? 'a' : 'b',
           });
           if (!x.proche || score > x.proche.score)
