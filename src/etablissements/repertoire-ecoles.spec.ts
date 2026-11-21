@@ -132,6 +132,6 @@ describe('Répertoire officiel des écoles', () => {
     );
     expect(
       nomOfficiel('Centre d’alphabétisation Mengo', 'ALPHABETISATION'),
-    ).toBe('CA Mengo');
+    ).toBe('CA MENGO');
   });
 });

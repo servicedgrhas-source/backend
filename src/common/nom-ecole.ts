@@ -99,7 +99,8 @@ export function nomEcole(
   cycle: string | null | undefined,
   nom: string | null | undefined,
 ): string {
-  const propre = sansTypeEcole(nom);
+  // Le nom propre en majuscules, accents gardés (DG, 21/11/2026) : « EP KOMBÉ »
+  const propre = sansTypeEcole(nom).toLocaleUpperCase('fr-FR');
   const prefixe = cycle ? PREFIXES_CYCLE[cycle] : undefined;
   return prefixe && propre ? `${prefixe} ${propre}` : (nom ?? '').trim();
 }

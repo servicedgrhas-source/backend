@@ -8,7 +8,7 @@ describe('Nom des écoles', () => {
       'LYCEE MINANGOU LAURENT',
       'ecole primaire Minangou Laurent',
       'École primaire publique Minangou Laurent',
-      'EP Minangou Laurent',
+      'EP MINANGOU LAURENT',
       'E.P. Minangou Laurent',
       'C.E.G. Minangou Laurent',
       'Collège d’enseignement général Minangou Laurent',
@@ -23,15 +23,15 @@ describe('Nom des écoles', () => {
 
   it('donne le préfixe du cycle', () => {
     expect(nomEcole('PRIMAIRE', 'Lycée Minangou Laurent')).toBe(
-      'EP Minangou Laurent',
+      'EP MINANGOU LAURENT',
     );
     expect(nomEcole('PRESCOLAIRE', 'Minangou Laurent')).toBe(
-      'CEP Minangou Laurent',
+      'CEP MINANGOU LAURENT',
     );
-    expect(nomEcole('COLLEGE', 'École primaire Minangou')).toBe('CEG Minangou');
+    expect(nomEcole('COLLEGE', 'École primaire Minangou')).toBe('CEG MINANGOU');
     expect(nomEcole('LYCEE', 'LYCEE DE MADINGOU')).toBe('LEG DE MADINGOU');
     expect(nomEcole('ALPHABETISATION', "Centre d'Alphabetisation Mengo")).toBe(
-      'CA Mengo',
+      'CA MENGO',
     );
   });
 
@@ -41,7 +41,7 @@ describe('Nom des écoles', () => {
     expect(sansTypeEcole('CAMP 15 AOUT')).toBe('CAMP 15 AOUT');
     // Une initiale après le type reste (et le nom normé ne change plus ensuite)
     expect(nomEcole('PRIMAIRE', 'École primaire P. Ndzoko')).toBe(
-      'EP P. Ndzoko',
+      'EP P. NDZOKO',
     );
     expect(nomEcole('PRIMAIRE', 'EP P.M.D.')).toBe('EP P.M.D.');
     expect(sansTypeEcole('EPP Ngoko')).toBe('Ngoko');

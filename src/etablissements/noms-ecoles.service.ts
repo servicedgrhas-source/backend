@@ -13,6 +13,8 @@ interface Ecole {
   departementId: number | null;
   departement: string | null;
   localite: string | null;
+  parentId: number | null;
+  inspection: string | null;
   anciensNoms: string[] | null;
   agents: number;
 }
@@ -36,9 +38,10 @@ export class NomsEcolesService {
 
   private ecoles(): Promise<Ecole[]> {
     return this.ds.query(
-      `SELECT s.id, s.nom, s.sigle, s.cycle, s."departementId", d.nom AS departement, s.localite, s."anciensNoms",
+      `SELECT s.id, s.nom, s.sigle, s.cycle, s."departementId", d.nom AS departement, s.localite, s."parentId", p.nom AS inspection, s."anciensNoms",
               (SELECT count(*)::int FROM agent_recense a WHERE a."structureId" = s.id) AS agents
          FROM structure s LEFT JOIN departement d ON d.id = s."departementId"
+                    LEFT JOIN structure p ON p.id = s."parentId"
         WHERE s.type = 'ETABLISSEMENT' AND s.actif
         ORDER BY d.nom NULLS LAST, s.nom`,
     );
@@ -56,24 +59,43 @@ export class NomsEcolesService {
         localite: s.localite,
       }))
       .filter((x) => x.cycle && x.apres !== x.avant);
+    // Doublon : même nom, même cycle, au même endroit (DG, 21/11/2026). Le même nom à Pointe-Noire et
+    // dans la Cuvette, ou dans deux localités d'un département, ce sont deux écoles.
     const groupes = new Map<string, Ecole[]>();
     for (const s of ecoles) {
       if (!s.cycle) continue;
       const k = `${s.departementId}|${s.cycle}|${cle(sansTypeEcole(s.nom))}`;
       groupes.set(k, [...(groupes.get(k) ?? []), s]);
     }
-    const doublons = [...groupes.values()]
-      .filter((g) => g.length > 1)
-      .map((g) => ({
-        nom: nomEcole(g[0].cycle, g[0].nom),
-        departement: g[0].departement,
-        ecoles: g.map((s) => ({
-          id: s.id,
-          nom: s.nom,
-          localite: s.localite,
-          agents: s.agents,
-        })),
-      }));
+    // Au même endroit : même localité ; sans localité écrite, même inspection
+    const memeEndroit = (a: Ecole, b: Ecole) =>
+      a.localite && b.localite
+        ? cle(a.localite) === cle(b.localite)
+        : a.parentId !== null && a.parentId === b.parentId;
+    const parEndroit: Ecole[][] = [];
+    for (const g of groupes.values()) {
+      if (g.length < 2) continue;
+      const vus = new Set<number>();
+      for (const a of g) {
+        if (vus.has(a.id)) continue;
+        const l = g.filter(
+          (b) => b === a || (!vus.has(b.id) && memeEndroit(a, b)),
+        );
+        l.forEach((b) => vus.add(b.id));
+        if (l.length > 1) parEndroit.push(l);
+      }
+    }
+    const doublons = parEndroit.map((g) => ({
+      nom: nomEcole(g[0].cycle, g[0].nom),
+      departement: g[0].departement,
+      ecoles: g.map((s) => ({
+        id: s.id,
+        nom: s.nom,
+        localite:
+          [s.localite, s.inspection].filter(Boolean).join(' · ') || null,
+        agents: s.agents,
+      })),
+    }));
     const sansCycle = ecoles
       .filter((s) => !s.cycle)
       .map((s) => ({
