@@ -1583,7 +1583,7 @@ export class EnrolementService implements OnApplicationBootstrap {
    */
   async listeEnrolement(
     campagneId: number,
-    quoi: 'retenus' | 'ecartes' | 'non-retenus',
+    quoi: 'retenus' | 'ecartes' | 'non-retenus' | 'a-controler' | 'a-decider',
   ) {
     const c = await this.campagne(campagneId);
     const conf = this.config.get();
@@ -1607,6 +1607,43 @@ export class EnrolementService implements OnApplicationBootstrap {
       return {
         titre: `LISTE DES RETENUS — ENRÔLEMENT ${c.annee}`,
         sousTitre: `Enrôlement ${c.annee} (${c.anneeScolaire}) · ${lignes.length.toLocaleString('fr-FR')} retenu(s) · ${limites}${
+          lignes.some((l) => l.horsLimite)
+            ? ` · ${lignes.filter((l) => l.horsLimite).length} hors des limites (en rouge)`
+            : ''
+        }`,
+        lignes,
+      };
+    }
+    // Dossiers en cours (DG, 21/11/2026) : à contrôler, ou contrôlés et à décider par la DGRHAS
+    if (quoi === 'a-controler' || quoi === 'a-decider') {
+      const controle = quoi === 'a-decider';
+      const lignes = (
+        await this.liste({
+          campagneId,
+          etat: controle ? 'CONTROLE' : 'A_CONTROLER',
+        })
+      ).map((e) => ({
+        id: e.id,
+        nom: e.nomComplet,
+        naissance: jour(e.dateNaissance),
+        ...this.ageDe(e.dateNaissance, c.annee),
+        lieu: e.lieuNaissance,
+        diplome: e.diplomeLibelle,
+        cycle: e.cycle || null,
+        specialite: e.specialite || null,
+        souhaite1: e.departementsSouhaitesNoms[0] ?? null,
+        souhaite2: e.departementsSouhaitesNoms[1] ?? null,
+        souhaite3: e.departementsSouhaitesNoms[2] ?? null,
+        telephone: e.telephone,
+        observation: e.observation,
+        saisiePar: e.saisiePar,
+        controlePar: controle ? e.controlePar : undefined,
+        remarque: e.remarqueControle,
+      }));
+      const quoiT = controle ? 'à décider par la DGRHAS' : 'à contrôler';
+      return {
+        titre: `LISTE DES DOSSIERS ${controle ? 'À DÉCIDER PAR LA DGRHAS' : 'À CONTRÔLER'} — ENRÔLEMENT ${c.annee}`,
+        sousTitre: `Enrôlement ${c.annee} (${c.anneeScolaire}) · ${lignes.length.toLocaleString('fr-FR')} dossier(s) ${quoiT} · ${limites}${
           lignes.some((l) => l.horsLimite)
             ? ` · ${lignes.filter((l) => l.horsLimite).length} hors des limites (en rouge)`
             : ''
