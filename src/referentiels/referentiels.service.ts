@@ -235,7 +235,12 @@ export class ReferentielsService implements OnApplicationBootstrap {
       // Orthographe reprise de l'ancien système : corrigée partout, même sans ses fichiers
       await this.corrigerNiveaux();
       await this.corrigerPostes();
-      if (!existsSync(DOSSIER)) return;
+      if (!existsSync(DOSSIER)) {
+        // En ligne, le dossier de l'ancien système n'existe pas : les fiches sans établissement
+        // n'étaient alors jamais rattachées au démarrage (agents « qui flottent », 21/11/2026)
+        await this.rattacherAuDemarrage();
+        return;
+      }
       const aFaire =
         (await this.refs.count()) === 0 ||
         !(await this.structures.exist({ where: { type: 'MINISTERE' } })) ||
@@ -255,15 +260,19 @@ export class ReferentielsService implements OnApplicationBootstrap {
       // Un rechargement de l'ancien système remet son orthographe : corrigée à nouveau
       await this.corrigerNiveaux();
       await this.corrigerPostes();
-      // Fiches du personnel sans établissement : rattachées d'après leur lieu de service
-      const n = await this.rec.rattacherAutomatiquement();
-      if (n)
-        this.log.log(
-          `${n} fiche(s) du personnel rattachée(s) à leur structure d'après le lieu de service`,
-        );
+      await this.rattacherAuDemarrage();
     } catch (e) {
       this.log.error(`Chargement des référentiels : ${(e as Error).message}`);
     }
+  }
+
+  /** Fiches du personnel sans établissement : rattachées d'après leur lieu de service (sûr seulement). */
+  private async rattacherAuDemarrage() {
+    const n = await this.rec.rattacherAutomatiquement();
+    if (n)
+      this.log.log(
+        `${n} fiche(s) du personnel rattachée(s) à leur structure d'après le lieu de service`,
+      );
   }
 
   /**

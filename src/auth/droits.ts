@@ -131,6 +131,8 @@ export const RUBRIQUES_API: Record<string, string[]> = {
     'propositions-ajout',
   ],
   '/personnel': [],
+  // Agents sans école (21/11/2026) : lieux écrits à rattacher à leur école
+  '/personnel/sans-ecole': ['recensement/sans-ecole'],
   '/personnel/agents': [
     'recensement/agents',
     'rattachement/fiches',
