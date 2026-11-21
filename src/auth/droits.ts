@@ -23,7 +23,18 @@ export interface ConfigDroits {
    * Rôles créés par le DG (« Secrétariat DRSC ») : un nom et un rôle de départ (ses actions) ; ses
    * rubriques sont réglées dans `roles` comme pour un rôle du système.
    */
-  rolesPerso?: Record<string, { libelle: string; base: Role }>;
+  rolesPerso?: Record<
+    string,
+    {
+      libelle: string;
+      base: Role;
+      /**
+       * Compte vide (21/11/2026) : le rôle part de rien ; le compte ne voit et ne fait que les
+       * rubriques ouvertes à ce rôle (ou à la personne), tout le reste lui est fermé, lecture comprise.
+       */
+      vide?: boolean;
+    }
+  >;
   /** Rôle personnalisé de chaque compte (id du compte → code du rôle). */
   attributions?: Record<string, string>;
 }
@@ -156,6 +167,7 @@ export const RUBRIQUES_API: Record<string, string[]> = {
   '/notes/mutation': ['notes', 'notes/preparer/mutation'],
   '/notes/nomination': ['notes', 'notes/preparer/nomination'],
   '/nominations': ['nominations', 'rattachement/NOMINATION'],
+  '/nominations/placer': ['nominations-placement'],
   '/rapprochement': ['rapprochement', 'anciens', 'controle-affectations'],
   '/administration': ['utilisateurs'],
   '/administration/parametres': ['parametres'],
@@ -300,7 +312,11 @@ export function validerDroits(brut: unknown): ConfigDroits {
       throw new BadRequestException(
         `Rôle de départ non permis pour « ${libelle} ».`,
       );
-    rolesPerso[code] = { libelle, base: r.base as Role };
+    rolesPerso[code] = {
+      libelle,
+      base: r.base as Role,
+      ...(r.vide === true ? { vide: true } : {}),
+    };
   }
   const libelles = Object.values(rolesPerso).map((r) =>
     r.libelle.toLowerCase(),
@@ -347,8 +363,12 @@ export function droitsDe(
 ): Record<string, Niveau> {
   if (ROLES_LIBRES.includes(u.role)) return {};
   const perso = c.attributions?.[u.id];
+  // Compte vide : tout est fermé, puis on ouvre ce que le rôle et la personne ont reçu
+  const vide = estCompteVide(c, u);
   const d: Record<string, Niveau> = {
-    ...(c.roles[u.role] ?? {}),
+    ...(vide
+      ? Object.fromEntries(Object.keys(RUBRIQUES_API).map((r) => [r, 'MASQUE']))
+      : (c.roles[u.role] ?? {})),
     ...(perso && c.rolesPerso?.[perso] ? (c.roles[perso] ?? {}) : {}),
     ...(c.utilisateurs[u.id] ?? {}),
   };
@@ -364,6 +384,68 @@ export function droitsDe(
     for (const r of Object.keys(d))
       if (d[r] === 'MODIFICATION') d[r] = 'LECTURE';
   return d;
+}
+
+/**
+ * Compte vide : ce qu'une rubrique ouverte en modification fait ailleurs. Le recensement complète
+ * et ajoute des fiches (« Compléter la fiche », « L'agent n'existe pas ? ») dans la fiche du
+ * personnel, rangée dans « Base du personnel ».
+ */
+const TRAVAIL_LIE_COMPTE_VIDE: Record<string, string[]> = {
+  '/recensement': ['recensement/agents', 'recensement/pieces'],
+};
+
+/** Le compte a un rôle personnalisé « compte vide » (il ne voit que ce qu'on lui ouvre). */
+export function estCompteVide(
+  c: ConfigDroits,
+  u: { id: string; role: Role },
+): boolean {
+  if (ROLES_LIBRES.includes(u.role) || u.role === 'STRUCTURE') return false;
+  const perso = c.attributions?.[u.id];
+  return !!(perso && c.rolesPerso?.[perso]?.vide);
+}
+
+/**
+ * Compte vide : une adresse rangée dans une rubrique qui ne lui est pas ouverte lui est refusée,
+ * même en lecture (un compte ordinaire garde les lectures de son rôle). Les lectures dont ses
+ * pages ont besoin, rangées ailleurs, lui restent permises.
+ */
+export function refusCompteVide(
+  droits: Record<string, Niveau>,
+  chemin: string,
+  methode: string,
+): string | null {
+  const c = chemin.replace(/^\/+|\/+$/g, '');
+  const sous = (p: string) => c === p || c.startsWith(`${p}/`);
+  const proprietaires = rubriquesDe(c);
+  if (!proprietaires.length) return null;
+  const ouverte = (r: string) =>
+    droits[r] === 'LECTURE' || droits[r] === 'MODIFICATION';
+  const lecture = ['GET', 'HEAD', 'OPTIONS'].includes(methode.toUpperCase());
+  // Consulter : une rubrique ouverte ; enregistrer : une rubrique ouverte en modification
+  if (
+    proprietaires.some((r) =>
+      lecture ? ouverte(r) : droits[r] === 'MODIFICATION',
+    )
+  )
+    return null;
+  if (!lecture && proprietaires.some(ouverte))
+    return 'Cette rubrique vous est ouverte en lecture seule : vous pouvez la consulter, pas la modifier.';
+  if (lecture && LECTURES_VISITEUR.some(sous)) return null;
+  if (
+    Object.entries(TRAVAIL_LIE_COMPTE_VIDE).some(
+      ([r, prefixes]) => droits[r] === 'MODIFICATION' && prefixes.some(sous),
+    )
+  )
+    return null;
+  if (
+    lecture &&
+    Object.entries(LECTURES_LIEES).some(
+      ([r, prefixes]) => ouverte(r) && prefixes.some(sous),
+    )
+  )
+    return null;
+  return 'Cette fonction n’est pas ouverte à votre compte. Demandez-la à l’administrateur.';
 }
 
 /* ------------------------------ Compte visiteur ------------------------------ */

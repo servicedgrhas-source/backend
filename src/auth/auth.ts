@@ -16,7 +16,9 @@ import {
   decider,
   deciderVisiteur,
   droitsDe,
+  estCompteVide,
   permisInformatique,
+  refusCompteVide,
   refusInformatique,
   rubriqueDuChemin,
   rolePersoDe,
@@ -45,6 +47,8 @@ export interface UtilisateurConnecte {
   droits?: Record<string, Niveau>;
   /** Nom du rôle personnalisé donné par le DG (« Secrétariat DRSC »), sinon absent. */
   rolePerso?: string | null;
+  /** Compte vide : il ne voit et ne fait que les rubriques qu'on lui a ouvertes. */
+  compteVide?: boolean;
   /** Dernier jour d'accès (comptes visiteurs), sinon absent. */
   finAcces?: string | null;
   /**
@@ -256,6 +260,7 @@ export class AuthGuard implements CanActivate {
     const droits = droitsDe(config, req.user);
     req.user.droits = droits;
     req.user.rolePerso = rolePersoDe(config, req.user.id);
+    if (estCompteVide(config, req.user)) req.user.compteVide = true;
 
     // Droits par rubrique : lecture seule, rubrique fermée, ou rubrique ouverte en plus du rôle
     const chemin = (req.path ?? '').replace(/^\/api(?=\/|$)/, '');
@@ -268,7 +273,15 @@ export class AuthGuard implements CanActivate {
       this.consultation(req.user, chemin);
       return true;
     }
-    const d = decider(droits, chemin, req.method);
+    // Compte vide : tout ce qui n'est pas dans ses rubriques ouvertes lui est refusé
+    // (sa seule règle ; puis le niveau de son rôle de départ, plus bas)
+    if (req.user.compteVide) {
+      const refus = refusCompteVide(droits, chemin, req.method);
+      if (refus) throw new ForbiddenException(refus);
+    }
+    const d = req.user.compteVide
+      ? ({ decision: 'normal' } as const)
+      : decider(droits, chemin, req.method);
     // (l'aperçu d'une règle et son propre code restent permis à l'informatique malgré la lecture seule)
     if (
       d.decision === 'refuse' &&
@@ -284,7 +297,14 @@ export class AuthGuard implements CanActivate {
       return true;
     }
     // Un compte d'école ou d'inspection n'est jamais ouvert au-delà de ses routes
-    if (d.decision === 'permis' && req.user.role !== 'STRUCTURE') return true;
+    // Un compte vide garde le niveau de son rôle de départ : une rubrique ouverte ne lui donne pas
+    // les actions d'un autre niveau (la saisie ne contrôle ni ne décide ses propres dossiers)
+    if (
+      d.decision === 'permis' &&
+      req.user.role !== 'STRUCTURE' &&
+      !req.user.compteVide
+    )
+      return true;
 
     const roles = this.reflector.getAllAndOverride<Role[]>(CLE_ROLES, cibles);
     // Comptes des structures (écoles, inspections…) : seulement les routes qui les citent

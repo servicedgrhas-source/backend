@@ -91,6 +91,8 @@ import { EmploisDuTempsService } from './etablissements/emplois-du-temps.service
 import { BesoinsAdministratifsService } from './etablissements/besoins-administratifs.service';
 import { NominationsController } from './nominations/nominations.controller';
 import { NominationsService } from './nominations/nominations.service';
+import { PlacementNominationsController } from './nominations/placement.controller';
+import { PlacementNominationsService } from './nominations/placement.service';
 import { SuiviController } from './etablissements/suivi.controller';
 import { RepertoireEcolesController } from './etablissements/repertoire-ecoles.controller';
 import { RepertoireEcolesService } from './etablissements/repertoire-ecoles.service';
@@ -152,6 +154,7 @@ import { ReferentielsService } from './referentiels/referentiels.service';
     StructuresController,
     BesoinsAdministratifsController,
     NominationsController,
+    PlacementNominationsController,
     SuiviController,
     RepertoireEcolesController,
     CoreController,
@@ -241,6 +244,7 @@ import { ReferentielsService } from './referentiels/referentiels.service';
     EmploisDuTempsService,
     BesoinsAdministratifsService,
     NominationsService,
+    PlacementNominationsService,
     SuiviService,
     RepertoireEcolesService,
     DemandesService,
