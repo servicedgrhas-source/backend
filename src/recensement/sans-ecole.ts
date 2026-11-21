@@ -28,7 +28,7 @@ export interface PropositionLieu {
 /** Cycle que dit le lieu écrit (« EP … », « CEG … », « Lycée … », « CEP … »), sinon null. */
 export function cycleDuLieu(texte: string): string | null {
   const t = ` ${normaliser(texte).replace(/[^A-Z0-9]+/g, ' ')} `;
-  if (/ (ALPHA|ALPHABETISATION|RESCOL|RESCOLARISATION|CAR) /.test(t))
+  if (/ (ALPHA|ALPHABETISATION|RESCOL|RESCOLARISATION|CAR|CA) /.test(t))
     return 'ALPHABETISATION';
   if (/ (CEP|PRESCOLAIRE|PRESCO|JARDIN|MATERNELLE|CS) /.test(t))
     return 'PRESCOLAIRE';
@@ -75,7 +75,7 @@ export function rapprocherLieux(
   );
   const res = new Map<string, PropositionLieu>();
   for (const l of lieux) {
-    const exact = index.trouver(l.texte, l.departementId);
+    const exact = index.trouver(l.texte, l.departementId, l.cycleFiche);
     if (exact) {
       res.set(l.cle, {
         structureId: exact.id,

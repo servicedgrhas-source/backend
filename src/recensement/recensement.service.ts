@@ -265,9 +265,14 @@ export class RecensementService {
    */
   async rattacherAutomatiquement(ids?: number[]) {
     const fiches = await this.agents.query<
-      { id: number; lieu: string; departementId: number | null }[]
+      {
+        id: number;
+        lieu: string;
+        departementId: number | null;
+        cycle: string | null;
+      }[]
     >(
-      `SELECT id, donnees->>'LIEU_SERVICE' AS lieu, "departementId" FROM agent_recense
+      `SELECT id, donnees->>'LIEU_SERVICE' AS lieu, "departementId", donnees->>'CYCLE' AS cycle FROM agent_recense
         WHERE "structureId" IS NULL AND coalesce(donnees->>'LIEU_SERVICE', '') <> ''
           ${ids ? 'AND id = ANY($1)' : ''}`,
       ids ? [ids] : [],
@@ -291,7 +296,10 @@ export class RecensementService {
       }),
     );
     const paires = fiches
-      .map((f) => [f.id, index.trouver(f.lieu, f.departementId)?.id] as const)
+      .map(
+        (f) =>
+          [f.id, index.trouver(f.lieu, f.departementId, f.cycle)?.id] as const,
+      )
       .filter((p): p is readonly [number, number] => !!p[1]);
     for (let i = 0; i < paires.length; i += 1000) {
       const lot = paires.slice(i, i + 1000);

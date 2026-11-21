@@ -115,23 +115,23 @@ describe('Répertoire officiel des écoles', () => {
     expect(r).toBeLessThan(0.95);
   });
 
-  it('ajoute le type d’école seulement s’il manque', () => {
-    expect(nomOfficiel('MOUNDZOMBO B', 'PRIMAIRE')).toBe(
-      'École primaire MOUNDZOMBO B',
+  it('donne toujours le préfixe du cycle (DG, 21/11/2026)', () => {
+    expect(nomOfficiel('MOUNDZOMBO B', 'PRIMAIRE')).toBe('EP MOUNDZOMBO B');
+    expect(nomOfficiel('ECOLE PRIMAIRE MOUNDZOMBO B', 'PRIMAIRE')).toBe(
+      'EP MOUNDZOMBO B',
     );
     expect(nomOfficiel('EP D’ASSOKO', 'PRIMAIRE')).toBe('EP D’ASSOKO');
     expect(nomOfficiel('CEG BONIALA', 'COLLEGE')).toBe('CEG BONIALA');
     expect(nomOfficiel('BONIALA', 'COLLEGE')).toBe('CEG BONIALA');
     expect(nomOfficiel('LYCEE DE LA REVOLUTION', 'LYCEE')).toBe(
-      'LYCEE DE LA REVOLUTION',
+      'LEG DE LA REVOLUTION',
     );
-    expect(nomOfficiel('CS LA LOEME', 'PRESCOLAIRE')).toBe('CS LA LOEME');
     expect(nomOfficiel('NKAYI 3', 'PRESCOLAIRE')).toBe('CEP NKAYI 3');
     expect(nomOfficiel('MAYEYE CENTRE', 'ALPHABETISATION')).toBe(
-      'Centre d’alphabétisation MAYEYE CENTRE',
+      'CA MAYEYE CENTRE',
     );
-    expect(nomOfficiel('RESCOLARISATION DE MATOMBI', 'ALPHABETISATION')).toBe(
-      'RESCOLARISATION DE MATOMBI',
-    );
+    expect(
+      nomOfficiel('Centre d’alphabétisation Mengo', 'ALPHABETISATION'),
+    ).toBe('CA Mengo');
   });
 });

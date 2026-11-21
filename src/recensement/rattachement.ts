@@ -35,7 +35,7 @@ const VIDES = new Set([
   'AU',
 ]);
 const MOTS_TYPE =
-  /\b(LYCEE|CEG|COLLEGE|EP|ECOLE|PRIMAIRE|PUBLIQUE|CEP|PRESCOLAIRE|MATERNELLE|JARDIN|ENFANTS|CENTRE|ALPHABETISATION|INSPECTION|IEP|IEPA|IP|IDP|ICEG|ICGE|ENSEIGNEMENT|GENERAL|TECHNIQUE|PROFESSIONNEL|SECONDAIRE|DEPARTEMENTALE|CIRCONSCRIPTION|SCOLAIRE|ETABLISSEMENT)\b/g;
+  /\b(LYCEE|LEG|CEG|COLLEGE|EP|ECOLE|PRIMAIRE|PUBLIQUE|CEP|PRESCOLAIRE|MATERNELLE|JARDIN|ENFANTS|CENTRE|ALPHABETISATION|INSPECTION|IEP|IEPA|IP|IDP|ICEG|ICGE|ENSEIGNEMENT|GENERAL|TECHNIQUE|PROFESSIONNEL|SECONDAIRE|DEPARTEMENTALE|CIRCONSCRIPTION|SCOLAIRE|ETABLISSEMENT)\b/g;
 const NATURE_CYCLE: Record<string, Nature> = {
   LYCEE: 'LYC',
   COLLEGE: 'COL',
@@ -56,10 +56,10 @@ function nature(n: string): Nature | null {
     /^(INSPECTION|IEPA?\b|ID?P\b|ICEG\b|ICGE\b|ILZ\b|CIRCONSCRIPTION)/.test(n)
   )
     return 'INS';
-  if (/\bLYCEE\b/.test(n)) return 'LYC';
+  if (/\b(LYCEE|LEG)\b/.test(n)) return 'LYC';
   if (/\b(CEG|COLLEGE)\b/.test(n)) return 'COL';
   if (/\b(CEP|PRESCOLAIRE|MATERNELLE|JARDIN)\b/.test(n)) return 'PRE';
-  if (/\bALPHABETISATION\b/.test(n)) return 'ALP';
+  if (/\bALPHABETISATION\b|^CA\b/.test(n)) return 'ALP';
   if (/\b(EP|ECOLE|PRIMAIRE)\b/.test(n)) return 'PRI';
   return null;
 }
@@ -113,21 +113,43 @@ export class IndexStructures {
     }
   }
 
-  /** Structure du lieu de service, si une seule correspond ; sinon null. */
-  trouver(lieu: unknown, departementId: number | null) {
+  /**
+   * Structure du lieu de service, si une seule correspond ; sinon null. `cycle` : celui de la fiche,
+   * seul guide quand le lieu écrit ne dit pas le type d'école.
+   */
+  trouver(lieu: unknown, departementId: number | null, cycle?: string | null) {
     const n = texte(lieu);
     if (!n) return null;
     const nat = nature(n);
-    if (!nat) return null;
+    // Le nom seul (« MINANGOU LAURENT », DG 21/11/2026) : l'école qui porte ce nom, si elle est seule
+    if (!nat) return this.sansType(n, departementId, cycle);
     if (nat === 'DD')
       return departementId ? (this.ddeppsa.get(departementId) ?? null) : null;
     let c = this.cles.get(`${nat}|${coeur(n)}`) ?? [];
     if (departementId) c = c.filter((s) => s.departementId === departementId);
     // Deux inspections au même endroit (primaire, alphabétisation) : celle du cycle écrit
-    const cycle = nat === 'INS' ? cycleIndique(n) : null;
-    if (cycle && c.length > 1) c = c.filter((s) => s.cycle === cycle);
+    const cycleIns = nat === 'INS' ? cycleIndique(n) : null;
+    if (cycleIns && c.length > 1) c = c.filter((s) => s.cycle === cycleIns);
     if (c.length !== 1) return null;
-    if (cycle && c[0].cycle && c[0].cycle !== cycle) return null;
+    if (cycleIns && c[0].cycle && c[0].cycle !== cycleIns) return null;
     return c[0];
+  }
+
+  /**
+   * Un nom sans type écrit (« MINANGOU LAURENT ») : l'école de ce nom, du cycle de la fiche, dans son
+   * département. Sans cycle sur la fiche, rien (un village a souvent une EP et un CEP).
+   */
+  private sansType(
+    n: string,
+    departementId: number | null,
+    cycle?: string | null,
+  ) {
+    const k = coeur(n);
+    const nat = NATURE_CYCLE[cycle ?? ''];
+    if (k.length < 4 || !departementId || !nat) return null;
+    const c = (this.cles.get(`${nat}|${k}`) ?? []).filter(
+      (s) => s.departementId === departementId,
+    );
+    return c.length === 1 ? c[0] : null;
   }
 }

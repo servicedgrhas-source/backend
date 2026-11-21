@@ -24,7 +24,7 @@ export const CYCLES_ECOLE: Record<CycleEcole, string> = {
 const DEBUTS: [CycleEcole, RegExp][] = [
   [
     'ALPHABETISATION',
-    /^(?:CENTRE (?:D )?ALPHABETISATION(?: ET (?:DE )?RESCOLARISATION)?|CENTRE (?:DE )?RESCOLARISATION(?: ET (?:D )?ALPHABETISATION)?|CENTRE ALPHA|CAR)(?= |$)/,
+    /^(?:CENTRE (?:D )?ALPHABETISATION(?: ET (?:DE )?RESCOLARISATION)?|CENTRE (?:DE )?RESCOLARISATION(?: ET (?:D )?ALPHABETISATION)?|CENTRE ALPHA|CAR|C A|CA)(?= |$)/,
   ],
   [
     'PRESCOLAIRE',
@@ -36,7 +36,7 @@ const DEBUTS: [CycleEcole, RegExp][] = [
   ],
   [
     'LYCEE',
-    /^(?:LYCEE (?:D )?ENSEIGNEMENT GENERAL|LYCEE (?:GENERAL )?(?:ET )?TECHNIQUE|LYCEE)(?= |$)/,
+    /^(?:LYCEE (?:D )?ENSEIGNEMENT GENERAL|LYCEE (?:GENERAL )?(?:ET )?TECHNIQUE|LYCEE|L E G|LEG)(?= |$)/,
   ],
   ['PRIMAIRE', /^(?:ECOLE PRIMAIRE|E P|EP|ECOLE)(?= |$)/],
 ];

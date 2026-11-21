@@ -4,6 +4,7 @@ import { In, Repository } from 'typeorm';
 import type { UtilisateurConnecte } from '../auth/auth';
 import { cycleDepuis } from '../circuit/structures-import.service';
 import { lireClasseur } from '../common/excel';
+import { nomEcole } from '../common/nom-ecole';
 import { codeDepartement } from '../common/referentiels';
 import { cleCompacte, enTexte, normaliser } from '../common/texte';
 import { JournalService } from '../core/core.service';
@@ -127,6 +128,7 @@ const GENERIQUES = new Set([
   'CS',
   'ALPHABETISATION',
   'ALPHA',
+  'CA',
   'RESCOLARISATION',
   'RESCOL',
   'POST',
@@ -261,8 +263,17 @@ export function ressemblanceEcoles(a: string, b: string): number {
   return r;
 }
 
-/** Le type d'école devant le nom quand le répertoire l'a omis (« MOUNDZOMBO B » → « École primaire MOUNDZOMBO B »). */
+/**
+ * Le nom d'une école du répertoire (DG, 21/11/2026) : le préfixe de son cycle et son nom propre,
+ * quoi que le répertoire écrive devant (« MOUNDZOMBO B », « ECOLE PRIMAIRE MOUNDZOMBO B » →
+ * « EP MOUNDZOMBO B »).
+ */
 export function nomOfficiel(nom: string, cycle: string): string {
+  return nomEcole(cycle, nom);
+}
+
+/** Ancienne règle (avant le 21/11/2026) : le type ajouté seulement s'il manquait. */
+export function nomOfficielAncien(nom: string, cycle: string): string {
   const k = ` ${normaliser(nom).replace(/[^A-Z0-9]+/g, ' ')} `;
   const a = (re: RegExp) => re.test(k);
   switch (cycle) {
