@@ -64,7 +64,9 @@ export class NomsEcolesService {
     const groupes = new Map<string, Ecole[]>();
     for (const s of ecoles) {
       if (!s.cycle) continue;
-      const k = `${s.departementId}|${s.cycle}|${cle(sansTypeEcole(s.nom))}`;
+      // L'ordre des mots ne compte pas (« CA JOSEPH NKEOUA » = « CA NKEOUA JOSEPH », 21/11/2026)
+      const mots = cle(sansTypeEcole(s.nom)).split(' ').sort().join(' ');
+      const k = `${s.departementId}|${s.cycle}|${mots}`;
       groupes.set(k, [...(groupes.get(k) ?? []), s]);
     }
     // Au même endroit : même localité ; sans localité écrite, même inspection

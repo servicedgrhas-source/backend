@@ -145,8 +145,9 @@ const ABREVIATIONS: Record<CycleEcole, string> = {
   PRESCOLAIRE: 'CEP',
   PRIMAIRE: 'EP',
   COLLEGE: 'CEG',
-  LYCEE: 'Lycée',
-  ALPHABETISATION: 'Centre d’alphabétisation',
+  // Même règle que les noms d'écoles de l'organigramme (DG, 21/11/2026)
+  LYCEE: 'LEG',
+  ALPHABETISATION: 'CA',
 };
 
 /**
@@ -170,8 +171,7 @@ export function nomAffiche(nom: string, cycle: CycleEcole | null) {
   // Ce reste dans le nom d'origine (accents et casse d'origine), sinon le reste à plat
   for (const j of n.matchAll(/[\p{L}\p{N}]+/gu)) {
     const txt = n.slice(j.index).trim();
-    if (aPlat(txt) === reste)
-      return `${a} ${txt.charAt(0).toUpperCase()}${txt.slice(1)}`;
+    if (aPlat(txt) === reste) return `${a} ${txt.toLocaleUpperCase('fr-FR')}`;
   }
   return `${a} ${reste}`;
 }

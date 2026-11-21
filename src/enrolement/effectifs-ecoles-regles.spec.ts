@@ -11,12 +11,12 @@ import {
 
 describe('Nom affiché d’une école', () => {
   it.each([
-    ['CENTRE PRESCOLAIRE 15 Août 1963', 'PRESCOLAIRE', 'CEP 15 Août 1963'],
+    ['CENTRE PRESCOLAIRE 15 Août 1963', 'PRESCOLAIRE', 'CEP 15 AOÛT 1963'],
     ["CENTRE PRESCOLAIRE D'IGNIE", 'PRESCOLAIRE', 'CEP IGNIE'],
-    ["CENTRE D'EDUCATION PRESCOLAIRE DE Kintélé", 'PRESCOLAIRE', 'CEP Kintélé'],
+    ["CENTRE D'EDUCATION PRESCOLAIRE DE Kintélé", 'PRESCOLAIRE', 'CEP KINTÉLÉ'],
     ['CENTRE PRESCOLAIRELine Renaud', 'PRESCOLAIRE', 'CEP LINE RENAUD'],
-    ['Château d’Eau', 'PRESCOLAIRE', 'CEP Château d’Eau'],
-    ['LYCEE DE DOLISIE II', 'LYCEE', 'Lycée DOLISIE II'],
+    ['Château d’Eau', 'PRESCOLAIRE', 'CEP CHÂTEAU D’EAU'],
+    ['LYCEE DE DOLISIE II', 'LYCEE', 'LEG DOLISIE II'],
     ['EP IGNIE "A"', 'PRIMAIRE', 'EP IGNIE "A"'],
     ['COMPLEXE SCOLAIRE', null, 'COMPLEXE SCOLAIRE'],
   ])('%s → %s', (nom, cycle, attendu) => {
