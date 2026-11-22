@@ -44,6 +44,11 @@ export const ROLES = [
    * ouvre, sans rien enregistrer, imprimer ni télécharger (DG, 04/11/2026).
    */
   'VISITEUR',
+  /**
+   * Recenseur de la mission de terrain (DG, 22/11/2026) : se connecte avec son identifiant
+   * (RG-001-CO…) et ne voit que le formulaire du recensement, pour les départements de sa mission.
+   */
+  'RECENSEUR',
 ] as const;
 export type Role = (typeof ROLES)[number];
 
@@ -1779,6 +1784,53 @@ export class SignalementTerrain {
   @Column({ type: 'timestamptz', nullable: true }) traiteLe: Date | null;
 }
 
+/**
+ * Un recenseur de la mission de terrain (DG, 22/11/2026) : son compte (rôle RECENSEUR, identifiant
+ * RG-001-CO), les départements où il est envoyé, les dates de la mission, et l'effacement à
+ * distance des données gardées sur son appareil.
+ */
+@Entity('recenseur')
+export class Recenseur {
+  @PrimaryColumn('uuid') utilisateurId: string;
+  /** Identifiant de connexion : RG-<numéro>-<initiales du département>. */
+  @Index({ unique: true }) @Column() code: string;
+  @Column({ type: 'int', array: true, default: () => "'{}'" }) departements: number[];
+  /** Ses numéros de téléphone (un ou plusieurs), pour le joindre pendant la mission. */
+  @Column({ type: 'varchar', array: true, default: () => "'{}'" }) telephones: string[];
+  @Column({ type: 'date', nullable: true }) debut: string | null;
+  /** Dernier jour de la mission : l'appareil efface ses données deux jours après. */
+  @Column({ type: 'date', nullable: true }) fin: string | null;
+  /** Effacement à distance demandé (appareil perdu, recenseur retiré) : à la prochaine connexion. */
+  @Column({ type: 'timestamptz', nullable: true }) effacerLe: Date | null;
+  /** L'appareil a dit qu'il avait tout effacé. */
+  @Column({ type: 'timestamptz', nullable: true }) effaceLe: Date | null;
+  /** Bloqué par la DGRHAS (compte suspendu, données gardées sur l'appareil) : débloquer le rouvre. */
+  @Column({ type: 'timestamptz', nullable: true }) bloqueLe: Date | null;
+  @Column({ type: 'varchar', nullable: true }) bloquePar: string | null;
+  @Column({ type: 'varchar', nullable: true }) creePar: string | null;
+  @CreateDateColumn({ type: 'timestamptz' }) creeLe: Date;
+}
+
+/**
+ * Position d'un recenseur pendant la mission (DG, 22/11/2026) : relevée par sa tablette tant que le
+ * formulaire est ouvert, gardée sans réseau puis envoyée. « COUPEE » : la tablette ne donne plus sa
+ * position (autorisation retirée, GPS éteint).
+ */
+@Entity('position_recenseur')
+@Index(['utilisateurId', 'le'])
+export class PositionRecenseur {
+  @PrimaryGeneratedColumn('increment', { type: 'bigint' }) id: string;
+  @Column('uuid') utilisateurId: string;
+  @Column({ type: 'double precision', nullable: true }) latitude: number | null;
+  @Column({ type: 'double precision', nullable: true }) longitude: number | null;
+  @Column({ type: 'real', nullable: true }) precision: number | null;
+  /** OK, COUPEE (autorisation retirée ou GPS éteint), INDISPONIBLE (pas de signal). */
+  @Column({ type: 'varchar', default: 'OK' }) etat: string;
+  /** Heure de la tablette au relevé. */
+  @Column({ type: 'timestamptz' }) le: Date;
+  @CreateDateColumn({ type: 'timestamptz' }) recuLe: Date;
+}
+
 /** Bâtiment d'un établissement (administratif, pédagogique, sanitaire, sportif…). */
 @Entity('batiment')
 export class Batiment {
@@ -2150,6 +2202,8 @@ export class PiecePrestation {
 
 export const ENTITES = [
   Utilisateur,
+  Recenseur,
+  PositionRecenseur,
   EvenementSecurite,
   RepartitionEnrolement,
   Journal,

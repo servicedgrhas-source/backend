@@ -194,6 +194,7 @@ export class EtablissementsController {
   }
 
   /** Position GPS de l'école (mission de terrain) ; null / null l'efface. */
+  @Roles(...ROLES_TRAITEMENT, 'DDEPPSA', 'STRUCTURE', 'RECENSEUR')
   @Put(':id/localisation')
   localiser(
     @Utilisateur() u: UtilisateurConnecte,
@@ -205,6 +206,7 @@ export class EtablissementsController {
   }
 
   /** Position GPS d'un bâtiment de l'école (une annexe peut être ailleurs). */
+  @Roles(...ROLES_TRAITEMENT, 'DDEPPSA', 'STRUCTURE', 'RECENSEUR')
   @Put(':id/batiments/:x/localisation')
   localiserBatiment(
     @Utilisateur() u: UtilisateurConnecte,

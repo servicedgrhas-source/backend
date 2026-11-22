@@ -9,7 +9,12 @@ import {
 import { DataSource } from 'typeorm';
 import type { UtilisateurConnecte } from '../auth/auth';
 import { posteResponsable } from '../circuit/catalogue';
-import { chercher, type Prepare, preparer } from '../common/recherche-souple';
+import {
+  chercher,
+  noter,
+  type Prepare,
+  preparer,
+} from '../common/recherche-souple';
 import { JournalService } from '../core/core.service';
 import { EtablissementsService } from '../etablissements/etablissements.service';
 import { RecensementService } from './recensement.service';
@@ -22,6 +27,19 @@ import { RecensementService } from './recensement.service';
  */
 
 /** Les colonnes de la grille, dans l'ordre de la saisie (celles que la configuration a actives). */
+/**
+ * Les agents envoyés aux tablettes (DG, 22/11/2026 : le travail des recenseurs est effectif tout de
+ * suite, le contrôle valide ou défait) : tous sauf les rejetés. Un agent ajouté par une équipe est
+ * dans son école dès l'envoi, marqué « en contrôle » jusqu'à la décision du DG ; rejeté, il disparaît.
+ */
+/** Ce que garde l'index de recherche pour chaque agent (nom, école, naissance, genre, grade). */
+const SELECT_INDEX = `SELECT a.id, a."nomComplet", a.statut, a.matricule, a."structureId", a."departementId", s.nom AS "structureNom",
+              to_char(a."dateNaissance", 'YYYY-MM-DD') AS "dateNaissance",
+              a.donnees->>'GENRE' AS genre, a.donnees->>'GRADE' AS grade
+           FROM agent_recense a LEFT JOIN structure s ON s.id = a."structureId"`;
+const SUR_LES_TABLETTES = `coalesce(contentieux->>'etat', 'CONFIRME') <> 'REJETE'`;
+const EN_CONTROLE = `coalesce(contentieux->>'etat', 'CONFIRME') IN ('EN_COURS', 'CONTROLE')`;
+
 export const COLONNES_TERRAIN = [
   'NOMS_PRENOMS',
   'GENRE',
@@ -54,6 +72,17 @@ export interface ModificationTerrain {
   /** L'école où l'équipe travaille (pour un signalement). */
   ecoleId?: number | null;
   observation?: string | null;
+  /** « Ce n'est pas lui » : créer quand même, malgré un agent qui lui ressemble. */
+  forcer?: boolean;
+}
+
+/** Un agent de la base qui ressemble à celui que l'équipe veut créer. */
+export interface Semblable {
+  id: number;
+  nomComplet: string;
+  ecole: string | null;
+  dateNaissance: string | null;
+  matricule: string | null;
 }
 
 export const PRESENCES = ['PRESENT', 'ABSENT', 'PARTI', 'INCONNU'] as const;
@@ -87,6 +116,9 @@ export class TerrainService implements OnApplicationBootstrap {
       structureId: number | null;
       departementId: number | null;
       structureNom: string | null;
+      dateNaissance: string | null;
+      genre: string | null;
+      grade: string | null;
       prepare: Prepare;
     }[];
     /** Première lettre (du son) de chaque mot → les fiches qui ont un mot qui commence ainsi. */
@@ -106,12 +138,11 @@ export class TerrainService implements OnApplicationBootstrap {
         structureId: number | null;
         departementId: number | null;
         structureNom: string | null;
+        dateNaissance: string | null;
+        genre: string | null;
+        grade: string | null;
       }[]
-    >(
-      `SELECT a.id, a."nomComplet", a.statut, a.matricule, a."structureId", a."departementId", s.nom AS "structureNom"
-           FROM agent_recense a LEFT JOIN structure s ON s.id = a."structureId"
-          WHERE coalesce(a.contentieux->>'etat', 'CONFIRME') IN ('CONFIRME', 'EN_COURS', 'CONTROLE')`,
-    );
+    >(`${SELECT_INDEX} WHERE coalesce(a.contentieux->>'etat', 'CONFIRME') IN ('CONFIRME', 'EN_COURS', 'CONTROLE')`);
     const prepares = lignes.map((l) => ({
       ...l,
       prepare: preparer(l.nomComplet),
@@ -126,6 +157,39 @@ export class TerrainService implements OnApplicationBootstrap {
       }
     });
     this.index = { le: Date.now(), lignes: prepares, parLettre };
+  }
+
+  /**
+   * Un agent vient d'être créé par une équipe : il entre TOUT DE SUITE dans l'index (sinon il n'y
+   * serait qu'à la reconstruction suivante, jusqu'à 10 minutes : un 2e recenseur qui tape la même
+   * personne entre-temps créerait un doublon).
+   */
+  private async ajouterALIndex(id: number) {
+    if (!this.index) return;
+    const [l] = await this.ds.query<
+      {
+        id: number;
+        nomComplet: string;
+        statut: string;
+        matricule: string | null;
+        structureId: number | null;
+        departementId: number | null;
+        structureNom: string | null;
+        dateNaissance: string | null;
+        genre: string | null;
+        grade: string | null;
+      }[]
+    >(`${SELECT_INDEX} WHERE a.id = $1`, [id]);
+    const index = this.index;
+    if (!l || index.lignes.some((x) => x.id === id)) return;
+    const i = index.lignes.length;
+    const ligne = { ...l, prepare: preparer(l.nomComplet) };
+    index.lignes.push(ligne);
+    for (const lettre of new Set(ligne.prepare.sons.map((m) => m[0]))) {
+      const g = index.parLettre.get(lettre);
+      if (g) g.push(i);
+      else index.parLettre.set(lettre, [i]);
+    }
   }
 
   /**
@@ -204,6 +268,457 @@ export class TerrainService implements OnApplicationBootstrap {
           structureNom: item.structureNom,
           note: Math.round(note * 100),
         })),
+    };
+  }
+
+  /**
+   * Les agents de la base qui ressemblent à un nouvel agent (même recherche intelligente) : le nom
+   * presque pareil, et la même date de naissance quand on la connaît des deux côtés.
+   */
+  async semblables(
+    nom: string,
+    naissance: string | null,
+  ): Promise<Semblable[]> {
+    if (nom.trim().length < 3) return [];
+    if (!this.index) await this.construireIndex();
+    const q = preparer(nom);
+    const r: Semblable[] = [];
+    for (const l of this.index!.lignes) {
+      const note = noter(q, l.prepare);
+      if (note < 0.85) continue;
+      const memeDate =
+        naissance && l.dateNaissance
+          ? naissance.slice(0, 10) === l.dateNaissance
+          : null;
+      // Une date différente : une autre personne ; sans date, il faut un nom presque identique
+      if (memeDate === false) continue;
+      if (memeDate === null && note < 0.95) continue;
+      r.push({
+        id: l.id,
+        nomComplet: l.nomComplet,
+        ecole: l.structureNom,
+        dateNaissance: l.dateNaissance,
+        matricule: l.matricule,
+      });
+      if (r.length >= 10) break;
+    }
+    if (!r.length) return r;
+    // L'index peut avoir jusqu'à 10 minutes : un agent rejeté (ou supprimé) depuis ne compte plus
+    const encore = new Set(
+      (
+        await this.ds.query<{ id: number }[]>(
+          `SELECT id FROM agent_recense WHERE id = ANY($1) AND ${SUR_LES_TABLETTES}`,
+          [r.map((x) => x.id)],
+        )
+      ).map((x) => x.id),
+    );
+    return r.filter((x) => encore.has(x.id)).slice(0, 5);
+  }
+
+  /**
+   * L'annuaire d'un département, pour chercher un agent SANS réseau (DG, 22/11/2026 : un agent
+   * enregistré dans une école mais qui travaille dans une autre) : nom, école, matricule, naissance.
+   */
+  async annuaire(u: UtilisateurConnecte, departementId: number) {
+    if (!this.index) await this.construireIndex();
+    const p = await this.rec.perimetre(u);
+    if ('departementId' in p && p.departementId !== departementId)
+      throw new ForbiddenException(
+        'Ce département n’est pas dans votre périmètre.',
+      );
+    const permis = (l: { structureId: number | null }) =>
+      !('structures' in p) ||
+      (l.structureId !== null && p.structures.includes(l.structureId));
+    return {
+      departementId,
+      le: new Date().toISOString(),
+      // Lignes compactes : [id, nom, école, matricule, naissance, statut]
+      lignes: this.index!.lignes.filter(
+        (l) => l.departementId === departementId && permis(l),
+      ).map((l) => [
+        l.id,
+        l.nomComplet,
+        l.structureNom,
+        l.matricule,
+        l.dateNaissance,
+        l.statut,
+      ]),
+    };
+  }
+
+  /**
+   * Qui modifie la fiche : le compte lui-même, sauf pour un agent hors de son périmètre rattaché
+   * à une école de son périmètre (il est alors modifié comme par la DGRHAS, au nom du compte).
+   */
+  private async auteurDuRattachement(
+    u: UtilisateurConnecte,
+    agentId: number,
+    ecoleId: number | null,
+  ): Promise<UtilisateurConnecte> {
+    if (!ecoleId) return u;
+    const p = await this.rec.perimetre(u);
+    if ('tous' in p) return u;
+    const [a] = await this.ds.query<
+      { departementId: number | null; structureId: number | null }[]
+    >(
+      `SELECT "departementId", "structureId" FROM agent_recense WHERE id = $1`,
+      [agentId],
+    );
+    if (!a || this.rec.dansPerimetre(p, a as never)) return u;
+    // L'école doit être dans le périmètre du compte (sinon : refus ordinaire)
+    await this.ecoles.structure(u, ecoleId);
+    return { ...u, role: 'AGENT' };
+  }
+
+  /**
+   * La liste nationale très courte (DG, 22/11/2026 : « l'annuaire est-il suffisant ? ») : chaque
+   * agent du pays avec de quoi le reconnaître (nom, naissance, genre, grade, école, département),
+   * pour retrouver SANS réseau un agent venu d'un autre département. Pas le reste de sa fiche.
+   */
+  /**
+   * La fiche d'un agent pour le formulaire du terrain (colonnes du formulaire seulement) : celui
+   * qu'une équipe retrouve dans une de ses écoles alors qu'il est enregistré ailleurs (autre
+   * département). Un compte d'école ou un visiteur : seulement dans son périmètre.
+   */
+  async agent(u: UtilisateurConnecte, id: number) {
+    const [a] = await this.ds.query<
+      {
+        id: number;
+        nomComplet: string;
+        statut: string;
+        matricule: string | null;
+        departementId: number | null;
+        structureId: number | null;
+        donnees: Record<string, unknown>;
+      }[]
+    >(
+      `SELECT id, "nomComplet", statut, matricule, "departementId", "structureId", (
+              SELECT coalesce(jsonb_object_agg(k, v), '{}'::jsonb) FROM jsonb_each(donnees) AS e(k, v) WHERE k = ANY($2)
+            ) AS donnees
+         FROM agent_recense WHERE id = $1`,
+      [id, [...COLONNES_TERRAIN]],
+    );
+    if (!a) throw new NotFoundException('Agent introuvable.');
+    if (
+      (u.role === 'STRUCTURE' || u.role === 'VISITEUR') &&
+      !this.rec.dansPerimetre(await this.rec.perimetre(u), a as never)
+    )
+      throw new ForbiddenException(
+        'Cet agent n’est pas dans votre périmètre.',
+      );
+    const { departementId: _d, structureId: _s, ...agent } = a;
+    void _d;
+    void _s;
+    return { agent };
+  }
+
+  async annuaireNational(u: UtilisateurConnecte) {
+    if (u.role === 'STRUCTURE' || u.role === 'VISITEUR')
+      throw new ForbiddenException(
+        'La liste nationale est réservée aux recenseurs et à la DGRHAS.',
+      );
+    if (!this.index) await this.construireIndex();
+    return {
+      le: new Date().toISOString(),
+      // [id, nom, école, matricule, naissance, statut, genre, grade, département]
+      lignes: this.index!.lignes.map((l) => [
+        l.id,
+        l.nomComplet,
+        l.structureNom,
+        l.matricule,
+        l.dateNaissance,
+        l.statut,
+        l.genre,
+        l.grade,
+        l.departementId,
+      ]),
+    };
+  }
+
+  /**
+   * Un recenseur part avec la base de TOUT le pays sur sa tablette (DG, 22/11/2026) : il lit tout
+   * (reconnaître un agent venu d'ailleurs, voir sa fiche sans réseau), mais n'écrit que dans les
+   * écoles de sa mission (vérifié à l'envoi). Un compte d'école ne lit que son école.
+   */
+  private lectureNationale(u: UtilisateurConnecte) {
+    return u.role !== 'STRUCTURE' && u.role !== 'VISITEUR';
+  }
+
+  /**
+   * L'empreinte de chaque école : elle change dès qu'un de ses agents, un de ses bâtiments ou
+   * l'école elle-même change (xmin de Postgres : toute écriture, même faite en série). La tablette
+   * compare et ne reprend que les écoles qui ont changé.
+   */
+  private async empreintes(ids?: number[]): Promise<Map<number, string>> {
+    const r = await this.ds.query<{ id: number; e: string }[]>(
+      `SELECT s.id, md5(s.xmin::text || '|' ||
+              coalesce((SELECT string_agg(a.id || ':' || a.xmin::text, ',' ORDER BY a.id) FROM agent_recense a
+                         WHERE a."structureId" = s.id AND coalesce(a.contentieux->>'etat', 'CONFIRME') <> 'REJETE'), '') || '|' ||
+              coalesce((SELECT string_agg(b.id || ':' || b.xmin::text, ',' ORDER BY b.id) FROM batiment b WHERE b."structureId" = s.id), '')) AS e
+         FROM structure s
+        WHERE s.actif AND s.type = 'ETABLISSEMENT' ${ids ? 'AND s.id = ANY($1)' : ''}`,
+      ids ? [ids] : [],
+    );
+    return new Map(r.map((x) => [x.id, x.e]));
+  }
+
+  /** Les paquets de ces écoles (agents avec les colonnes du formulaire, bâtiments, GPS, chiffres). */
+  private async paquetsDe(
+    ecoles: {
+      id: number;
+      parentId: number | null;
+      nom: string;
+      cycle: string | null;
+      localite: string | null;
+      departementId: number | null;
+      responsableId: number | null;
+      latitude: number | null;
+      longitude: number | null;
+      precisionGps: number | null;
+      localiseLe: string | null;
+    }[],
+    nomStruct: Map<number, string>,
+  ) {
+    const codes = this.colonnes().colonnes.map((c) => c.code);
+    const ids = ecoles.map((e) => e.id);
+    const [agents, batiments, salles, classes, responsables, empreintes] =
+      await Promise.all([
+        this.ds.query<
+          {
+            id: number;
+            structureId: number;
+            nomComplet: string;
+            statut: string;
+            matricule: string | null;
+            donnees: Record<string, unknown>;
+            aControler: boolean;
+          }[]
+        >(
+          `SELECT id, "structureId", "nomComplet", statut, matricule, (
+                  SELECT coalesce(jsonb_object_agg(k, v), '{}'::jsonb) FROM jsonb_each(donnees) AS e(k, v) WHERE k = ANY($2)
+                ) AS donnees, ${EN_CONTROLE} AS "aControler"
+             FROM agent_recense
+            WHERE "structureId" = ANY($1) AND ${SUR_LES_TABLETTES}
+            ORDER BY "nomComplet"`,
+          [ids, codes],
+        ),
+        this.ds.query<
+          {
+            id: number;
+            structureId: number;
+            nom: string;
+            latitude: number | null;
+            longitude: number | null;
+            precisionGps: number | null;
+            localiseLe: string | null;
+          }[]
+        >(
+          `SELECT id, "structureId", nom, latitude, longitude, "precisionGps", "localiseLe" FROM batiment WHERE "structureId" = ANY($1) ORDER BY nom`,
+          [ids],
+        ),
+        this.ds.query<{ s: number; n: number }[]>(
+          `SELECT "structureId" AS s, count(*)::int AS n FROM salle WHERE "structureId" = ANY($1) GROUP BY 1`,
+          [ids],
+        ),
+        this.ds.query<{ s: number; n: number }[]>(
+          `SELECT "structureId" AS s, count(*)::int AS n FROM classe WHERE "structureId" = ANY($1) GROUP BY 1`,
+          [ids],
+        ),
+        this.ds.query<{ id: number; nom: string }[]>(
+          `SELECT id, "nomComplet" AS nom FROM agent_recense WHERE id = ANY($1)`,
+          [ecoles.map((e) => e.responsableId).filter((x) => x !== null)],
+        ),
+        this.empreintes(ids),
+      ]);
+    const grouper = <T extends { structureId: number }>(l: T[]) => {
+      const m = new Map<number, Omit<T, 'structureId'>[]>();
+      for (const { structureId, ...x } of l) {
+        const g = m.get(structureId);
+        if (g) g.push(x);
+        else m.set(structureId, [x]);
+      }
+      return m;
+    };
+    const parEcole = grouper(agents);
+    const batParEcole = grouper(batiments);
+    const nSalles = new Map(salles.map((x) => [x.s, x.n]));
+    const nClasses = new Map(classes.map((x) => [x.s, x.n]));
+    const nomResp = new Map(responsables.map((x) => [x.id, x.nom]));
+    const telechargeLe = new Date().toISOString();
+    return ecoles.map((s) => ({
+      telechargeLe,
+      empreinte: empreintes.get(s.id) ?? '',
+      ecole: {
+        id: s.id,
+        nom: s.nom,
+        cycle: s.cycle,
+        localite: s.localite,
+        departementId: s.departementId,
+        inspection: s.parentId ? (nomStruct.get(s.parentId) ?? null) : null,
+        posteResponsable: posteResponsable(s as never),
+        responsable: s.responsableId
+          ? (nomResp.get(s.responsableId) ?? null)
+          : null,
+        latitude: s.latitude,
+        longitude: s.longitude,
+        precisionGps: s.precisionGps,
+        localiseLe: s.localiseLe,
+        salles: nSalles.get(s.id) ?? 0,
+        classes: nClasses.get(s.id) ?? 0,
+      },
+      batiments: batParEcole.get(s.id) ?? [],
+      agents: parEcole.get(s.id) ?? [],
+    }));
+  }
+
+  /**
+   * Tout un département d'un coup : ses écoles et inspections, et le paquet de chaque école. Les
+   * colonnes et les statuts ne viennent qu'une fois. Un recenseur peut prendre tous les
+   * départements du pays (la base complète sur sa tablette).
+   */
+  async departement(u: UtilisateurConnecte, departementId: number) {
+    const p = await this.rec.perimetre(u);
+    const national = u.role === 'RECENSEUR';
+    if (!national && 'departementId' in p && p.departementId !== departementId)
+      throw new ForbiddenException(
+        'Ce département n’est pas dans votre périmètre.',
+      );
+    if (!national && 'structures' in p)
+      throw new ForbiddenException(
+        'Un compte d’école télécharge son école, pas tout le département.',
+      );
+    const champs = this.colonnes();
+    const structures = await this.ds.query<
+      {
+        id: number;
+        parentId: number | null;
+        type: string;
+        nom: string;
+        cycle: string | null;
+        localite: string | null;
+        departementId: number | null;
+        responsableId: number | null;
+        latitude: number | null;
+        longitude: number | null;
+        precisionGps: number | null;
+        localiseLe: string | null;
+      }[]
+    >(
+      `SELECT * FROM structure WHERE actif AND "departementId" = $1 AND type IN ('ETABLISSEMENT', 'INSPECTION')
+        ORDER BY nom`,
+      [departementId],
+    );
+    const nomStruct = new Map(structures.map((x) => [x.id, x.nom]));
+    const paquets = await this.paquetsDe(
+      structures.filter((s) => s.type === 'ETABLISSEMENT'),
+      nomStruct,
+    );
+    return {
+      telechargeLe: new Date().toISOString(),
+      departementId,
+      ...champs,
+      structures: structures.map((s) => ({
+        id: s.id,
+        parentId: s.parentId,
+        type: s.type,
+        nom: s.nom,
+        cycle: s.cycle,
+        localite: s.localite,
+        departementId: s.departementId,
+        actif: true,
+      })),
+      paquets,
+    };
+  }
+
+  /**
+   * Le plan du téléchargement de la base complète : chaque département avec ses écoles et ses
+   * agents (la barre de progression compte les agents), les départements de la mission d'abord.
+   */
+  async planBase(u: UtilisateurConnecte) {
+    if (!this.lectureNationale(u))
+      throw new ForbiddenException(
+        'La base complète est réservée aux recenseurs et à la DGRHAS.',
+      );
+    const deps = await this.ds.query<
+      { id: number; nom: string; ecoles: number; agents: number; ids: number[] }[]
+    >(
+      `SELECT d.id, d.nom,
+              (SELECT coalesce(array_agg(s.id ORDER BY s.nom), '{}') FROM structure s WHERE s."departementId" = d.id AND s.actif AND s.type = 'ETABLISSEMENT') AS ids,
+              (SELECT count(*)::int FROM structure s WHERE s."departementId" = d.id AND s.actif AND s.type = 'ETABLISSEMENT') AS ecoles,
+              (SELECT count(*)::int FROM agent_recense a JOIN structure s ON s.id = a."structureId"
+                WHERE s."departementId" = d.id AND s.actif AND s.type = 'ETABLISSEMENT'
+                  AND coalesce(a.contentieux->>'etat', 'CONFIRME') <> 'REJETE') AS agents
+         FROM departement d ORDER BY d.ordre`,
+    );
+    const mission =
+      u.role === 'RECENSEUR'
+        ? ((
+            await this.ds.query<{ departements: number[] }[]>(
+              `SELECT departements FROM recenseur WHERE "utilisateurId" = $1`,
+              [u.id],
+            )
+          )[0]?.departements ?? [])
+        : [];
+    return {
+      le: new Date().toISOString(),
+      mission,
+      departements: [
+        ...deps.filter((d) => mission.includes(d.id)),
+        ...deps.filter((d) => !mission.includes(d.id)),
+      ],
+    };
+  }
+
+  /** Les empreintes de toutes les écoles du pays (la tablette compare avec les siennes). */
+  async empreintesBase(u: UtilisateurConnecte) {
+    if (!this.lectureNationale(u))
+      throw new ForbiddenException(
+        'La base complète est réservée aux recenseurs et à la DGRHAS.',
+      );
+    return {
+      le: new Date().toISOString(),
+      ecoles: Object.fromEntries(await this.empreintes()),
+    };
+  }
+
+  /** Les paquets des écoles qui ont changé (400 au plus d'un coup). */
+  async ecolesBase(u: UtilisateurConnecte, ids: number[]) {
+    if (!this.lectureNationale(u))
+      throw new ForbiddenException(
+        'La base complète est réservée aux recenseurs et à la DGRHAS.',
+      );
+    const liste = [
+      ...new Set((ids ?? []).map(Number).filter(Number.isInteger)),
+    ].slice(0, 400);
+    if (!liste.length) return { paquets: [] };
+    const ecoles = await this.ds.query<
+      {
+        id: number;
+        parentId: number | null;
+        nom: string;
+        cycle: string | null;
+        localite: string | null;
+        departementId: number | null;
+        responsableId: number | null;
+        latitude: number | null;
+        longitude: number | null;
+        precisionGps: number | null;
+        localiseLe: string | null;
+      }[]
+    >(
+      `SELECT * FROM structure WHERE actif AND type = 'ETABLISSEMENT' AND id = ANY($1)`,
+      [liste],
+    );
+    const parents = await this.ds.query<{ id: number; nom: string }[]>(
+      `SELECT id, nom FROM structure WHERE id = ANY($1)`,
+      [ecoles.map((e) => e.parentId).filter((x) => x !== null)],
+    );
+    return {
+      paquets: await this.paquetsDe(
+        ecoles,
+        new Map(parents.map((x) => [x.id, x.nom])),
+      ),
     };
   }
 
@@ -344,13 +859,14 @@ export class TerrainService implements OnApplicationBootstrap {
             matricule: string | null;
             donnees: Record<string, unknown>;
             modifieLe: string;
+            aControler: boolean;
           }[]
         >(
           `SELECT id, "nomComplet", statut, matricule, (
                   SELECT coalesce(jsonb_object_agg(k, v), '{}'::jsonb) FROM jsonb_each(donnees) AS e(k, v) WHERE k = ANY($2)
-                ) AS donnees, "modifieLe"
+                ) AS donnees, "modifieLe", ${EN_CONTROLE} AS "aControler"
              FROM agent_recense
-            WHERE "structureId" = $1 AND coalesce(contentieux->>'etat', 'CONFIRME') = 'CONFIRME'
+            WHERE "structureId" = $1 AND ${SUR_LES_TABLETTES}
             ORDER BY "nomComplet"`,
           [id, codes],
         ),
@@ -394,6 +910,7 @@ export class TerrainService implements OnApplicationBootstrap {
       ok: boolean;
       id?: number;
       erreur?: string;
+      semblables?: Semblable[];
     }[] = [];
     for (const m of liste) {
       const cle = String(m?.cle ?? '');
@@ -432,25 +949,72 @@ export class TerrainService implements OnApplicationBootstrap {
             ? { ...(donnees ?? {}), PRESENCE_POSTE: 'OUI' }
             : donnees;
         if (m.agentId) {
-          await this.rec.modifier(u, Number(m.agentId), {
+          // Un agent enregistré ailleurs (autre département, ou sans école) que l'équipe trouve
+          // dans une de SES écoles : le rattachement est permis (DG, 22/11/2026), puis il passe au
+          // contrôle comme toute modification du recensement
+          const qui = await this.auteurDuRattachement(
+            u,
+            Number(m.agentId),
+            m.structureId ? Number(m.structureId) : null,
+          );
+          await this.rec.modifier(qui, Number(m.agentId), {
             ...(aEcrire ? { donnees: aEcrire } : {}),
             ...(m.structureId ? { structureId: Number(m.structureId) } : {}),
             ...(m.statut ? { statut: m.statut } : {}),
             recensement: true,
           });
+          // Trouvé ici alors qu'une autre équipe l'avait dit « parti » ou « inconnu » ailleurs : réglé
+          if (m.structureId)
+            await this.ds.query(
+              `UPDATE signalement_terrain SET traite = true, "traitePar" = $3, "traiteLe" = now()
+                WHERE "agentId" = $1 AND NOT traite AND etat IN ('PARTI', 'INCONNU') AND "structureId" <> $2`,
+              [
+                Number(m.agentId),
+                Number(m.structureId),
+                `${u.nom} (retrouvé dans une autre école par la mission)`,
+              ],
+            );
           resultats.push({ cle, ok: true, id: Number(m.agentId) });
         } else {
           if (!m.statut)
             throw new BadRequestException(
               'Nouvel agent : choisissez son statut.',
             );
+          // Déjà dans la base sous une autre école (ou un nom mal écrit) : on ne le recrée pas
+          if (!m.forcer) {
+            const texte = (v: unknown) =>
+              typeof v === 'string' || typeof v === 'number' ? String(v) : '';
+            const deja = await this.semblables(
+              texte(aEcrire?.NOMS_PRENOMS),
+              texte(aEcrire?.DATE_NAISSANCE) || null,
+            );
+            if (deja.length) {
+              resultats.push({
+                cle,
+                ok: false,
+                erreur: `Déjà dans la base : ${deja
+                  .map(
+                    (d) =>
+                      `${d.nomComplet}${d.dateNaissance ? `, né(e) le ${d.dateNaissance.split('-').reverse().join('/')}` : ''} (${d.ecole ?? 'sans école'})`,
+                  )
+                  .join(' ; ')}. Si c'est lui : « Il travaille ici ».`,
+                semblables: deja,
+              });
+              continue;
+            }
+          }
           const r = (await this.rec.creer(u, {
             statut: m.statut,
             structureId: m.structureId ? Number(m.structureId) : null,
             donnees: aEcrire ?? {},
             contentieux: 'Ajouté par la mission de recensement sur le terrain',
             recensement: true,
+            forcer: !!m.forcer,
+            // Une fiche rejetée par le DG n'existe plus pour les équipes (elle ne bloque pas)
+            ignorerRejetes: true,
           })) as { id?: number } | undefined;
+          // Tout de suite reconnu par les autres équipes (pas de doublon dans les minutes qui suivent)
+          if (r?.id) await this.ajouterALIndex(r.id);
           resultats.push({ cle, ok: true, id: r?.id });
         }
       } catch (e) {

@@ -148,7 +148,7 @@ export class CoreController {
     return this.sessions.connexion(dto, ip);
   }
 
-  @Roles(...TOUS_LES_ROLES)
+  @Roles(...TOUS_LES_ROLES, 'RECENSEUR')
   @Get('auth/moi')
   async moi(@Moi() u: UtilisateurConnecte) {
     // Profil relu en base à chaque requête (voir AuthGuard). Le type de sa structure dit au menu si
@@ -191,7 +191,7 @@ export class CoreController {
    * Le mot de passe ne se change pas soi-même (demande du DG) : quelqu'un qui entrerait par hasard
    * dans le compte d'un autre pourrait l'en exclure. On le demande à l'administrateur ou au DG.
    */
-  @Roles(...TOUS_LES_ROLES)
+  @Roles(...TOUS_LES_ROLES, 'RECENSEUR')
   @Post('auth/mot-de-passe')
   changerMotDePasse() {
     throw new ForbiddenException(
@@ -563,7 +563,7 @@ export class CoreController {
 
   /* --------------------------- Référentiels -------------------------- */
 
-  @Roles(...TOUS_LES_ROLES)
+  @Roles(...TOUS_LES_ROLES, 'RECENSEUR')
   @Get('referentiels')
   async referentiels() {
     return {

@@ -135,6 +135,8 @@ export const RUBRIQUES_API: Record<string, string[]> = {
   '/personnel/sans-ecole': ['recensement/sans-ecole'],
   // Recensement sur le terrain (21/11/2026) : paquet d'une école, envoi
   '/recensement/terrain': ['recensement/terrain'],
+  // Recenseurs de la mission (22/11/2026) : comptes, départements, dates, effacement
+  '/recensement/recenseurs': ['recensement/recenseurs'],
   '/personnel/agents': [
     'recensement/agents',
     'rattachement/fiches',

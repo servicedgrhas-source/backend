@@ -18,6 +18,8 @@ import { EnrolementService } from './enrolement/enrolement.service';
 import { BourseService } from './enrolement/bourse.service';
 import { ControleEffectifsService } from './recensement/controle-effectifs.service';
 import { SansEcoleController } from './recensement/sans-ecole.controller';
+import { RecenseursController } from './recensement/recenseurs.controller';
+import { RecenseursService } from './recensement/recenseurs.service';
 import { TerrainController } from './recensement/terrain.controller';
 import { TerrainService } from './recensement/terrain.service';
 import { NomEcoleSubscriber } from './common/nom-ecole.subscriber';
@@ -166,6 +168,7 @@ import { ReferentielsService } from './referentiels/referentiels.service';
     RepertoireEcolesController,
     SansEcoleController,
     TerrainController,
+    RecenseursController,
     NomsEcolesController,
     CoreController,
     ConfigurationController,
@@ -244,6 +247,7 @@ import { ReferentielsService } from './referentiels/referentiels.service';
     ControleEffectifsService,
     SansEcoleService,
     TerrainService,
+    RecenseursService,
     NomsEcolesService,
     NomEcoleSubscriber,
     BottinService,

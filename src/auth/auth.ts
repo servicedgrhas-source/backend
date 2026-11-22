@@ -28,7 +28,7 @@ import {
 } from './droits';
 import { parametresDeLaRoute } from '../securite/route';
 import { compteSignale, SecuriteService } from '../securite/securite.service';
-import { SessionService } from './session.service';
+import { effacerAppareil, SessionService } from './session.service';
 
 /** Paramètre où le DG range les droits par rubrique (Administration › Droits). */
 export const CLE_DROITS = 'DROITS_RUBRIQUES';
@@ -227,6 +227,15 @@ export class AuthGuard implements CanActivate {
     req.user = await this.sessions.profilDuJeton(jeton);
     // Outil de détection (08/11/2026) : compte suspendu, puis règles de la requête
     if (req.user.suspendu) throw compteSignale();
+    // Recenseur dont l'appareil doit être effacé : seuls passent l'envoi de ce qui attend (lignes
+    // et positions GPS, juste avant l'effacement) et l'accusé « c'est effacé »
+    if (
+      req.user.role === 'RECENSEUR' &&
+      !/^\/api\/recensement\/terrain\/(mission\/efface|envoyer)$/.test(req.path) &&
+      !/^\/api\/etablissements\/\d+\/(batiments\/\d+\/)?localisation$/.test(req.path) &&
+      (await this.sessions.effacementDemande(req.user.id))
+    )
+      throw effacerAppareil();
     if (
       await this.securite.avant(
         req,
@@ -302,13 +311,18 @@ export class AuthGuard implements CanActivate {
     if (
       d.decision === 'permis' &&
       req.user.role !== 'STRUCTURE' &&
+      req.user.role !== 'RECENSEUR' &&
       !req.user.compteVide
     )
       return true;
 
     const roles = this.reflector.getAllAndOverride<Role[]>(CLE_ROLES, cibles);
     // Comptes des structures (écoles, inspections…) : seulement les routes qui les citent
-    if (req.user.role === 'STRUCTURE' && !roles?.includes('STRUCTURE'))
+    // (de même un recenseur : seulement le formulaire du terrain)
+    if (
+      (req.user.role === 'STRUCTURE' || req.user.role === 'RECENSEUR') &&
+      !roles?.includes(req.user.role)
+    )
       throw new ForbiddenException(
         "Vous n'avez pas les droits pour cette action",
       );

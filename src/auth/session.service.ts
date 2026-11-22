@@ -21,6 +21,24 @@ interface ContenuJeton {
   v?: number;
 }
 
+/**
+ * Recenseur dont l'appareil doit être effacé (DG, 22/11/2026 : appareil perdu, recenseur retiré) :
+ * toute réponse le dit à l'appareil, qui efface les données gardées puis le confirme.
+ */
+export const effacerAppareil = () =>
+  new HttpException(
+    {
+      statusCode: HttpStatus.GONE,
+      code: 'EFFACER_APPAREIL',
+      message:
+        'Mission arrêtée pour ce compte : les données gardées sur cet appareil sont effacées.',
+    },
+    HttpStatus.GONE,
+  );
+
+export const MESSAGE_RECENSEUR_BLOQUE =
+  'Votre compte de recenseur est bloqué par la DGRHAS. Les données de votre tablette restent gardées. Appelez la DGRHAS.';
+
 /* -------- Règles de connexion (une seule source pour les messages et les contrôles) -------- */
 
 /** Essais ratés tolérés pour un compte, sur la fenêtre ci-dessous. */
@@ -166,6 +184,8 @@ export class SessionService {
       ])
       .where('u.id = :id', { id: contenu.id })
       .getOne();
+    if (u && !u.actif && u.role === 'RECENSEUR' && (await this.recenseurBloque(u.id)))
+      throw new UnauthorizedException(MESSAGE_RECENSEUR_BLOQUE);
     if (!u || !u.actif)
       throw new UnauthorizedException(
         'Ce compte est désactivé ou n’existe plus.',
@@ -188,6 +208,24 @@ export class SessionService {
       finAcces: u.finAcces,
       ...(u.suspenduLe ? { suspendu: true } : {}),
     };
+  }
+
+  /** Recenseur bloqué par la DGRHAS (compte suspendu, données gardées sur sa tablette). */
+  async recenseurBloque(id: string): Promise<boolean> {
+    const r = await this.users.manager.query<{ b: boolean }[]>(
+      `SELECT ("bloqueLe" IS NOT NULL) AS b FROM recenseur WHERE "utilisateurId" = $1`,
+      [id],
+    );
+    return !!r[0]?.b;
+  }
+
+  /** Le DG a demandé d'effacer l'appareil de ce recenseur (et l'appareil ne l'a pas encore fait). */
+  async effacementDemande(id: string): Promise<boolean> {
+    const r = await this.users.manager.query<{ e: boolean }[]>(
+      `SELECT ("effacerLe" IS NOT NULL) AS e FROM recenseur WHERE "utilisateurId" = $1`,
+      [id],
+    );
+    return !!r[0]?.e;
   }
 
   /** Ferme toutes les sessions ouvertes de ces comptes (les jetons déjà donnés ne valent plus). */
@@ -242,6 +280,9 @@ export class SessionService {
     );
     const codeOk = !u?.codeChiffre || codeValide(saisie.code, u.codeChiffre);
 
+    // Recenseur bloqué par la DGRHAS, bon mot de passe : on le lui dit (ce n'est pas un essai raté)
+    if (u && !u.actif && motOk && codeOk && u.role === 'RECENSEUR' && (await this.recenseurBloque(u.id)))
+      throw new UnauthorizedException(MESSAGE_RECENSEUR_BLOQUE);
     if (!u || !u.actif || !motOk || !codeOk) {
       const motif = !u
         ? 'compte inconnu'
@@ -275,6 +316,9 @@ export class SessionService {
       );
       throw compteSignale();
     }
+    // Recenseur dont l'appareil doit être effacé : l'appareil l'apprend en se connectant
+    if (u.role === 'RECENSEUR' && (await this.effacementDemande(u.id)))
+      throw effacerAppareil();
     const echecsAvant = u.echecsConnexion ?? 0;
     if (u.bloqueJusqua) await this.debloquer(u.id);
     else

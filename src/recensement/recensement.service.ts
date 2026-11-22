@@ -88,6 +88,8 @@ export interface FicheDto {
   contentieux?: boolean | string;
   /** Modification faite depuis le Recensement : elle part au contrôle (DG, 30/10/2026). */
   recensement?: boolean;
+  /** Création : une fiche rejetée par le DG ne compte pas comme « déjà recensé » (ajouts du terrain). */
+  ignorerRejetes?: boolean;
 }
 
 export interface ChangementStatutDto {
@@ -185,6 +187,19 @@ export class RecensementService {
           'Compte DDEPPSA sans département : l’administrateur doit indiquer son département.',
         );
       return { departementId: u.departementId };
+    }
+    // Recenseur de la mission de terrain : les écoles des départements de sa mission
+    if (u.role === 'RECENSEUR') {
+      const lignes = await this.structures.query<{ id: number }[]>(
+        `SELECT s.id FROM structure s JOIN recenseur r ON s."departementId" = ANY(r.departements)
+          WHERE r."utilisateurId" = $1`,
+        [u.id],
+      );
+      if (!lignes.length)
+        throw new ForbiddenException(
+          'Aucun département dans votre mission : la DGRHAS doit vous en donner un.',
+        );
+      return { structures: lignes.map((l) => l.id), principale: lignes[0].id };
     }
     if (u.role === 'STRUCTURE' || (u.role === 'VISITEUR' && u.structureId)) {
       if (!u.structureId)
@@ -892,6 +907,8 @@ export class RecensementService {
         col.nomNormalise,
         col.dateNaissance,
         col.matricule,
+        undefined,
+        !!dto.ignorerRejetes,
       );
       if (deja.length)
         throw new BadRequestException(
@@ -951,6 +968,8 @@ export class RecensementService {
     dateNaissance: string | null,
     matricule: string | null,
     sauf?: number,
+    /** Sans les fiches rejetées par le DG (ajouts du terrain : une fiche rejetée n'existe plus). */
+    sansRejetes = false,
   ) {
     const lignes = await this.agents.query<
       { id: number; nomComplet: string; numeroFiche: string }[]
@@ -958,8 +977,9 @@ export class RecensementService {
       `SELECT id, "nomComplet", "numeroFiche" FROM agent_recense
         WHERE id <> $4 AND (("nomNormalise" = $1 AND ($2::date IS NULL OR "dateNaissance" IS NULL OR "dateNaissance" = $2::date))
            OR ($3::text IS NOT NULL AND matricule = $3))
+          AND (NOT $5 OR coalesce(contentieux->>'etat', 'CONFIRME') <> 'REJETE')
         LIMIT 3`,
-      [nomNormalise, dateNaissance, matricule, sauf ?? 0],
+      [nomNormalise, dateNaissance, matricule, sauf ?? 0, sansRejetes],
     );
     return lignes;
   }
