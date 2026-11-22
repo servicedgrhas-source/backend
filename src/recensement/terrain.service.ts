@@ -17,7 +17,7 @@ import {
 } from '../common/recherche-souple';
 import { JournalService } from '../core/core.service';
 import { EtablissementsService } from '../etablissements/etablissements.service';
-import { RecensementService } from './recensement.service';
+import { auteurDe, RecensementService } from './recensement.service';
 
 /**
  * Recensement sur le terrain (DG, 21/11/2026) : les équipes partent avec des tablettes ou des
@@ -68,7 +68,7 @@ export interface ModificationTerrain {
   /** L'agent travaille dans cette école (rattachement). */
   structureId?: number | null;
   /** Ce que l'équipe constate : présent, absent ce jour, parti, inconnu ici. */
-  presence?: 'PRESENT' | 'ABSENT' | 'PARTI' | 'INCONNU' | null;
+  presence?: 'PRESENT' | 'ABSENT' | 'PARTI' | 'INCONNU' | 'DOUBLON' | null;
   /** L'école où l'équipe travaille (pour un signalement). */
   ecoleId?: number | null;
   observation?: string | null;
@@ -85,7 +85,17 @@ export interface Semblable {
   matricule: string | null;
 }
 
-export const PRESENCES = ['PRESENT', 'ABSENT', 'PARTI', 'INCONNU'] as const;
+/**
+ * Ce que l'équipe constate devant un agent. DOUBLON : la même personne écrite deux fois dans la base
+ * (deux lignes au même nom dans l'école) ; un signalement que la DGRHAS règle dans « Doublons probables ».
+ */
+export const PRESENCES = [
+  'PRESENT',
+  'ABSENT',
+  'PARTI',
+  'INCONNU',
+  'DOUBLON',
+] as const;
 
 @Injectable()
 export class TerrainService implements OnApplicationBootstrap {
@@ -142,7 +152,9 @@ export class TerrainService implements OnApplicationBootstrap {
         genre: string | null;
         grade: string | null;
       }[]
-    >(`${SELECT_INDEX} WHERE coalesce(a.contentieux->>'etat', 'CONFIRME') IN ('CONFIRME', 'EN_COURS', 'CONTROLE')`);
+    >(
+      `${SELECT_INDEX} WHERE coalesce(a.contentieux->>'etat', 'CONFIRME') IN ('CONFIRME', 'EN_COURS', 'CONTROLE')`,
+    );
     const prepares = lignes.map((l) => ({
       ...l,
       prepare: preparer(l.nomComplet),
@@ -255,10 +267,14 @@ export class TerrainService implements OnApplicationBootstrap {
       12,
     );
     const vus = new Set<number>();
+    const trouves = [...parMatricule, ...parNom]
+      .filter((x) => !vus.has(x.item.id) && !!vus.add(x.item.id))
+      .slice(0, 12);
+    // L'index peut avoir jusqu'à 10 minutes : une fiche supprimée ou fusionnée depuis n'est plus proposée
+    const encore = await this.existent(trouves.map((x) => x.item.id));
     return {
-      lignes: [...parMatricule, ...parNom]
-        .filter((x) => !vus.has(x.item.id) && !!vus.add(x.item.id))
-        .slice(0, 12)
+      lignes: trouves
+        .filter((x) => encore.has(x.item.id))
         .map(({ item, note }) => ({
           id: item.id,
           nomComplet: item.nomComplet,
@@ -304,15 +320,21 @@ export class TerrainService implements OnApplicationBootstrap {
     }
     if (!r.length) return r;
     // L'index peut avoir jusqu'à 10 minutes : un agent rejeté (ou supprimé) depuis ne compte plus
-    const encore = new Set(
+    const encore = await this.existent(r.map((x) => x.id));
+    return r.filter((x) => encore.has(x.id)).slice(0, 5);
+  }
+
+  /** Parmi ces fiches, celles qui existent encore (ni supprimées, ni fusionnées, ni rejetées). */
+  private async existent(ids?: number[]): Promise<Set<number>> {
+    if (ids && !ids.length) return new Set();
+    return new Set(
       (
         await this.ds.query<{ id: number }[]>(
-          `SELECT id FROM agent_recense WHERE id = ANY($1) AND ${SUR_LES_TABLETTES}`,
-          [r.map((x) => x.id)],
+          `SELECT id FROM agent_recense WHERE ${ids ? 'id = ANY($1) AND ' : ''}${SUR_LES_TABLETTES}`,
+          ids ? [ids] : [],
         )
       ).map((x) => x.id),
     );
-    return r.filter((x) => encore.has(x.id)).slice(0, 5);
   }
 
   /**
@@ -364,7 +386,7 @@ export class TerrainService implements OnApplicationBootstrap {
       `SELECT "departementId", "structureId" FROM agent_recense WHERE id = $1`,
       [agentId],
     );
-    if (!a || this.rec.dansPerimetre(p, a as never)) return u;
+    if (!a || this.rec.dansPerimetre(p, a)) return u;
     // L'école doit être dans le périmètre du compte (sinon : refus ordinaire)
     await this.ecoles.structure(u, ecoleId);
     return { ...u, role: 'AGENT' };
@@ -401,11 +423,9 @@ export class TerrainService implements OnApplicationBootstrap {
     if (!a) throw new NotFoundException('Agent introuvable.');
     if (
       (u.role === 'STRUCTURE' || u.role === 'VISITEUR') &&
-      !this.rec.dansPerimetre(await this.rec.perimetre(u), a as never)
+      !this.rec.dansPerimetre(await this.rec.perimetre(u), a)
     )
-      throw new ForbiddenException(
-        'Cet agent n’est pas dans votre périmètre.',
-      );
+      throw new ForbiddenException('Cet agent n’est pas dans votre périmètre.');
     const { departementId: _d, structureId: _s, ...agent } = a;
     void _d;
     void _s;
@@ -418,10 +438,12 @@ export class TerrainService implements OnApplicationBootstrap {
         'La liste nationale est réservée aux recenseurs et à la DGRHAS.',
       );
     if (!this.index) await this.construireIndex();
+    // (sans les fiches supprimées ou fusionnées depuis la dernière préparation de l'index)
+    const encore = await this.existent();
     return {
       le: new Date().toISOString(),
       // [id, nom, école, matricule, naissance, statut, genre, grade, département]
-      lignes: this.index!.lignes.map((l) => [
+      lignes: this.index!.lignes.filter((l) => encore.has(l.id)).map((l) => [
         l.id,
         l.nomComplet,
         l.structureNom,
@@ -641,7 +663,13 @@ export class TerrainService implements OnApplicationBootstrap {
         'La base complète est réservée aux recenseurs et à la DGRHAS.',
       );
     const deps = await this.ds.query<
-      { id: number; nom: string; ecoles: number; agents: number; ids: number[] }[]
+      {
+        id: number;
+        nom: string;
+        ecoles: number;
+        agents: number;
+        ids: number[];
+      }[]
     >(
       `SELECT d.id, d.nom,
               (SELECT coalesce(array_agg(s.id ORDER BY s.nom), '{}') FROM structure s WHERE s."departementId" = d.id AND s.actif AND s.type = 'ETABLISSEMENT') AS ids,
@@ -720,6 +748,45 @@ export class TerrainService implements OnApplicationBootstrap {
         new Map(parents.map((x) => [x.id, x.nom])),
       ),
     };
+  }
+
+  /**
+   * Un bâtiment ou une annexe découvert sur place (DG, 22/11/2026 : les écoles, leurs bâtiments et
+   * leurs annexes géolocalisés) : créé depuis le terrain, avec sa position si elle a été prélevée.
+   * Seulement dans une école du périmètre du compte (la mission, pour un recenseur).
+   */
+  async ajouterBatiment(
+    u: UtilisateurConnecte,
+    ecoleId: number,
+    d: {
+      nom?: unknown;
+      type?: unknown;
+      latitude?: unknown;
+      longitude?: unknown;
+      precision?: unknown;
+    },
+  ) {
+    const b = await this.ecoles.enregistrerBatiment(u, ecoleId, null, {
+      nom: d.nom,
+      type: d.type,
+    });
+    if (
+      d.latitude !== undefined &&
+      d.latitude !== null &&
+      d.longitude !== undefined &&
+      d.longitude !== null
+    )
+      await this.ecoles.localiser(
+        u,
+        ecoleId,
+        {
+          latitude: d.latitude,
+          longitude: d.longitude,
+          precision: d.precision,
+        },
+        b.id,
+      );
+    return { id: b.id, nom: b.nom };
   }
 
   /** Les signalements du terrain (absent, parti, inconnu ici), à traiter par la DGRHAS. */
@@ -922,6 +989,10 @@ export class TerrainService implements OnApplicationBootstrap {
         const presence = PRESENCES.includes(m.presence as never)
           ? m.presence
           : null;
+        if (m.agentId && !(await this.existent([Number(m.agentId)])).size)
+          throw new BadRequestException(
+            'Cette fiche n’existe plus dans la base (fusionnée avec une autre ou supprimée par la DGRHAS). Retirez cette ligne, puis cherchez l’agent à nouveau.',
+          );
         // Présent : « Présence au poste : Oui » ; absent, parti, inconnu : un signalement à traiter
         if (presence === 'PRESENT' && m.agentId)
           Object.assign(donnees ?? (m.donnees = {}), { PRESENCE_POSTE: 'OUI' });
@@ -930,13 +1001,14 @@ export class TerrainService implements OnApplicationBootstrap {
           if (!ecole)
             throw new BadRequestException('École du signalement inconnue.');
           await this.ds.query(
-            `INSERT INTO signalement_terrain ("agentId", "structureId", etat, observation, par) VALUES ($1, $2, $3, $4, $5)`,
+            `INSERT INTO signalement_terrain ("agentId", "structureId", etat, observation, par, "campagneId")
+             VALUES ($1, $2, $3, $4, $5, (SELECT id FROM campagne_recensement WHERE "clotureLe" IS NULL ORDER BY debut DESC, id DESC LIMIT 1))`,
             [
               Number(m.agentId),
               ecole,
               presence,
               m.observation ? String(m.observation).slice(0, 500) : null,
-              u.nom,
+              auteurDe(u),
             ],
           );
           if (!donnees || !Object.keys(donnees).length) {

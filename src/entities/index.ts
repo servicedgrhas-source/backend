@@ -1648,6 +1648,8 @@ export class ModificationRecensement {
   @Column({ type: 'boolean', default: false }) proposition: boolean;
   /** D'où vient la proposition (rapport, fichier, n° de ligne). */
   @Column({ type: 'text', nullable: true }) source: string | null;
+  /** Le recensement (campagne) pendant lequel la modification a été faite. */
+  @Index() @Column({ type: 'int', nullable: true }) campagneId: number | null;
 }
 
 @Entity('agent_recense')
@@ -1704,6 +1706,9 @@ export class AgentRecense {
   @Column({ type: 'varchar', default: 'SAISIE' }) source: string;
   @Column({ type: 'varchar', nullable: true }) creePar: string | null;
   @Column({ type: 'varchar', nullable: true }) modifiePar: string | null;
+  /** Ajoutée au recensement : lequel (campagne). Vide pour les fiches venues des bases. */
+  @Index() @Column({ type: 'int', nullable: true }) campagneRecensementId:
+    number | null;
   @CreateDateColumn() creeLe: Date;
   @UpdateDateColumn() modifieLe: Date;
 }
@@ -1782,6 +1787,30 @@ export class SignalementTerrain {
   @Index() @Column({ default: false }) traite: boolean;
   @Column({ type: 'varchar', nullable: true }) traitePar: string | null;
   @Column({ type: 'timestamptz', nullable: true }) traiteLe: Date | null;
+  /** Le recensement (campagne) pendant lequel l'équipe l'a constaté. */
+  @Index() @Column({ type: 'int', nullable: true }) campagneId: number | null;
+}
+
+/**
+ * Un recensement (DG, 22/11/2026 : « ouvrir un recensement ») : son nom, l'année, l'année scolaire,
+ * le début et la fin (facultative). Tout ce qu'il produit (agents ajoutés, fiches modifiées,
+ * signalements du terrain, recenseurs) est rangé sous lui : on sait d'où viennent les données.
+ * Un seul recensement ouvert à la fois.
+ */
+@Entity('campagne_recensement')
+export class CampagneRecensement {
+  @PrimaryGeneratedColumn() id: number;
+  @Column() nom: string;
+  @Column({ type: 'int' }) annee: number;
+  /** « 2026-2027 ». */
+  @Column({ type: 'varchar', nullable: true }) anneeScolaire: string | null;
+  @Column({ type: 'date' }) debut: string;
+  @Column({ type: 'date', nullable: true }) fin: string | null;
+  @Column({ type: 'text', nullable: true }) observation: string | null;
+  /** Clôturé : plus rien ne s'y range (on peut le rouvrir). */
+  @Column({ type: 'timestamptz', nullable: true }) clotureLe: Date | null;
+  @Column({ type: 'varchar', nullable: true }) creePar: string | null;
+  @CreateDateColumn({ type: 'timestamptz' }) creeLe: Date;
 }
 
 /**
@@ -1794,9 +1823,11 @@ export class Recenseur {
   @PrimaryColumn('uuid') utilisateurId: string;
   /** Identifiant de connexion : RG-<numéro>-<initiales du département>. */
   @Index({ unique: true }) @Column() code: string;
-  @Column({ type: 'int', array: true, default: () => "'{}'" }) departements: number[];
+  @Column({ type: 'int', array: true, default: () => "'{}'" })
+  departements: number[];
   /** Ses numéros de téléphone (un ou plusieurs), pour le joindre pendant la mission. */
-  @Column({ type: 'varchar', array: true, default: () => "'{}'" }) telephones: string[];
+  @Column({ type: 'varchar', array: true, default: () => "'{}'" })
+  telephones: string[];
   @Column({ type: 'date', nullable: true }) debut: string | null;
   /** Dernier jour de la mission : l'appareil efface ses données deux jours après. */
   @Column({ type: 'date', nullable: true }) fin: string | null;
@@ -1809,6 +1840,8 @@ export class Recenseur {
   @Column({ type: 'varchar', nullable: true }) bloquePar: string | null;
   @Column({ type: 'varchar', nullable: true }) creePar: string | null;
   @CreateDateColumn({ type: 'timestamptz' }) creeLe: Date;
+  /** Le recensement pour lequel il a été créé. */
+  @Index() @Column({ type: 'int', nullable: true }) campagneId: number | null;
 }
 
 /**
@@ -1822,7 +1855,8 @@ export class PositionRecenseur {
   @PrimaryGeneratedColumn('increment', { type: 'bigint' }) id: string;
   @Column('uuid') utilisateurId: string;
   @Column({ type: 'double precision', nullable: true }) latitude: number | null;
-  @Column({ type: 'double precision', nullable: true }) longitude: number | null;
+  @Column({ type: 'double precision', nullable: true }) longitude:
+    number | null;
   @Column({ type: 'real', nullable: true }) precision: number | null;
   /** OK, COUPEE (autorisation retirée ou GPS éteint), INDISPONIBLE (pas de signal). */
   @Column({ type: 'varchar', default: 'OK' }) etat: string;
@@ -2202,6 +2236,7 @@ export class PiecePrestation {
 
 export const ENTITES = [
   Utilisateur,
+  CampagneRecensement,
   Recenseur,
   PositionRecenseur,
   EvenementSecurite,

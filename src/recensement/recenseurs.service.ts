@@ -48,7 +48,8 @@ function motDePasseSimple() {
   const c = 'bdfgklmnprstvz';
   const v = 'aeiou';
   let m = '';
-  for (let i = 0; i < 2; i++) m += c[randomInt(c.length)] + v[randomInt(v.length)];
+  for (let i = 0; i < 2; i++)
+    m += c[randomInt(c.length)] + v[randomInt(v.length)];
   return `${m}-${String(randomInt(10000)).padStart(4, '0')}`;
 }
 
@@ -69,7 +70,12 @@ export interface SaisieRecenseurs {
 /** Numéros de téléphone : chiffres, espaces, « + » ; 5 au plus, sans doublon. */
 export function telephonesPropres(l: unknown): string[] {
   const liste = (Array.isArray(l) ? l : [])
-    .map((t) => String(t ?? '').replace(/[^\d+ ]/g, '').replace(/\s+/g, ' ').trim())
+    .map((t) =>
+      String(t ?? '')
+        .replace(/[^\d+ ]/g, '')
+        .replace(/\s+/g, ' ')
+        .trim(),
+    )
     .filter((t) => t.replace(/\D/g, '').length >= 6);
   const vus = new Set<string>();
   const r = liste.filter((t) => {
@@ -145,6 +151,7 @@ export class RecenseursService {
     >(
       `SELECT u.id, r.code, u.nom, u.actif, r.departements, r.telephones, r."bloqueLe", r."bloquePar",
               to_char(r.debut, 'YYYY-MM-DD') AS debut, to_char(r.fin, 'YYYY-MM-DD') AS fin,
+              r."campagneId", (SELECT c.nom FROM campagne_recensement c WHERE c.id = r."campagneId") AS campagne,
               r."effacerLe", r."effaceLe",
               (SELECT max(j.date) FROM journal j WHERE j."utilisateurId" = u.id AND j.action = 'CONNEXION') AS "derniereConnexion",
               (SELECT count(*)::int FROM journal j WHERE j."utilisateurId" = u.id AND j.action = 'RECENSEMENT_TERRAIN') AS envois,
@@ -182,7 +189,11 @@ export class RecenseursService {
    */
   async creer(moi: UtilisateurConnecte, s: SaisieRecenseurs) {
     const noms = (s.noms ?? [])
-      .map((n) => String(n ?? '').trim().replace(/\s+/g, ' '))
+      .map((n) =>
+        String(n ?? '')
+          .trim()
+          .replace(/\s+/g, ' '),
+      )
       .filter((n) => n.length >= 2);
     if (!noms.length)
       throw new BadRequestException(
@@ -191,12 +202,24 @@ export class RecenseursService {
     if (noms.length > 300)
       throw new BadRequestException('300 recenseurs au plus d’un coup.');
     this.verifierDates(s.debut, s.fin);
+    // Un recenseur travaille pour un recensement : il faut qu'un recensement soit ouvert
+    const [campagne] = await this.ds.query<{ id: number }[]>(
+      `SELECT id FROM campagne_recensement WHERE "clotureLe" IS NULL ORDER BY debut DESC, id DESC LIMIT 1`,
+    );
+    if (!campagne)
+      throw new BadRequestException(
+        'Aucun recensement ouvert : ouvrez d’abord le recensement (Base du personnel › Recensement › Recensements), puis créez ses recenseurs.',
+      );
     const { liste, tous } = await this.verifierDepartements(s.departements);
     const premier = tous.find((d) => d.id === liste[0])!;
     const initiales =
       INITIALES_DEPARTEMENT[premier.code] ?? premier.code.slice(0, 2);
-    const crees: { id: string; code: string; nom: string; motDePasse: string }[] =
-      [];
+    const crees: {
+      id: string;
+      code: string;
+      nom: string;
+      motDePasse: string;
+    }[] = [];
     await this.ds.transaction(async (m) => {
       let n = await this.prochainNumero();
       for (const nom of noms) {
@@ -223,8 +246,8 @@ export class RecenseursService {
           ],
         );
         await m.query(
-          `INSERT INTO recenseur ("utilisateurId", code, departements, debut, fin, "creePar")
-           VALUES ($1, $2, $3, $4, $5, $6)`,
+          `INSERT INTO recenseur ("utilisateurId", code, departements, debut, fin, "creePar", "campagneId")
+           VALUES ($1, $2, $3, $4, $5, $6, $7)`,
           [
             u.id,
             code,
@@ -232,6 +255,7 @@ export class RecenseursService {
             s.debut || null,
             s.fin || null,
             moi.nom,
+            campagne.id,
           ],
         );
         crees.push({ id: u.id, code, nom: nom.toUpperCase(), motDePasse });
@@ -363,9 +387,15 @@ export class RecenseursService {
       `UPDATE recenseur SET "effacerLe" = now(), "effaceLe" = NULL WHERE "utilisateurId" = $1`,
       [id],
     );
-    await this.journal.log(moi, 'RECENSEUR_EFFACEMENT_DEMANDE', 'recenseur', id, {
-      code: r.code,
-    });
+    await this.journal.log(
+      moi,
+      'RECENSEUR_EFFACEMENT_DEMANDE',
+      'recenseur',
+      id,
+      {
+        code: r.code,
+      },
+    );
     return { ok: true };
   }
 
@@ -437,6 +467,14 @@ export class RecenseursService {
         nom: deps.find((d) => d.id === id)?.nom ?? '?',
       })),
       fin: r.fin,
+      // Le recensement pour lequel il travaille (affiché sur sa tablette)
+      campagne:
+        (
+          await this.ds.query<{ nom: string }[]>(
+            `SELECT c.nom FROM recenseur r JOIN campagne_recensement c ON c.id = r."campagneId" WHERE r."utilisateurId" = $1`,
+            [u.id],
+          )
+        )[0]?.nom ?? null,
       // Le jour où l'appareil efface tout (le reste doit être envoyé avant)
       effacerApres: r.fin ? plus(r.fin, JOURS_APRES_MISSION) : null,
     };
@@ -483,7 +521,9 @@ export class RecenseursService {
           : 'OK';
         const lat = nombre(p.latitude);
         const lng = nombre(p.longitude);
-        const le = new Date(String(p.le ?? ''));
+        const le = new Date(
+          typeof p.le === 'string' || typeof p.le === 'number' ? p.le : '',
+        );
         return {
           etat,
           lat: lat !== null && lat >= -90 && lat <= 90 ? lat : null,
@@ -527,7 +567,9 @@ export class RecenseursService {
   async suivi(jour?: string) {
     const j = /^\d{4}-\d{2}-\d{2}$/.test(jour ?? '')
       ? jour!
-      : new Date().toLocaleDateString('fr-CA', { timeZone: 'Africa/Brazzaville' });
+      : new Date().toLocaleDateString('fr-CA', {
+          timeZone: 'Africa/Brazzaville',
+        });
     const { recenseurs } = await this.liste();
     const dernieres = await this.ds.query<
       {
@@ -543,7 +585,13 @@ export class RecenseursService {
          FROM position_recenseur ORDER BY "utilisateurId", le DESC`,
     );
     const dernieresOk = await this.ds.query<
-      { u: string; le: string; latitude: number; longitude: number; precision: number | null }[]
+      {
+        u: string;
+        le: string;
+        latitude: number;
+        longitude: number;
+        precision: number | null;
+      }[]
     >(
       `SELECT DISTINCT ON ("utilisateurId") "utilisateurId" AS u, le, latitude, longitude, precision
          FROM position_recenseur WHERE etat = 'OK' ORDER BY "utilisateurId", le DESC`,
@@ -558,7 +606,9 @@ export class RecenseursService {
         GROUP BY 1`,
       [j],
     );
-    const envois = await this.ds.query<{ u: string; n: number; lignes: number }[]>(
+    const envois = await this.ds.query<
+      { u: string; n: number; lignes: number }[]
+    >(
       `SELECT "utilisateurId"::text AS u, count(*)::int AS n,
               coalesce(sum((details->>'faites')::int), 0)::int AS lignes
          FROM journal
@@ -566,7 +616,8 @@ export class RecenseursService {
         GROUP BY 1`,
       [j],
     );
-    const parU = <T extends { u: string }>(l: T[]) => new Map(l.map((x) => [x.u, x]));
+    const parU = <T extends { u: string }>(l: T[]) =>
+      new Map(l.map((x) => [x.u, x]));
     const d = parU(dernieres);
     const ok = parU(dernieresOk);
     const t = parU(trajets);
@@ -576,16 +627,19 @@ export class RecenseursService {
     const lignes = recenseurs.map((r) => {
       const der = d.get(r.id);
       const pos = ok.get(r.id);
-      const minutes = der ? Math.round((maintenant - new Date(der.le).getTime()) / 60_000) : null;
-      const signal: 'AUCUN' | 'COUPEE' | 'ANCIEN' | 'TRES_ANCIEN' | 'RECENT' = !der
-        ? 'AUCUN'
-        : der.etat === 'COUPEE'
-          ? 'COUPEE'
-          : minutes! > 180
-            ? 'TRES_ANCIEN'
-            : minutes! > 60
-              ? 'ANCIEN'
-              : 'RECENT';
+      const minutes = der
+        ? Math.round((maintenant - new Date(der.le).getTime()) / 60_000)
+        : null;
+      const signal: 'AUCUN' | 'COUPEE' | 'ANCIEN' | 'TRES_ANCIEN' | 'RECENT' =
+        !der
+          ? 'AUCUN'
+          : der.etat === 'COUPEE'
+            ? 'COUPEE'
+            : minutes! > 180
+              ? 'TRES_ANCIEN'
+              : minutes! > 60
+                ? 'ANCIEN'
+                : 'RECENT';
       // Trajet allégé : 300 points au plus
       const pts = t.get(r.id)?.points ?? [];
       const pas = Math.max(1, Math.ceil(pts.length / 300));
@@ -596,7 +650,12 @@ export class RecenseursService {
         dernierEtat: der?.etat ?? null,
         dernierSignal: der?.le ?? null,
         position: pos
-          ? { latitude: pos.latitude, longitude: pos.longitude, precision: pos.precision, le: pos.le }
+          ? {
+              latitude: pos.latitude,
+              longitude: pos.longitude,
+              precision: pos.precision,
+              le: pos.le,
+            }
           : null,
         trajet: pts.filter((_, i) => i % pas === 0 || i === pts.length - 1),
         envoisJour: e.get(r.id)?.n ?? 0,
@@ -608,7 +667,12 @@ export class RecenseursService {
       le: new Date().toISOString(),
       lignes,
       alertes: lignes
-        .filter((x) => x.actif && !x.effacerLe && (x.signal === 'COUPEE' || x.signal === 'TRES_ANCIEN'))
+        .filter(
+          (x) =>
+            x.actif &&
+            !x.effacerLe &&
+            (x.signal === 'COUPEE' || x.signal === 'TRES_ANCIEN'),
+        )
         .map((x) => ({
           id: x.id,
           code: x.code,

@@ -1,3 +1,4 @@
+import { CampagnesRecensementService } from './campagnes-recensement.service';
 import {
   BadRequestException,
   ForbiddenException,
@@ -156,6 +157,12 @@ type ControlesCalcules = Awaited<
   ReturnType<RecensementService['calculerControles']>
 >;
 
+/** Qui a fait la modification, tel que le contrôle le lit : un recenseur avec son identifiant. */
+export const auteurDe = (u: UtilisateurConnecte) =>
+  /^rg-\d{3}-/i.test(u.email ?? '')
+    ? `${u.nom} (recenseur ${u.email.toUpperCase()})`
+    : u.nom;
+
 @Injectable()
 export class RecensementService {
   constructor(
@@ -172,7 +179,13 @@ export class RecensementService {
     private readonly affectation: AffectationService,
     private readonly params: ParametresService,
     private readonly effectifs: ControleEffectifsService,
+    private readonly campagnes: CampagnesRecensementService,
   ) {}
+
+  /** Le recensement ouvert : ce que le recensement produit est rangé sous lui. */
+  private async campagneOuverte() {
+    return (await this.campagnes.ouverte())?.id ?? null;
+  }
 
   /* ------------------------------ Périmètre ------------------------------ */
 
@@ -915,6 +928,7 @@ export class RecensementService {
           `Déjà recensé : ${deja.map((d) => `${d.nomComplet} (${d.numeroFiche})`).join(', ')}. Ouvrez sa fiche, ou confirmez s’il s’agit d’une autre personne.`,
         );
     }
+    const contentieux = this.contentieuxPour(p, dto.contentieux, auteurDe(u));
     const a = this.agents.create({
       ...col,
       departementId: r.departementId,
@@ -922,7 +936,9 @@ export class RecensementService {
       statut: statut.code,
       donnees,
       parcours: [etape(statut.code, u.nom)],
-      contentieux: this.contentieuxPour(p, dto.contentieux, u.nom),
+      contentieux,
+      // Ajouté au recensement (absent de la base) : rangé sous le recensement ouvert
+      campagneRecensementId: contentieux ? await this.campagneOuverte() : null,
       source: 'SAISIE',
       creePar: u.nom,
       modifiePar: u.nom,
@@ -1074,7 +1090,8 @@ export class RecensementService {
     )
       await this.agents.manager.save(ModificationRecensement, {
         agentId: a.id,
-        faitePar: u.nom,
+        faitePar: auteurDe(u),
+        campagneId: await this.campagneOuverte(),
         champs: Object.fromEntries(
           changes.map((k) => [
             k,
@@ -1140,7 +1157,8 @@ export class RecensementService {
       );
     const m = await this.agents.manager.save(ModificationRecensement, {
       agentId: a.id,
-      faitePar: u.nom,
+      faitePar: auteurDe(u),
+      campagneId: await this.campagneOuverte(),
       champs,
       proposition: true,
       source: source.slice(0, 500),
@@ -1176,13 +1194,15 @@ export class RecensementService {
         faiteLe: string;
         proposition: boolean;
         source: string | null;
+        campagne: string | null;
         nomComplet: string;
         numeroFiche: string;
         statut: string;
         structure: string | null;
       }[]
     >(
-      `SELECT m.id, m."agentId", m.champs, m."faitePar", m."faiteLe", m.proposition, m.source, a."nomComplet", a."numeroFiche", a.statut, s.nom AS structure
+      `SELECT m.id, m."agentId", m.champs, m."faitePar", m."faiteLe", m.proposition, m.source,
+              (SELECT c.nom FROM campagne_recensement c WHERE c.id = m."campagneId") AS campagne, a."nomComplet", a."numeroFiche", a.statut, s.nom AS structure
          FROM modification_recensement m
          JOIN agent_recense a ON a.id = m."agentId"
          LEFT JOIN structure s ON s.id = a."structureId"

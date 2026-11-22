@@ -106,6 +106,18 @@ export class TerrainController {
     return this.service.agent(u, id);
   }
 
+    /** Un bâtiment ou une annexe découvert sur place (nom, et sa position si prélevée). */
+  @Post('ecole/:id/batiments')
+  @HttpCode(200)
+  ajouterBatiment(
+    @Utilisateur() u: UtilisateurConnecte,
+    @Param('id', ParseIntPipe) id: number,
+    @Body()
+    corps: { nom?: unknown; type?: unknown; latitude?: unknown; longitude?: unknown; precision?: unknown },
+  ) {
+    return this.service.ajouterBatiment(u, id, corps ?? {});
+  }
+
     /** L'annuaire d'un département (recherche d'un agent sans réseau). */
   @Get('annuaire/:departement')
   annuaire(
