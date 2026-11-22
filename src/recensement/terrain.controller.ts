@@ -6,6 +6,7 @@ import {
   Param,
   ParseIntPipe,
   Post,
+  Query,
 } from '@nestjs/common';
 import {
   Roles,
@@ -26,12 +27,37 @@ export class TerrainController {
     return this.service.colonnes();
   }
 
+  /** Recherche intelligente d'un agent (nom tapé comme on l'entend, ou matricule). */
+  @Get('agents')
+  agents(@Utilisateur() u: UtilisateurConnecte, @Query('q') q?: string) {
+    return this.service.rechercherAgents(u, String(q ?? ''));
+  }
+
   @Get('ecole/:id')
   paquet(
     @Utilisateur() u: UtilisateurConnecte,
     @Param('id', ParseIntPipe) id: number,
   ) {
     return this.service.paquet(u, id);
+  }
+
+  /** Signalements du terrain (absent, parti, inconnu ici) : à traiter, ou déjà traités (?traites=1). */
+  @Get('signalements')
+  signalements(
+    @Utilisateur() u: UtilisateurConnecte,
+    @Query('traites') traites?: string,
+  ) {
+    return this.service.signalements(u, traites === '1');
+  }
+
+  @Roles(...ROLES_TRAITEMENT)
+  @Post('signalements/:id/traite')
+  @HttpCode(200)
+  traiter(
+    @Utilisateur() u: UtilisateurConnecte,
+    @Param('id', ParseIntPipe) id: number,
+  ) {
+    return this.service.traiter(u, id);
   }
 
   @Post('envoyer')

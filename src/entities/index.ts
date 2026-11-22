@@ -1759,6 +1759,26 @@ export class EvenementCarriere {
 
 /* ============================ Écoles : bâtiments, salles, classes ============================ */
 
+/**
+ * Ce que l'équipe de terrain constate pour un agent de la liste d'une école (DG, 22/11/2026) : absent
+ * ce jour, parti, ou inconnu ici. Rien n'est effacé : la DGRHAS vérifie puis traite (fiche corrigée,
+ * mutation, sortie…). « Présent » écrit seulement « Présence au poste : Oui » sur la fiche.
+ */
+@Entity('signalement_terrain')
+export class SignalementTerrain {
+  @PrimaryGeneratedColumn() id: number;
+  @Index() @Column({ type: 'int' }) agentId: number;
+  @Index() @Column({ type: 'int' }) structureId: number;
+  /** ABSENT (ce jour), PARTI, INCONNU (l'école ne le connaît pas). */
+  @Column() etat: string;
+  @Column({ type: 'text', nullable: true }) observation: string | null;
+  @Column({ type: 'varchar', nullable: true }) par: string | null;
+  @CreateDateColumn() le: Date;
+  @Index() @Column({ default: false }) traite: boolean;
+  @Column({ type: 'varchar', nullable: true }) traitePar: string | null;
+  @Column({ type: 'timestamptz', nullable: true }) traiteLe: Date | null;
+}
+
 /** Bâtiment d'un établissement (administratif, pédagogique, sanitaire, sportif…). */
 @Entity('batiment')
 export class Batiment {
@@ -2194,4 +2214,5 @@ export const ENTITES = [
   PropositionBm,
   DemandePrestation,
   PiecePrestation,
+  SignalementTerrain,
 ];
