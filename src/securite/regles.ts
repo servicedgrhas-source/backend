@@ -230,6 +230,26 @@ export interface Entetes {
   origin?: string;
   secFetchSite?: string;
   userAgent?: string;
+  referer?: string;
+}
+
+/**
+ * La page qui appelle est servie en http par une adresse autorisée (essai sur le poste depuis un
+ * téléphone ou une tablette du même Wi-Fi : http://192.168.x.x:3000). Le navigateur n'y envoie
+ * NI les en-têtes Sec-Fetch (réservés aux adresses sûres : https ou localhost), NI l'origine pour
+ * une lecture : il ne reste que la page d'où vient l'appel (Referer). En ligne, tout est en https
+ * et les navigateurs envoient toujours Sec-Fetch : cette exception n'y joue jamais.
+ */
+function pageHttpAutorisee(
+  referer: string | undefined,
+  originesPermises: (o: string) => boolean,
+) {
+  try {
+    const u = new URL(referer ?? '');
+    return u.protocol === 'http:' && originesPermises(u.origin);
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -241,7 +261,11 @@ export function regleNavigateur(
   originesPermises: (o: string) => boolean,
 ): Gain[] {
   const g: Gain[] = [];
-  if (!e.origin && !e.secFetchSite)
+  if (
+    !e.origin &&
+    !e.secFetchSite &&
+    !pageHttpAutorisee(e.referer, originesPermises)
+  )
     g.push({
       regle: 'A1_HORS_NAVIGATEUR',
       details: { navigateur: e.userAgent ?? null },

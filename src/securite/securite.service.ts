@@ -216,6 +216,7 @@ export class SecuriteService {
           origin: req.headers.origin,
           secFetchSite: req.headers['sec-fetch-site'],
           userAgent: req.headers['user-agent'],
+          referer: req.headers.referer,
         },
         this.origines,
       ).filter(

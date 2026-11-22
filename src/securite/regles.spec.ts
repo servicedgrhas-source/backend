@@ -99,6 +99,34 @@ describe('Outil de détection : règles', () => {
     expect(
       regleNavigateur({ userAgent: 'curl/8.4.0' }, ok).map((g) => g.regle),
     ).toEqual(['A1_HORS_NAVIGATEUR', 'A2_OUTIL']);
+    // Essai sur le poste depuis un téléphone du Wi-Fi (http, adresse IP) : ni origine ni
+    // Sec-Fetch, mais la page autorisée d'où vient l'appel ; pas un script
+    const avecPoste = (o: string) => ok(o) || o === 'http://192.168.1.20:3000';
+    expect(
+      regleNavigateur(
+        {
+          referer: 'http://192.168.1.20:3000/recensement/terrain',
+          userAgent: navigateur,
+        },
+        avecPoste,
+      ),
+    ).toEqual([]);
+    // … mais une page non autorisée, ou en https (où Sec-Fetch est toujours envoyé) : script
+    expect(
+      regleNavigateur(
+        {
+          referer: 'http://10.0.0.9:3000/recensement/terrain',
+          userAgent: navigateur,
+        },
+        avecPoste,
+      ).map((g) => g.regle),
+    ).toEqual(['A1_HORS_NAVIGATEUR']);
+    expect(
+      regleNavigateur(
+        { referer: 'https://www.dgrhas.com/personnel', userAgent: navigateur },
+        avecPoste,
+      ).map((g) => g.regle),
+    ).toEqual(['A1_HORS_NAVIGATEUR']);
     expect(
       regleNavigateur(
         {
