@@ -21,6 +21,24 @@ export class CampagnesRecensement1793780000000 implements MigrationInterface {
       "creePar" character varying,
       "creeLe" TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT now()
     )`);
+    // La table des signalements du terrain a été ajoutée à la migration LocalisationEcoles APRÈS
+    // qu'elle eut tourné en ligne : elle peut manquer. Créée ici si besoin (même définition).
+    await q.query(`CREATE TABLE IF NOT EXISTS "signalement_terrain" (
+      "id" SERIAL PRIMARY KEY,
+      "agentId" integer NOT NULL,
+      "structureId" integer NOT NULL,
+      "etat" character varying NOT NULL,
+      "observation" text,
+      "par" character varying,
+      "le" TIMESTAMP NOT NULL DEFAULT now(),
+      "traite" boolean NOT NULL DEFAULT false,
+      "traitePar" character varying,
+      "traiteLe" TIMESTAMP WITH TIME ZONE
+    )`);
+    for (const c of ['agentId', 'structureId', 'traite'])
+      await q.query(
+        `CREATE INDEX IF NOT EXISTS "IDX_signalement_terrain_${c}" ON "signalement_terrain" ("${c}")`,
+      );
     for (const [table, colonne] of [
       ['recenseur', 'campagneId'],
       ['modification_recensement', 'campagneId'],
