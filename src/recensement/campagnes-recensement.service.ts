@@ -119,13 +119,15 @@ export class CampagnesRecensementService {
 
   /** Ouvrir un recensement (un seul ouvert à la fois). */
   async creer(u: UtilisateurConnecte, s: SaisieCampagne) {
+    // (ce qui est mal rempli d'abord : c'est ce que la personne corrige dans le formulaire)
+    const saisie = this.propre(s);
     const deja = await this.ouverte();
     if (deja)
       throw new BadRequestException(
         `Le recensement « ${deja.nom} » est encore ouvert : clôturez-le d’abord (un seul recensement ouvert à la fois, pour que chaque donnée soit rangée sous un seul).`,
       );
     const c = await this.repo.save(
-      this.repo.create({ ...this.propre(s), creePar: u.nom }),
+      this.repo.create({ ...saisie, creePar: u.nom }),
     );
     await this.journal.log(
       u,

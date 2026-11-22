@@ -39,7 +39,10 @@ export class RecenseursController {
   /** Créer un ou plusieurs recenseurs (un nom par ligne), avec leurs départements et leurs dates. */
   @Roles(...ROLES_CONTROLE)
   @Post()
-  creer(@Utilisateur() u: UtilisateurConnecte, @Body() corps: SaisieRecenseurs) {
+  creer(
+    @Utilisateur() u: UtilisateurConnecte,
+    @Body() corps: SaisieRecenseurs,
+  ) {
     return this.service.creer(u, corps ?? ({} as SaisieRecenseurs));
   }
 

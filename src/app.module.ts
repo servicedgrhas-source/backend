@@ -20,6 +20,7 @@ import { ControleEffectifsService } from './recensement/controle-effectifs.servi
 import { SansEcoleController } from './recensement/sans-ecole.controller';
 import { CampagnesRecensementController } from './recensement/campagnes-recensement.controller';
 import { CampagnesRecensementService } from './recensement/campagnes-recensement.service';
+import { ConstatsTerrainService } from './recensement/constats-terrain.service';
 import { RecenseursController } from './recensement/recenseurs.controller';
 import { RecenseursService } from './recensement/recenseurs.service';
 import { TerrainController } from './recensement/terrain.controller';
@@ -252,6 +253,7 @@ import { ReferentielsService } from './referentiels/referentiels.service';
     TerrainService,
     RecenseursService,
     CampagnesRecensementService,
+    ConstatsTerrainService,
     NomsEcolesService,
     NomEcoleSubscriber,
     BottinService,

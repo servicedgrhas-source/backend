@@ -6,7 +6,10 @@ import {
   ParseIntPipe,
   Post,
   Put,
+  Query,
+  Res,
 } from '@nestjs/common';
+import type { Response } from 'express';
 import {
   Roles,
   ROLES_CONTROLE,
@@ -14,6 +17,7 @@ import {
   Utilisateur,
   type UtilisateurConnecte,
 } from '../auth/auth';
+import { ConstatsTerrainService } from './constats-terrain.service';
 import {
   CampagnesRecensementService,
   type SaisieCampagne,
@@ -23,11 +27,42 @@ import {
 @Roles(...ROLES_TRAITEMENT, 'DDEPPSA')
 @Controller('recensement/campagnes')
 export class CampagnesRecensementController {
-  constructor(private readonly service: CampagnesRecensementService) {}
+  constructor(
+    private readonly service: CampagnesRecensementService,
+    private readonly constats: ConstatsTerrainService,
+  ) {}
 
   @Get()
   liste() {
     return this.service.liste();
+  }
+
+  /** Le bilan du recensement, département par département (écoles, agents vus, non vus). */
+  @Get(':id/bilan')
+  bilan(@Param('id', ParseIntPipe) id: number) {
+    return this.constats.bilan(id);
+  }
+
+  /** Le bilan en Excel : synthèse, agents non vus (à vérifier), tous les constats (avec la distance du recenseur à l’école). */
+  @Get(':id/bilan.xlsx')
+  async bilanExcel(
+    @Param('id', ParseIntPipe) id: number,
+    @Res() res: Response,
+    @Query('departement') departement?: string,
+  ) {
+    const f = await this.constats.bilanExcel(
+      id,
+      departement ? Number(departement) || undefined : undefined,
+    );
+    res.setHeader(
+      'Content-Type',
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    );
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename="${f.nom.replace(/[^ -~]/g, '_')}"; filename*=UTF-8''${encodeURIComponent(f.nom)}`,
+    );
+    res.send(f.contenu);
   }
 
   @Roles(...ROLES_CONTROLE)

@@ -1792,6 +1792,78 @@ export class SignalementTerrain {
 }
 
 /**
+ * Ce que l'équipe de terrain a constaté pour un agent, dans une école, pendant un recensement
+ * (campagneId 0 : hors recensement). Le dernier constat de chaque école compte. Le bilan du
+ * recensement en tire qui a été vu (présent, absent et pourquoi…) et qui ne l'a jamais été.
+ */
+@Entity('constat_agent')
+@Index(['campagneId', 'agentId', 'structureId'], { unique: true })
+export class ConstatAgent {
+  @PrimaryGeneratedColumn() id: number;
+  @Column({ type: 'int', default: 0 }) campagneId: number;
+  @Index() @Column({ type: 'int' }) agentId: number;
+  @Index() @Column({ type: 'int' }) structureId: number;
+  /** PRESENT, ABSENT, PARTI, INCONNU, DECEDE, DOUBLON, AUSSI_ICI. */
+  @Column() presence: string;
+  /** Le motif ou la précision (congé, maladie, muté, abandon de poste…). */
+  @Column({ type: 'text', nullable: true }) observation: string | null;
+  @Column({ type: 'varchar', nullable: true }) par: string | null;
+  @Column({ type: 'uuid', nullable: true }) utilisateurId: string | null;
+  @Column({ type: 'timestamptz', default: () => 'now()' }) le: Date;
+}
+
+/**
+ * Ce que l'équipe constate sur une école (fermée, introuvable, autre nom, responsable trouvé…),
+ * « école terminée », ou une école absente de la liste qu'elle signale (structureId vide,
+ * proposition remplie). La DGRHAS vérifie puis marque « traité ».
+ */
+@Entity('constat_ecole')
+@Index(['campagneId', 'structureId'], {
+  unique: true,
+  where: '"structureId" IS NOT NULL',
+})
+export class ConstatEcole {
+  @PrimaryGeneratedColumn() id: number;
+  @Column({ type: 'int', default: 0 }) campagneId: number;
+  @Column({ type: 'int', nullable: true }) structureId: number | null;
+  /** FONCTIONNE, FERMEE, INTROUVABLE, DEMENAGEE, AUTRE. */
+  @Column({ type: 'varchar', nullable: true }) etat: string | null;
+  @Column({ type: 'varchar', nullable: true }) nomSurPlace: string | null;
+  @Column({ type: 'varchar', nullable: true }) responsable: string | null;
+  @Column({ type: 'varchar', nullable: true }) telephone: string | null;
+  @Column({ type: 'text', nullable: true }) observation: string | null;
+  /** École absente de la liste : nom, cycle, localité, département, position, agents sur place. */
+  @Column({ type: 'jsonb', nullable: true }) proposition: Record<
+    string,
+    unknown
+  > | null;
+  @Column({ type: 'timestamptz', nullable: true }) termineeLe: Date | null;
+  @Column({ type: 'varchar', nullable: true }) par: string | null;
+  @Column({ type: 'uuid', nullable: true }) utilisateurId: string | null;
+  @Column({ type: 'timestamptz', default: () => 'now()' }) le: Date;
+  @Index() @Column({ default: false }) traite: boolean;
+  @Column({ type: 'varchar', nullable: true }) traitePar: string | null;
+  @Column({ type: 'timestamptz', nullable: true }) traiteLe: Date | null;
+}
+
+/** Un envoi du terrain déjà appliqué (réseau coupé avant la réponse : le renvoi ne refait rien). */
+@Entity('envoi_terrain')
+export class EnvoiTerrain {
+  @PrimaryColumn({ type: 'varchar', length: 64 }) cle: string;
+  @Column({ type: 'jsonb' }) resultat: Record<string, unknown>;
+  @Column({ type: 'timestamptz', default: () => 'now()' }) le: Date;
+}
+
+/** Clé de secours d'un appareil : code oublié, le mot de passe du compte rouvre ses données. */
+@Entity('cle_terrain')
+export class CleTerrain {
+  @PrimaryColumn('uuid') utilisateurId: string;
+  @PrimaryColumn({ type: 'varchar', length: 64 }) appareil: string;
+  @Column() cle: string;
+  @CreateDateColumn({ type: 'timestamptz' }) creeLe: Date;
+}
+
+/**
  * Un recensement (DG, 22/11/2026 : « ouvrir un recensement ») : son nom, l'année, l'année scolaire,
  * le début et la fin (facultative). Tout ce qu'il produit (agents ajoutés, fiches modifiées,
  * signalements du terrain, recenseurs) est rangé sous lui : on sait d'où viennent les données.
@@ -2237,6 +2309,10 @@ export class PiecePrestation {
 export const ENTITES = [
   Utilisateur,
   CampagneRecensement,
+  ConstatAgent,
+  ConstatEcole,
+  EnvoiTerrain,
+  CleTerrain,
   Recenseur,
   PositionRecenseur,
   EvenementSecurite,

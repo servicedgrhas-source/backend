@@ -231,8 +231,12 @@ export class AuthGuard implements CanActivate {
     // et positions GPS, juste avant l'effacement) et l'accusé « c'est effacé »
     if (
       req.user.role === 'RECENSEUR' &&
-      !/^\/api\/recensement\/terrain\/(mission\/efface|envoyer|ecole\/\d+\/batiments)$/.test(req.path) &&
-      !/^\/api\/etablissements\/\d+\/(batiments\/\d+\/)?localisation$/.test(req.path) &&
+      !/^\/api\/recensement\/terrain\/(mission\/efface|envoyer|ecole\/\d+\/(batiments|constat)|ecoles-signalees)$/.test(
+        req.path,
+      ) &&
+      !/^\/api\/etablissements\/\d+\/(batiments\/\d+\/)?localisation$/.test(
+        req.path,
+      ) &&
       (await this.sessions.effacementDemande(req.user.id))
     )
       throw effacerAppareil();

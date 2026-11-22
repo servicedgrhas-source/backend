@@ -14,6 +14,11 @@ import {
   Utilisateur,
   type UtilisateurConnecte,
 } from '../auth/auth';
+import {
+  ConstatsTerrainService,
+  type SaisieConstatEcole,
+  type SaisiePropositionEcole,
+} from './constats-terrain.service';
 import { RecenseursService } from './recenseurs.service';
 import { type ModificationTerrain, TerrainService } from './terrain.service';
 
@@ -24,6 +29,7 @@ export class TerrainController {
   constructor(
     private readonly service: TerrainService,
     private readonly recenseurs: RecenseursService,
+    private readonly constats: ConstatsTerrainService,
   ) {}
 
   /** La mission du compte (recenseur) : départements, fin, jour de l'effacement de l'appareil. */
@@ -37,7 +43,10 @@ export class TerrainController {
   @HttpCode(200)
   positions(
     @Utilisateur() u: UtilisateurConnecte,
-    @Body() corps: { positions?: Parameters<RecenseursService['recevoirPositions']>[1] },
+    @Body()
+    corps: {
+      positions?: Parameters<RecenseursService['recevoirPositions']>[1];
+    },
   ) {
     return this.recenseurs.recevoirPositions(u, corps?.positions ?? []);
   }
@@ -106,19 +115,25 @@ export class TerrainController {
     return this.service.agent(u, id);
   }
 
-    /** Un bâtiment ou une annexe découvert sur place (nom, et sa position si prélevée). */
+  /** Un bâtiment ou une annexe découvert sur place (nom, et sa position si prélevée). */
   @Post('ecole/:id/batiments')
   @HttpCode(200)
   ajouterBatiment(
     @Utilisateur() u: UtilisateurConnecte,
     @Param('id', ParseIntPipe) id: number,
     @Body()
-    corps: { nom?: unknown; type?: unknown; latitude?: unknown; longitude?: unknown; precision?: unknown },
+    corps: {
+      nom?: unknown;
+      type?: unknown;
+      latitude?: unknown;
+      longitude?: unknown;
+      precision?: unknown;
+    },
   ) {
     return this.service.ajouterBatiment(u, id, corps ?? {});
   }
 
-    /** L'annuaire d'un département (recherche d'un agent sans réseau). */
+  /** L'annuaire d'un département (recherche d'un agent sans réseau). */
   @Get('annuaire/:departement')
   annuaire(
     @Utilisateur() u: UtilisateurConnecte,
@@ -152,6 +167,71 @@ export class TerrainController {
     @Param('id', ParseIntPipe) id: number,
   ) {
     return this.service.traiter(u, id);
+  }
+
+  /** Ce que l'équipe constate sur l'école (fermée, introuvable, autre nom…), « école terminée ». */
+  @Post('ecole/:id/constat')
+  @HttpCode(200)
+  constatEcole(
+    @Utilisateur() u: UtilisateurConnecte,
+    @Param('id', ParseIntPipe) id: number,
+    @Body() corps: SaisieConstatEcole,
+  ) {
+    return this.constats.ecole(u, id, corps ?? {});
+  }
+
+  /** Une école trouvée sur place mais absente de la liste : signalée à la DGRHAS. */
+  @Post('ecoles-signalees')
+  @HttpCode(200)
+  proposerEcole(
+    @Utilisateur() u: UtilisateurConnecte,
+    @Body() corps: SaisiePropositionEcole,
+  ) {
+    return this.constats.proposer(u, corps ?? {});
+  }
+
+  /** À la DGRHAS : les constats sur les écoles à vérifier, et les écoles signalées. */
+  @Roles(...ROLES_TRAITEMENT, 'DDEPPSA')
+  @Get('constats-ecoles')
+  constatsEcoles(
+    @Utilisateur() u: UtilisateurConnecte,
+    @Query('traites') traites?: string,
+  ) {
+    return this.constats.liste(u, traites === '1');
+  }
+
+  @Roles(...ROLES_TRAITEMENT)
+  @Post('constats-ecoles/:id/traite')
+  @HttpCode(200)
+  traiterConstatEcole(
+    @Utilisateur() u: UtilisateurConnecte,
+    @Param('id', ParseIntPipe) id: number,
+  ) {
+    return this.constats.traiter(u, id);
+  }
+
+  /** Premier usage d'un appareil : sa clé de secours (une seule fois). */
+  @Post('cle-secours')
+  @HttpCode(200)
+  creerCleSecours(
+    @Utilisateur() u: UtilisateurConnecte,
+    @Body() corps: { appareil?: string },
+  ) {
+    return this.constats.creerCleSecours(u, String(corps?.appareil ?? ''));
+  }
+
+  /** Code de l'appareil oublié : le mot de passe du compte rend la clé de secours. */
+  @Post('cle-secours/recuperer')
+  @HttpCode(200)
+  recupererCleSecours(
+    @Utilisateur() u: UtilisateurConnecte,
+    @Body() corps: { appareil?: string; motDePasse?: string },
+  ) {
+    return this.constats.recupererCleSecours(
+      u,
+      String(corps?.appareil ?? ''),
+      String(corps?.motDePasse ?? ''),
+    );
   }
 
   @Post('envoyer')

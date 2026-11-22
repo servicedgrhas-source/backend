@@ -467,6 +467,10 @@ export class RecenseursService {
         nom: deps.find((d) => d.id === id)?.nom ?? '?',
       })),
       fin: r.fin,
+      // Le jour à Brazzaville (la date d'une tablette peut être fausse)
+      aujourdhui: new Date().toLocaleDateString('en-CA', {
+        timeZone: 'Africa/Brazzaville',
+      }),
       // Le recensement pour lequel il travaille (affiché sur sa tablette)
       campagne:
         (

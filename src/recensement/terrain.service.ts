@@ -3,6 +3,7 @@ import {
   ForbiddenException,
   HttpException,
   Injectable,
+  Logger,
   NotFoundException,
   OnApplicationBootstrap,
 } from '@nestjs/common';
@@ -17,6 +18,12 @@ import {
 } from '../common/recherche-souple';
 import { JournalService } from '../core/core.service';
 import { EtablissementsService } from '../etablissements/etablissements.service';
+import { createHash } from 'crypto';
+import {
+  CAMPAGNE_OUVERTE_SQL,
+  ConstatsTerrainService,
+  PRESENCES_CONSTAT,
+} from './constats-terrain.service';
 import { auteurDe, RecensementService } from './recensement.service';
 
 /**
@@ -39,6 +46,10 @@ const SELECT_INDEX = `SELECT a.id, a."nomComplet", a.statut, a.matricule, a."str
            FROM agent_recense a LEFT JOIN structure s ON s.id = a."structureId"`;
 const SUR_LES_TABLETTES = `coalesce(contentieux->>'etat', 'CONFIRME') <> 'REJETE'`;
 const EN_CONTROLE = `coalesce(contentieux->>'etat', 'CONFIRME') IN ('EN_COURS', 'CONTROLE')`;
+/** Le constat déjà fait pour l'agent, dans son école, pendant le recensement ouvert. */
+const CONSTAT_DE_L_AGENT = `(SELECT jsonb_build_object('presence', k.presence, 'observation', k.observation, 'par', k.par, 'le', k.le)
+     FROM constat_agent k WHERE k."agentId" = agent_recense.id AND k."structureId" = agent_recense."structureId"
+      AND k."campagneId" = ${CAMPAGNE_OUVERTE_SQL}) AS constat`;
 
 export const COLONNES_TERRAIN = [
   'NOMS_PRENOMS',
@@ -68,10 +79,20 @@ export interface ModificationTerrain {
   /** L'agent travaille dans cette école (rattachement). */
   structureId?: number | null;
   /** Ce que l'équipe constate : présent, absent ce jour, parti, inconnu ici. */
-  presence?: 'PRESENT' | 'ABSENT' | 'PARTI' | 'INCONNU' | 'DOUBLON' | null;
+  presence?:
+    | 'PRESENT'
+    | 'ABSENT'
+    | 'PARTI'
+    | 'INCONNU'
+    | 'DECEDE'
+    | 'DOUBLON'
+    | 'AUSSI_ICI'
+    | null;
   /** L'école où l'équipe travaille (pour un signalement). */
   ecoleId?: number | null;
   observation?: string | null;
+  /** Quand l'équipe a fait le constat (heure de l'appareil ; il peut partir bien plus tard). */
+  constateLe?: string | null;
   /** « Ce n'est pas lui » : créer quand même, malgré un agent qui lui ressemble. */
   forcer?: boolean;
 }
@@ -89,13 +110,7 @@ export interface Semblable {
  * Ce que l'équipe constate devant un agent. DOUBLON : la même personne écrite deux fois dans la base
  * (deux lignes au même nom dans l'école) ; un signalement que la DGRHAS règle dans « Doublons probables ».
  */
-export const PRESENCES = [
-  'PRESENT',
-  'ABSENT',
-  'PARTI',
-  'INCONNU',
-  'DOUBLON',
-] as const;
+export const PRESENCES = PRESENCES_CONSTAT;
 
 @Injectable()
 export class TerrainService implements OnApplicationBootstrap {
@@ -113,7 +128,10 @@ export class TerrainService implements OnApplicationBootstrap {
     private readonly rec: RecensementService,
     private readonly ecoles: EtablissementsService,
     private readonly journal: JournalService,
+    private readonly constats: ConstatsTerrainService,
   ) {}
+
+  private readonly log = new Logger('Terrain');
 
   /** Index de recherche des agents (noms préparés), gardé deux minutes. */
   private index: {
@@ -476,12 +494,36 @@ export class TerrainService implements OnApplicationBootstrap {
       `SELECT s.id, md5(s.xmin::text || '|' ||
               coalesce((SELECT string_agg(a.id || ':' || a.xmin::text, ',' ORDER BY a.id) FROM agent_recense a
                          WHERE a."structureId" = s.id AND coalesce(a.contentieux->>'etat', 'CONFIRME') <> 'REJETE'), '') || '|' ||
-              coalesce((SELECT string_agg(b.id || ':' || b.xmin::text, ',' ORDER BY b.id) FROM batiment b WHERE b."structureId" = s.id), '')) AS e
+              coalesce((SELECT string_agg(b.id || ':' || b.xmin::text, ',' ORDER BY b.id) FROM batiment b WHERE b."structureId" = s.id), '') || '|' ||
+              coalesce((SELECT string_agg(k.id || ':' || k.xmin::text, ',' ORDER BY k.id) FROM constat_agent k WHERE k."structureId" = s.id AND k."campagneId" = ${CAMPAGNE_OUVERTE_SQL}), '') || '|' ||
+              coalesce((SELECT max(c.id || ':' || c.xmin::text) FROM constat_ecole c WHERE c."structureId" = s.id AND c."campagneId" = ${CAMPAGNE_OUVERTE_SQL}), '')) AS e
          FROM structure s
         WHERE s.actif AND s.type = 'ETABLISSEMENT' ${ids ? 'AND s.id = ANY($1)' : ''}`,
       ids ? [ids] : [],
     );
     return new Map(r.map((x) => [x.id, x.e]));
+  }
+
+  /** Ce qu'une équipe a déjà constaté sur ces écoles pendant le recensement ouvert (terminée…). */
+  private async constatsEcoles(ids: number[]) {
+    const r = await this.ds.query<
+      {
+        structureId: number;
+        etat: string | null;
+        nomSurPlace: string | null;
+        responsable: string | null;
+        telephone: string | null;
+        observation: string | null;
+        termineeLe: string | null;
+        par: string | null;
+        le: string;
+      }[]
+    >(
+      `SELECT "structureId", etat, "nomSurPlace", responsable, telephone, observation, "termineeLe", par, le
+         FROM constat_ecole WHERE "structureId" = ANY($1) AND "campagneId" = ${CAMPAGNE_OUVERTE_SQL}`,
+      [ids],
+    );
+    return new Map(r.map(({ structureId, ...c }) => [structureId, c]));
   }
 
   /** Les paquets de ces écoles (agents avec les colonnes du formulaire, bâtiments, GPS, chiffres). */
@@ -518,7 +560,7 @@ export class TerrainService implements OnApplicationBootstrap {
         >(
           `SELECT id, "structureId", "nomComplet", statut, matricule, (
                   SELECT coalesce(jsonb_object_agg(k, v), '{}'::jsonb) FROM jsonb_each(donnees) AS e(k, v) WHERE k = ANY($2)
-                ) AS donnees, ${EN_CONTROLE} AS "aControler"
+                ) AS donnees, ${EN_CONTROLE} AS "aControler", ${CONSTAT_DE_L_AGENT}
              FROM agent_recense
             WHERE "structureId" = ANY($1) AND ${SUR_LES_TABLETTES}
             ORDER BY "nomComplet"`,
@@ -566,6 +608,7 @@ export class TerrainService implements OnApplicationBootstrap {
     const nSalles = new Map(salles.map((x) => [x.s, x.n]));
     const nClasses = new Map(classes.map((x) => [x.s, x.n]));
     const nomResp = new Map(responsables.map((x) => [x.id, x.nom]));
+    const constatsEcoles = await this.constatsEcoles(ids);
     const telechargeLe = new Date().toISOString();
     return ecoles.map((s) => ({
       telechargeLe,
@@ -587,6 +630,7 @@ export class TerrainService implements OnApplicationBootstrap {
         localiseLe: s.localiseLe,
         salles: nSalles.get(s.id) ?? 0,
         classes: nClasses.get(s.id) ?? 0,
+        constat: constatsEcoles.get(s.id) ?? null,
       },
       batiments: batParEcole.get(s.id) ?? [],
       agents: parEcole.get(s.id) ?? [],
@@ -931,7 +975,7 @@ export class TerrainService implements OnApplicationBootstrap {
         >(
           `SELECT id, "nomComplet", statut, matricule, (
                   SELECT coalesce(jsonb_object_agg(k, v), '{}'::jsonb) FROM jsonb_each(donnees) AS e(k, v) WHERE k = ANY($2)
-                ) AS donnees, "modifieLe", ${EN_CONTROLE} AS "aControler"
+                ) AS donnees, "modifieLe", ${EN_CONTROLE} AS "aControler", ${CONSTAT_DE_L_AGENT}
              FROM agent_recense
             WHERE "structureId" = $1 AND ${SUR_LES_TABLETTES}
             ORDER BY "nomComplet"`,
@@ -955,6 +999,7 @@ export class TerrainService implements OnApplicationBootstrap {
         localiseLe: s.localiseLe,
         salles: salles[0]?.n ?? 0,
         classes: classes[0]?.n ?? 0,
+        constat: (await this.constatsEcoles([id])).get(id) ?? null,
       },
       batiments,
       ...champs,
@@ -979,8 +1024,28 @@ export class TerrainService implements OnApplicationBootstrap {
       erreur?: string;
       semblables?: Semblable[];
     }[] = [];
+    // Un envoi rejoué (réseau coupé avant la réponse : la tablette renvoie la même ligne le même
+    // jour) rend le même résultat sans rien refaire : pas d'agent créé deux fois, pas de doublon de
+    // signalement
+    const jour = new Date().toLocaleDateString('en-CA', {
+      timeZone: 'Africa/Brazzaville',
+    });
+    const empreinte = (m: ModificationTerrain) =>
+      createHash('sha256')
+        .update(`${u.id}|${jour}|${JSON.stringify(m)}`)
+        .digest('hex');
     for (const m of liste) {
       const cle = String(m?.cle ?? '');
+      const cleEnvoi = empreinte(m);
+      const [deja] = await this.ds.query<{ resultat: { id?: number } }[]>(
+        `SELECT resultat FROM envoi_terrain WHERE cle = $1`,
+        [cleEnvoi],
+      );
+      if (deja) {
+        resultats.push({ cle, ok: true, id: deja.resultat.id });
+        continue;
+      }
+      const avant = resultats.length;
       try {
         const donnees: Record<string, unknown> | undefined =
           m.donnees && typeof m.donnees === 'object'
@@ -993,6 +1058,21 @@ export class TerrainService implements OnApplicationBootstrap {
           throw new BadRequestException(
             'Cette fiche n’existe plus dans la base (fusionnée avec une autre ou supprimée par la DGRHAS). Retirez cette ligne, puis cherchez l’agent à nouveau.',
           );
+        // Ce que l'équipe a constaté est gardé (bilan du recensement : qui a été vu, et comment)
+        const ecoleConstat = Number(m.ecoleId ?? m.structureId) || null;
+        const observation = m.observation
+          ? String(m.observation).replace(/\s+/g, ' ').trim().slice(0, 500) ||
+            null
+          : null;
+        if (presence && m.agentId && ecoleConstat)
+          await this.constats.noterAgent(
+            u,
+            Number(m.agentId),
+            ecoleConstat,
+            presence,
+            observation,
+            m.constateLe,
+          );
         // Présent : « Présence au poste : Oui » ; absent, parti, inconnu : un signalement à traiter
         if (presence === 'PRESENT' && m.agentId)
           Object.assign(donnees ?? (m.donnees = {}), { PRESENCE_POSTE: 'OUI' });
@@ -1003,16 +1083,15 @@ export class TerrainService implements OnApplicationBootstrap {
           await this.ds.query(
             `INSERT INTO signalement_terrain ("agentId", "structureId", etat, observation, par, "campagneId")
              VALUES ($1, $2, $3, $4, $5, (SELECT id FROM campagne_recensement WHERE "clotureLe" IS NULL ORDER BY debut DESC, id DESC LIMIT 1))`,
-            [
-              Number(m.agentId),
-              ecole,
-              presence,
-              m.observation ? String(m.observation).slice(0, 500) : null,
-              auteurDe(u),
-            ],
+            [Number(m.agentId), ecole, presence, observation, auteurDe(u)],
           );
           if (!donnees || !Object.keys(donnees).length) {
             resultats.push({ cle, ok: true, id: Number(m.agentId) });
+            // (gardé : un renvoi ne refait pas le signalement)
+            await this.ds.query(
+              `INSERT INTO envoi_terrain (cle, resultat) VALUES ($1, $2) ON CONFLICT (cle) DO NOTHING`,
+              [cleEnvoi, JSON.stringify({ id: Number(m.agentId) })],
+            );
             continue;
           }
         }
@@ -1087,23 +1166,46 @@ export class TerrainService implements OnApplicationBootstrap {
           })) as { id?: number } | undefined;
           // Tout de suite reconnu par les autres équipes (pas de doublon dans les minutes qui suivent)
           if (r?.id) await this.ajouterALIndex(r.id);
+          // Ajouté sur place : l'équipe l'a vu (présent) dans cette école
+          if (r?.id && m.structureId)
+            await this.constats.noterAgent(
+              u,
+              r.id,
+              Number(m.structureId),
+              'PRESENT',
+              null,
+            );
           resultats.push({ cle, ok: true, id: r?.id });
         }
       } catch (e) {
+        // Une erreur de la base (valeur impossible…) : jamais de message technique en anglais
         const message =
-          e instanceof HttpException ||
-          e instanceof NotFoundException ||
-          e instanceof ForbiddenException
+          e instanceof HttpException
             ? ((e.getResponse() as { message?: string | string[] })?.message ??
               e.message)
-            : (e as Error).message;
+            : 'Une valeur de cette ligne n’est pas acceptée (une date, un nombre ou un choix mal écrit). Vérifiez la ligne puis renvoyez ; si cela recommence, prévenez la DGRHAS.';
+        if (!(e instanceof HttpException))
+          this.log.warn(
+            `Envoi du terrain refusé (${u.email}, ligne ${cle}) : ${(e as Error).message}`,
+          );
         resultats.push({
           cle,
           ok: false,
           erreur: Array.isArray(message) ? message.join(' ; ') : message,
         });
       }
+      const r = resultats[avant];
+      if (r?.ok)
+        await this.ds.query(
+          `INSERT INTO envoi_terrain (cle, resultat) VALUES ($1, $2) ON CONFLICT (cle) DO NOTHING`,
+          [cleEnvoi, JSON.stringify({ id: r.id ?? null })],
+        );
     }
+    // (les envois de plus de 30 jours ne servent plus à rien)
+    if (Math.random() < 0.02)
+      await this.ds.query(
+        `DELETE FROM envoi_terrain WHERE le < now() - interval '30 days'`,
+      );
     await this.journal.log(u, 'RECENSEMENT_TERRAIN', 'agent_recense', null, {
       envoyees: liste.length,
       faites: resultats.filter((r) => r.ok).length,
