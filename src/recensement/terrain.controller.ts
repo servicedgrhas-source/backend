@@ -225,6 +225,23 @@ export class TerrainController {
     return this.constats.liste(u, traites === '1');
   }
 
+  /** Le contrôle décide : appliquer la correction de l'école, la refuser (motif), ou « vu ». */
+  @Roles(...ROLES_TRAITEMENT)
+  @Post('constats-ecoles/:id/decision')
+  @HttpCode(200)
+  deciderConstatEcole(
+    @Utilisateur() u: UtilisateurConnecte,
+    @Param('id', ParseIntPipe) id: number,
+    @Body() corps: { decision?: string; motif?: string },
+  ) {
+    return this.constats.decider(
+      u,
+      id,
+      String(corps?.decision ?? ''),
+      corps?.motif,
+    );
+  }
+
   @Roles(...ROLES_TRAITEMENT)
   @Post('constats-ecoles/:id/traite')
   @HttpCode(200)

@@ -1,10 +1,20 @@
-import { Body, Controller, Get, Param, Post, Query } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  ForbiddenException,
+  Get,
+  Param,
+  Post,
+  Query,
+} from '@nestjs/common';
 import { IsIn, IsOptional, IsString, MaxLength } from 'class-validator';
 import {
   Roles,
   ROLES_TRAITEMENT,
   Utilisateur,
   type UtilisateurConnecte,
+  saisieSeule,
+  MESSAGE_SAISIE_SEULE,
 } from '../auth/auth';
 import { DoublonsCentralService } from './doublons-central.service';
 
@@ -31,10 +41,13 @@ export class DoublonsController {
 
   @Get(':base')
   paires(
+    @Utilisateur() u: UtilisateurConnecte,
     @Param('base') base: string,
     @Query('page') page?: string,
     @Query('campagne') campagne?: string,
   ) {
+    // (compte de saisie seule : il ne tranche rien, il ne voit pas les paires à trancher)
+    if (saisieSeule(u)) throw new ForbiddenException(MESSAGE_SAISIE_SEULE);
     return this.service.paires(
       base,
       Math.max(1, Number(page) || 1),
@@ -44,7 +57,12 @@ export class DoublonsController {
   }
 
   @Get(':base/:id')
-  candidats(@Param('base') base: string, @Param('id') id: string) {
+  candidats(
+    @Utilisateur() u: UtilisateurConnecte,
+    @Param('base') base: string,
+    @Param('id') id: string,
+  ) {
+    if (saisieSeule(u)) throw new ForbiddenException(MESSAGE_SAISIE_SEULE);
     return this.service.candidats(base, id);
   }
 

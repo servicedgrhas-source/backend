@@ -173,6 +173,16 @@ export const ROLES_CONTROLE: Role[] = [
   'DG',
 ];
 
+/**
+ * Compte de saisie seule (DG, 23/11/2026 : « l'opérateur de saisie ne saisit que l'enrôlement ») :
+ * un compte vide qui ne peut ni contrôler ni décider. Il ne voit que les dossiers « à contrôler »,
+ * jamais ce qui est à trancher, à décider, retenu ou non retenu.
+ */
+export const saisieSeule = (u: { compteVide?: boolean; role: string }) =>
+  !!u.compteVide && !(ROLES_CONTROLE as string[]).includes(u.role);
+export const MESSAGE_SAISIE_SEULE =
+  'Votre compte saisit les dossiers : il ne voit que l’étape « À contrôler ».';
+
 @Injectable()
 export class AuthGuard implements CanActivate {
   constructor(

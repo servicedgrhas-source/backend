@@ -10,6 +10,7 @@ import * as bcrypt from 'bcryptjs';
 import { randomBytes } from 'crypto';
 import ExcelJS from 'exceljs';
 import { DataSource } from 'typeorm';
+import { Structure } from '../entities';
 import type { UtilisateurConnecte } from '../auth/auth';
 import { JournalService } from '../core/core.service';
 import { auteurDe, RecensementService } from './recensement.service';
@@ -72,7 +73,29 @@ export interface SaisieConstatEcole {
   observation?: string | null;
   /** L'équipe a fini cette école (true), ou la rouvre (false). */
   terminee?: boolean;
+  /**
+   * La base se trompe sur l'école : ce qui est vu sur place (localité, département, inspection,
+   * cycle), et la position de l'équipe. Proposé au contrôle, jamais appliqué directement.
+   */
+  correction?: {
+    localite?: string | null;
+    departementId?: number | null;
+    inspectionId?: number | null;
+    cycle?: string | null;
+    latitude?: number | null;
+    longitude?: number | null;
+    precision?: number | null;
+  } | null;
 }
+
+/** Cycles d'une école (ceux de l'organigramme). */
+const CYCLES_ECOLE_TERRAIN: Record<string, string> = {
+  PRESCOLAIRE: 'Préscolaire',
+  PRIMAIRE: 'Primaire',
+  COLLEGE: 'Collège',
+  LYCEE: 'Lycée',
+  ALPHABETISATION: 'Alphabétisation',
+};
 
 export interface SaisiePropositionEcole {
   nom?: string;
@@ -144,13 +167,23 @@ export class ConstatsTerrainService {
     ]);
     if (!e || e.type !== 'ETABLISSEMENT')
       throw new NotFoundException('École introuvable.');
+    const correction = await this.lireCorrection(s.correction, ecoleId);
     if (
       !('tous' in p) &&
       ('departementId' in p
         ? p.departementId !== e.departementId
         : !p.structures.includes(ecoleId))
-    )
-      throw new ForbiddenException('Cette école n’est pas dans votre mission.');
+    ) {
+      // La base la met ailleurs, mais l'équipe est devant, dans un département de sa mission
+      const ici =
+        u.role === 'RECENSEUR' &&
+        typeof correction?.departementId === 'number' &&
+        (await this.missionDe(u)).includes(correction.departementId);
+      if (!ici)
+        throw new ForbiddenException(
+          'Cette école n’est pas dans votre mission.',
+        );
+    }
     const etat = s.etat ? String(s.etat) : null;
     if (etat && !(etat in ETATS_ECOLE))
       throw new BadRequestException('État de l’école inconnu.');
@@ -164,12 +197,13 @@ export class ConstatsTerrainService {
       !!nomSurPlace ||
       !!responsable ||
       !!telephone ||
-      !!observation;
+      !!observation ||
+      !!correction;
     const terminee =
       s.terminee === undefined ? null : s.terminee ? 'now()' : 'NULL';
     await this.ds.query(
-      `INSERT INTO constat_ecole ("campagneId", "structureId", etat, "nomSurPlace", responsable, telephone, observation, "termineeLe", par, "utilisateurId", le, traite)
-       VALUES (${CAMPAGNE_OUVERTE_SQL}, $1, $2, $3, $4, $5, $6, ${terminee ?? 'NULL'}, $7, $8, now(), $9)
+      `INSERT INTO constat_ecole ("campagneId", "structureId", etat, "nomSurPlace", responsable, telephone, observation, "termineeLe", par, "utilisateurId", le, traite, correction)
+       VALUES (${CAMPAGNE_OUVERTE_SQL}, $1, $2, $3, $4, $5, $6, ${terminee ?? 'NULL'}, $7, $8, now(), $9, $10::jsonb)
        ON CONFLICT ("campagneId", "structureId") WHERE "structureId" IS NOT NULL
        DO UPDATE SET etat = coalesce(EXCLUDED.etat, constat_ecole.etat),
                      "nomSurPlace" = coalesce(EXCLUDED."nomSurPlace", constat_ecole."nomSurPlace"),
@@ -178,6 +212,8 @@ export class ConstatsTerrainService {
                      observation = coalesce(EXCLUDED.observation, constat_ecole.observation),
                      "termineeLe" = ${terminee === null ? 'constat_ecole."termineeLe"' : terminee},
                      par = EXCLUDED.par, "utilisateurId" = EXCLUDED."utilisateurId", le = now(),
+                     correction = coalesce(EXCLUDED.correction, constat_ecole.correction),
+                     decision = CASE WHEN EXCLUDED.correction IS NOT NULL THEN NULL ELSE constat_ecole.decision END,
                      traite = CASE WHEN $9 THEN constat_ecole.traite ELSE false END`,
       [
         ecoleId,
@@ -189,9 +225,112 @@ export class ConstatsTerrainService {
         auteurDe(u),
         u.id,
         !aVerifier,
+        correction ? JSON.stringify(correction) : null,
       ],
     );
     return { ok: true };
+  }
+
+  /** Les départements de la mission d'un recenseur. */
+  private async missionDe(u: UtilisateurConnecte): Promise<number[]> {
+    const [r] = await this.ds.query<{ departements: number[] }[]>(
+      `SELECT departements FROM recenseur WHERE "utilisateurId" = $1`,
+      [u.id],
+    );
+    return r?.departements ?? [];
+  }
+
+  /**
+   * Ce que l'équipe dit de faux dans la base sur l'école, vérifié : seulement ce qui diffère de la
+   * base, avec ce que disait la base (« avant »). Rien de différent : pas de correction.
+   */
+  private async lireCorrection(
+    c: SaisieConstatEcole['correction'],
+    ecoleId: number,
+  ) {
+    if (!c || typeof c !== 'object') return null;
+    const [s] = await this.ds.query<
+      {
+        localite: string | null;
+        departementId: number | null;
+        parentId: number | null;
+        cycle: string | null;
+      }[]
+    >(
+      `SELECT localite, "departementId", "parentId", cycle FROM structure WHERE id = $1`,
+      [ecoleId],
+    );
+    if (!s) return null;
+    const out: {
+      localite?: string;
+      departementId?: number;
+      inspectionId?: number;
+      cycle?: string;
+      latitude?: number;
+      longitude?: number;
+      precision?: number;
+      avant: Record<string, unknown>;
+    } = {
+      avant: {
+        localite: s.localite,
+        departementId: s.departementId,
+        inspectionId: s.parentId,
+        cycle: s.cycle,
+      },
+    };
+    const meme = (a: string | null | undefined, b: string | null | undefined) =>
+      (a ?? '').trim().toUpperCase() === (b ?? '').trim().toUpperCase();
+    const localite = texte(c.localite, 120);
+    if (localite && !meme(localite, s.localite)) out.localite = localite;
+    const dep = nombreOuNull(c.departementId);
+    if (dep !== null && dep !== s.departementId) {
+      const [d] = await this.ds.query<{ id: number }[]>(
+        `SELECT id FROM departement WHERE id = $1`,
+        [dep],
+      );
+      if (!d) throw new BadRequestException('Département inconnu.');
+      out.departementId = dep;
+    }
+    const insp = nombreOuNull(c.inspectionId);
+    if (insp !== null && insp !== s.parentId) {
+      const [i] = await this.ds.query<{ departementId: number | null }[]>(
+        `SELECT "departementId" FROM structure WHERE id = $1 AND type = 'INSPECTION'`,
+        [insp],
+      );
+      if (!i) throw new BadRequestException('Inspection inconnue.');
+      if (i.departementId !== (out.departementId ?? s.departementId))
+        throw new BadRequestException(
+          'Cette inspection n’est pas dans le département de l’école.',
+        );
+      out.inspectionId = insp;
+    }
+    const cycle = c.cycle ? String(c.cycle) : null;
+    if (cycle && cycle !== s.cycle) {
+      if (!(cycle in CYCLES_ECOLE_TERRAIN))
+        throw new BadRequestException('Cycle inconnu.');
+      out.cycle = cycle;
+    }
+    if (
+      out.localite === undefined &&
+      out.departementId === undefined &&
+      out.inspectionId === undefined &&
+      out.cycle === undefined
+    )
+      return null;
+    const lat = nombreOuNull(c.latitude);
+    const lng = nombreOuNull(c.longitude);
+    if (
+      lat !== null &&
+      lng !== null &&
+      Math.abs(lat) <= 90 &&
+      Math.abs(lng) <= 180
+    ) {
+      out.latitude = lat;
+      out.longitude = lng;
+      const pr = nombreOuNull(c.precision);
+      if (pr !== null) out.precision = pr;
+    }
+    return out;
   }
 
   /** Une école que l'équipe a trouvée mais qui n'est pas dans la liste : la DGRHAS la crée. */
@@ -266,12 +405,18 @@ export class ConstatsTerrainService {
         par: string | null;
         le: string;
         campagne: string | null;
+        correction: Record<string, unknown> | null;
+        decision: string | null;
+        motif: string | null;
+        ecoleLat: number | null;
+        ecoleLng: number | null;
       }[]
     >(
       `SELECT c.id, c."structureId", s.nom AS ecole,
               coalesce(s."departementId", (c.proposition->>'departementId')::int) AS "departementId",
               c.etat, c."nomSurPlace", c.responsable, c.telephone, c.observation, c.proposition,
-              c."termineeLe", c.par, c.le, k.nom AS campagne
+              c."termineeLe", c.par, c.le, k.nom AS campagne, c.correction, c.decision, c.motif,
+              s.latitude AS "ecoleLat", s.longitude AS "ecoleLng"
          FROM constat_ecole c
          LEFT JOIN structure s ON s.id = c."structureId"
          LEFT JOIN campagne_recensement k ON k.id = c."campagneId"
@@ -279,18 +424,212 @@ export class ConstatsTerrainService {
         ORDER BY c.le DESC LIMIT 500`,
       [traites],
     );
+    // Les noms lisibles (départements, inspections) de ce que disent la base et l'équipe
+    const deps = new Map(
+      (
+        await this.ds.query<{ id: number; nom: string }[]>(
+          `SELECT id, nom FROM departement`,
+        )
+      ).map((d) => [d.id, d.nom]),
+    );
+    const idsInsp = [
+      ...new Set(
+        lignes.flatMap((l) => [
+          Number(l.correction?.inspectionId),
+          Number(
+            (l.correction?.avant as Record<string, unknown> | undefined)
+              ?.inspectionId,
+          ),
+        ]),
+      ),
+    ].filter((x) => Number.isInteger(x) && x > 0);
+    const insps = new Map(
+      (idsInsp.length
+        ? await this.ds.query<{ id: number; nom: string }[]>(
+            `SELECT id, nom FROM structure WHERE id = ANY($1)`,
+            [idsInsp],
+          )
+        : []
+      ).map((x) => [x.id, x.nom]),
+    );
+    const distanceKm = (a: number, b: number, c: number, d: number) => {
+      const r = (x: number) => (x * Math.PI) / 180;
+      const h =
+        Math.sin(r(c - a) / 2) ** 2 +
+        Math.cos(r(a)) * Math.cos(r(c)) * Math.sin(r(d - b) / 2) ** 2;
+      return 6371 * 2 * Math.asin(Math.sqrt(h));
+    };
+    const lisible = (k: string, v: unknown): string => {
+      if (v === null || v === undefined || v === '') return '';
+      const t =
+        typeof v === 'string' || typeof v === 'number'
+          ? String(v)
+          : JSON.stringify(v);
+      if (k === 'departementId') return deps.get(Number(v)) ?? `n° ${t}`;
+      if (k === 'inspectionId') return insps.get(Number(v)) ?? `n° ${t}`;
+      if (k === 'cycle') return CYCLES_ECOLE_TERRAIN[t] ?? t;
+      return t;
+    };
+    const LIBELLES: Record<string, string> = {
+      localite: 'Localité',
+      departementId: 'Département',
+      inspectionId: 'Inspection',
+      cycle: 'Cycle',
+    };
     return lignes
       .filter(
         (l) =>
           'tous' in p ||
           ('departementId' in p
-            ? l.departementId === p.departementId
+            ? l.departementId === p.departementId ||
+              Number(l.correction?.departementId) === p.departementId
             : l.structureId !== null && p.structures.includes(l.structureId)),
       )
-      .map((l) => ({
-        ...l,
-        etatLibelle: l.etat ? (ETATS_ECOLE[l.etat] ?? l.etat) : null,
-      }));
+      .map(({ correction, ecoleLat, ecoleLng, ...l }) => {
+        const avant = (correction?.avant ?? {}) as Record<string, unknown>;
+        const lat = Number(correction?.latitude);
+        const lng = Number(correction?.longitude);
+        return {
+          ...l,
+          etatLibelle: l.etat ? (ETATS_ECOLE[l.etat] ?? l.etat) : null,
+          // Ce que l'équipe propose de corriger : rubrique, base, vu sur place
+          corrections: correction
+            ? Object.keys(LIBELLES)
+                .filter((k) => correction[k] !== undefined)
+                .map((k) => ({
+                  code: k,
+                  libelle: LIBELLES[k],
+                  avant: lisible(k, avant[k]),
+                  apres: lisible(k, correction[k]),
+                }))
+            : [],
+          // Où était l'équipe : à combien de l'école (position connue dans la base)
+          distanceKm:
+            correction &&
+            Number.isFinite(lat) &&
+            Number.isFinite(lng) &&
+            ecoleLat !== null &&
+            ecoleLng !== null
+              ? Math.round(distanceKm(lat, lng, ecoleLat, ecoleLng) * 10) / 10
+              : null,
+          positionEquipe:
+            correction && Number.isFinite(lat) && Number.isFinite(lng)
+              ? { latitude: lat, longitude: lng }
+              : null,
+        };
+      });
+  }
+
+  /**
+   * Décision du contrôle sur ce qu'une équipe a dit d'une école :
+   * - APPLIQUER : la correction (localité, département, inspection, cycle) et le nom vu sur place
+   *   passent dans l'organigramme ; les fiches rattachées à l'école suivent ;
+   * - REFUSER : rien ne change, le motif est gardé (l'équipe le lit) ;
+   * - VU : rien à changer (école qui fonctionne, responsable noté…).
+   */
+  async decider(
+    u: UtilisateurConnecte,
+    id: number,
+    decision: string,
+    motif?: string,
+  ) {
+    if (!['APPLIQUER', 'REFUSER', 'VU'].includes(decision))
+      throw new BadRequestException(
+        'Décision attendue : appliquer, refuser ou vu.',
+      );
+    const [c] = await this.ds.query<
+      {
+        id: number;
+        structureId: number | null;
+        correction: Record<string, unknown> | null;
+        nomSurPlace: string | null;
+      }[]
+    >(
+      `SELECT id, "structureId", correction, "nomSurPlace" FROM constat_ecole WHERE id = $1 AND NOT traite`,
+      [id],
+    );
+    if (!c) throw new NotFoundException('Constat introuvable ou déjà traité.');
+    const m = texte(motif, 500);
+    if (decision === 'REFUSER' && !m)
+      throw new BadRequestException(
+        'Dites pourquoi vous refusez : l’équipe le lira.',
+      );
+    let fiches = 0;
+    if (decision === 'APPLIQUER') {
+      if (!c.structureId)
+        throw new BadRequestException(
+          'Une école absente de la liste se crée dans Structures › Écoles ; marquez ensuite « Vu ».',
+        );
+      const k = c.correction ?? {};
+      const repo = this.ds.getRepository(Structure);
+      const s = await repo.findOne({ where: { id: c.structureId } });
+      if (!s) throw new NotFoundException('École introuvable.');
+      const changes: string[] = [];
+      if (typeof k.localite === 'string') {
+        s.localite = k.localite;
+        changes.push('localité');
+      }
+      if (typeof k.departementId === 'number') {
+        s.departementId = k.departementId;
+        changes.push('département');
+      }
+      if (typeof k.inspectionId === 'number') {
+        s.parentId = k.inspectionId;
+        changes.push('inspection');
+      }
+      if (typeof k.cycle === 'string') {
+        s.cycle = k.cycle;
+        changes.push('cycle');
+      }
+      if (
+        c.nomSurPlace &&
+        c.nomSurPlace.trim().toUpperCase() !== s.nom.trim().toUpperCase()
+      ) {
+        s.anciensNoms = [...new Set([...(s.anciensNoms ?? []), s.nom])];
+        s.nom = c.nomSurPlace.trim();
+        changes.push('nom');
+      }
+      if (!changes.length)
+        throw new BadRequestException(
+          'Rien à appliquer sur cette école : marquez-la « Vu ».',
+        );
+      // (enregistrée normalement : le nom reprend le préfixe de son cycle, EP, CEG…)
+      await repo.save(s);
+      fiches = await this.rec.realignerSurEcole(c.structureId, u.nom);
+      await this.journal.log(
+        u,
+        'ECOLE_CORRIGEE_RECENSEMENT',
+        'structure',
+        String(c.structureId),
+        {
+          constat: id,
+          changes,
+          fiches,
+        },
+      );
+    }
+    await this.ds.query(
+      `UPDATE constat_ecole SET traite = true, "traitePar" = $2, "traiteLe" = now(), decision = $3, motif = $4 WHERE id = $1`,
+      [
+        id,
+        u.nom,
+        decision === 'APPLIQUER'
+          ? 'APPLIQUEE'
+          : decision === 'REFUSER'
+            ? 'REFUSEE'
+            : 'VUE',
+        decision === 'REFUSER' ? m : null,
+      ],
+    );
+    if (decision !== 'APPLIQUER')
+      await this.journal.log(
+        u,
+        'CONSTAT_ECOLE_TRAITE',
+        'constat_ecole',
+        String(id),
+        { decision },
+      );
+    return { ok: true, fiches };
   }
 
   async traiter(u: UtilisateurConnecte, id: number) {

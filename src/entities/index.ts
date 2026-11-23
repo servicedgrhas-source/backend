@@ -1844,6 +1844,19 @@ export class ConstatEcole {
   @Index() @Column({ default: false }) traite: boolean;
   @Column({ type: 'varchar', nullable: true }) traitePar: string | null;
   @Column({ type: 'timestamptz', nullable: true }) traiteLe: Date | null;
+  /**
+   * La base se trompe sur l'école (DG, 23/11/2026) : la vraie localité, le vrai département,
+   * l'inspection, le cycle, vus sur place ; avec ce que disait la base (« avant ») et la position
+   * de l'équipe. Rien n'est changé avant la décision du contrôle.
+   */
+  @Column({ type: 'jsonb', nullable: true }) correction: Record<
+    string,
+    unknown
+  > | null;
+  /** Décision du contrôle : APPLIQUEE, REFUSEE, VUE (rien à changer). */
+  @Column({ type: 'varchar', nullable: true }) decision: string | null;
+  /** Motif d'un refus (lu par l'équipe). */
+  @Column({ type: 'text', nullable: true }) motif: string | null;
 }
 
 /** Un envoi du terrain déjà appliqué (réseau coupé avant la réponse : le renvoi ne refait rien). */

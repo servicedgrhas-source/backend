@@ -205,7 +205,12 @@ export class RecensementService {
     if (u.role === 'RECENSEUR') {
       const lignes = await this.structures.query<{ id: number }[]>(
         `SELECT s.id FROM structure s JOIN recenseur r ON s."departementId" = ANY(r.departements)
-          WHERE r."utilisateurId" = $1`,
+          WHERE r."utilisateurId" = $1
+         UNION
+         SELECT c."structureId" FROM constat_ecole c JOIN recenseur r ON r."utilisateurId" = $1
+          WHERE c."utilisateurId" = $1 AND c."structureId" IS NOT NULL
+            AND (c.correction->>'departementId')::int = ANY(r.departements)
+            AND coalesce(c.decision, '') <> 'REFUSEE'`,
         [u.id],
       );
       if (!lignes.length)
@@ -231,6 +236,25 @@ export class RecensementService {
     throw new ForbiddenException(
       'Vous n’avez pas les droits pour cette action',
     );
+  }
+
+  /**
+   * Une école corrigée par le contrôle (localité, département, inspection) : les fiches qui lui
+   * sont rattachées suivent (lieu de service, inspection, ville, département).
+   */
+  async realignerSurEcole(structureId: number, auteur: string) {
+    const s = await this.structures.findOne({ where: { id: structureId } });
+    if (!s) return 0;
+    const agents = await this.agents.find({ where: { structureId } });
+    for (const a of agents) {
+      const d = { ...a.donnees };
+      await this.completerDepuisStructure(d, s);
+      if (!s.localite) delete d.VILLE;
+      a.donnees = d;
+      Object.assign(a, await this.colonnes(d), { modifiePar: auteur });
+      await this.agents.save(a);
+    }
+    return agents.length;
   }
 
   dansPerimetre(

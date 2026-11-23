@@ -3,6 +3,7 @@ import {
   Body,
   Controller,
   Delete,
+  ForbiddenException,
   Get,
   Param,
   ParseIntPipe,
@@ -25,6 +26,8 @@ import {
 import {
   Roles,
   ROLES_CONTROLE,
+  saisieSeule,
+  MESSAGE_SAISIE_SEULE,
   ROLES_TRAITEMENT,
   Utilisateur,
   type UtilisateurConnecte,
@@ -185,6 +188,12 @@ export class EnrolementController {
     @Query('departement') departement?: string,
     @Query('origine') origine?: string,
   ) {
+    // Compte de saisie seule : seulement l'étape « à contrôler »
+    if (saisieSeule(u)) {
+      if (etat && etat !== 'A_CONTROLER')
+        throw new ForbiddenException(MESSAGE_SAISIE_SEULE);
+      etat = 'A_CONTROLER';
+    }
     const liste = await this.service.liste({
       campagneId: campagne,
       etat: etat || undefined,
@@ -276,14 +285,22 @@ export class EnrolementController {
   /** Dossiers qui ressemblent à un recruté, un volontaire ou un enrôlé d'avant (06/11/2026). */
   @Roles(...ROLES_TRAITEMENT)
   @Get('deja-connus')
-  dejaConnus(@Query('campagne', ParseIntPipe) campagne: number) {
+  dejaConnus(
+    @Utilisateur() u: UtilisateurConnecte,
+    @Query('campagne', ParseIntPipe) campagne: number,
+  ) {
+    if (saisieSeule(u)) throw new ForbiddenException(MESSAGE_SAISIE_SEULE);
     return this.service.dejaConnus(campagne);
   }
 
   /** Les écartés : non retenus parce que déjà connus ailleurs, avec où (12/11/2026). */
   @Roles(...ROLES_TRAITEMENT)
   @Get('ecartes')
-  ecartes(@Query('campagne', ParseIntPipe) campagne: number) {
+  ecartes(
+    @Utilisateur() u: UtilisateurConnecte,
+    @Query('campagne', ParseIntPipe) campagne: number,
+  ) {
+    if (saisieSeule(u)) throw new ForbiddenException(MESSAGE_SAISIE_SEULE);
     return this.service.ecartes(campagne);
   }
 
@@ -318,6 +335,9 @@ export class EnrolementController {
     @Query('campagne', ParseIntPipe) campagne: number,
     @Res() res: Response,
   ) {
+    // (compte de saisie seule : seulement la liste « à contrôler »)
+    if (saisieSeule(u) && quoi !== 'a-controler')
+      throw new ForbiddenException(MESSAGE_SAISIE_SEULE);
     if (
       quoi !== 'retenus' &&
       quoi !== 'ecartes' &&
