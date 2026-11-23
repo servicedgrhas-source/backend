@@ -1259,12 +1259,13 @@ export class TerrainService implements OnApplicationBootstrap {
             : donnees;
         if (m.agentId) {
           // Un agent enregistré ailleurs (autre département, ou sans école) que l'équipe trouve
-          // dans une de SES écoles : le rattachement est permis (DG, 22/11/2026), puis il passe au
-          // contrôle comme toute modification du recensement
+          // dans une de SES écoles : permis (DG, 22-23/11/2026 : « nos données ne sont pas fiables,
+          // c'est pour ça qu'on recense »), qu'il y soit rattaché, qu'il y travaille aussi (deux
+          // écoles) ou qu'on corrige seulement sa fiche ; puis contrôle comme toute modification
           const qui = await this.auteurDuRattachement(
             u,
             Number(m.agentId),
-            m.structureId ? Number(m.structureId) : null,
+            Number(m.structureId ?? m.ecoleId) || null,
           );
           await this.rec.modifier(qui, Number(m.agentId), {
             ...(aEcrire ? { donnees: aEcrire } : {}),
