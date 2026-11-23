@@ -506,6 +506,11 @@ export class EnrolementController {
     @Body()
     body: { ids: string[]; cible: string | null; specialite?: string | null },
   ) {
+    // (compte de saisie seule : il saisit, il ne change pas la note d'un dossier)
+    if (saisieSeule(u))
+      throw new ForbiddenException(
+        'Votre compte saisit les dossiers : le changement de note se fait au contrôle.',
+      );
     return this.service.changerNote(
       u,
       Array.isArray(body?.ids) ? body.ids.map(String) : [],
