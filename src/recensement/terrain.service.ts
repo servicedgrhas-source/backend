@@ -1051,7 +1051,163 @@ export class TerrainService implements OnApplicationBootstrap {
       statuts: c.statuts
         .filter((s) => s.actif)
         .map((s) => ({ code: s.code, libelle: s.libelle })),
+      // Les pièces qu'on peut photographier sur place (une par agent : pas celles « par enfant »)
+      pieces: c.pieces
+        .filter((p) => p.actif && !p.nombreSelon)
+        .map((p) => ({ code: p.code, libelle: p.libelle })),
     };
+  }
+
+  /**
+   * Les retours du contrôle au recenseur (DG, 23/11/2026) : ce que la DGRHAS a refusé ou rejeté de
+   * son travail, avec le motif, pour qu'il corrige pendant la mission. Seulement le sien.
+   */
+  async retours(u: UtilisateurConnecte) {
+    const auteur = auteurDe(u);
+    const c = this.rec.config.get();
+    const libelle = (k: string) =>
+      k === 'STRUCTURE'
+        ? 'école'
+        : k === 'TYPE_AGENT'
+          ? 'statut'
+          : (c.champs.find((x) => x.code === k)?.libelle ?? k).toLowerCase();
+    const mods = await this.ds.query<
+      {
+        id: number;
+        le: string | null;
+        motif: string | null;
+        par: string | null;
+        sujet: string;
+        ecole: string | null;
+        champs: Record<string, unknown>;
+      }[]
+    >(
+      `SELECT m.id, m."controleLe" AS le, m.note AS motif, m."controlePar" AS par,
+              a."nomComplet" AS sujet, s.nom AS ecole, m.champs
+         FROM modification_recensement m
+         JOIN agent_recense a ON a.id = m."agentId"
+         LEFT JOIN structure s ON s.id = a."structureId"
+        WHERE m."faitePar" = $1 AND m.etat = 'REJETEE'
+        ORDER BY m."controleLe" DESC NULLS LAST LIMIT 200`,
+      [auteur],
+    );
+    const ajoutes = await this.ds.query<
+      {
+        id: number;
+        sujet: string;
+        ecole: string | null;
+        contentieux: {
+          etat?: string;
+          avisControle?: string | null;
+          noteControle?: string | null;
+          controlePar?: string | null;
+          controleLe?: string | null;
+          note?: string | null;
+          decidePar?: string | null;
+          decideLe?: string | null;
+        };
+      }[]
+    >(
+      `SELECT a.id, a."nomComplet" AS sujet, s.nom AS ecole, a.contentieux
+         FROM agent_recense a
+         LEFT JOIN structure s ON s.id = a."structureId"
+        WHERE a.contentieux->>'ouvertPar' = $1
+          AND (a.contentieux->>'etat' = 'REJETE' OR a.contentieux->>'avisControle' = 'DEFAVORABLE')
+        LIMIT 200`,
+      [auteur],
+    );
+    const ecoles = await this.ds.query<
+      {
+        id: number;
+        le: string | null;
+        motif: string | null;
+        par: string | null;
+        ecole: string | null;
+      }[]
+    >(
+      `SELECT c.id, c."traiteLe" AS le, c.motif, c."traitePar" AS par, s.nom AS ecole
+         FROM constat_ecole c
+         LEFT JOIN structure s ON s.id = c."structureId"
+        WHERE c."utilisateurId" = $1 AND c.decision = 'REFUSEE'
+        LIMIT 200`,
+      [u.id],
+    );
+    const lignes = [
+      ...mods.map((m) => ({
+        cle: `m${m.id}`,
+        quoi: 'Correction refusée',
+        sujet: m.sujet,
+        ecole: m.ecole,
+        detail: Object.keys(m.champs ?? {})
+          .map(libelle)
+          .join(', '),
+        motif: m.motif,
+        par: m.par,
+        le: m.le,
+      })),
+      ...ajoutes.map((a) => {
+        const rejete = a.contentieux.etat === 'REJETE';
+        return {
+          cle: `a${a.id}${rejete ? 'r' : 'd'}`,
+          quoi: rejete
+            ? 'Agent ajouté : rejeté par le DG'
+            : 'Agent ajouté : avis défavorable du contrôle (le DG décidera)',
+          sujet: a.sujet,
+          ecole: a.ecole,
+          detail: null,
+          motif: rejete
+            ? (a.contentieux.note ?? null)
+            : (a.contentieux.noteControle ?? null),
+          par: rejete
+            ? (a.contentieux.decidePar ?? null)
+            : (a.contentieux.controlePar ?? null),
+          le: rejete
+            ? (a.contentieux.decideLe ?? null)
+            : (a.contentieux.controleLe ?? null),
+        };
+      }),
+      ...ecoles.map((e) => ({
+        cle: `e${e.id}`,
+        quoi: 'Correction de l’école refusée',
+        sujet: e.ecole ?? 'École',
+        ecole: null,
+        detail: null,
+        motif: e.motif,
+        par: e.par,
+        le: e.le,
+      })),
+    ].sort((a, b) => String(b.le ?? '').localeCompare(String(a.le ?? '')));
+    return { le: new Date().toISOString(), lignes };
+  }
+
+  /**
+   * La photo d'une pièce prise sur place (diplôme, acte…) : rangée dans la fiche de l'agent. Un
+   * agent d'ailleurs vu dans une école de la mission est permis, comme ses corrections ; un renvoi
+   * (réseau coupé) ne la range pas deux fois.
+   */
+  async pieceTerrain(
+    u: UtilisateurConnecte,
+    agentId: number,
+    s: { type?: string; cle?: string; ecoleId?: string },
+    f: Express.Multer.File | undefined,
+  ) {
+    if (!f)
+      throw new BadRequestException(
+        'La photo n’est pas arrivée : réessayez avec le réseau.',
+      );
+    if (!(await this.existent([agentId])).size)
+      throw new BadRequestException(
+        'Cette fiche n’existe plus dans la base (fusionnée ou supprimée) : la photo n’a pas été rangée.',
+      );
+    const qui = await this.auteurDuRattachement(
+      u,
+      agentId,
+      Number(s.ecoleId) || null,
+    );
+    return this.uneFois(u, `piece:${agentId}`, s.cle, async () => {
+      await this.rec.ajouterPiece(qui, agentId, String(s.type ?? ''), f);
+      return { id: agentId };
+    });
   }
 
   /** Le paquet d'une école : de quoi travailler sur place, même sans connexion. */

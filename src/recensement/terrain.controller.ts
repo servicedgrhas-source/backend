@@ -7,7 +7,10 @@ import {
   ParseIntPipe,
   Post,
   Query,
+  UploadedFile,
+  UseInterceptors,
 } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
 import {
   Roles,
   ROLES_TRAITEMENT,
@@ -31,6 +34,31 @@ export class TerrainController {
     private readonly recenseurs: RecenseursService,
     private readonly constats: ConstatsTerrainService,
   ) {}
+
+  /** Ce que le contrôle a refusé ou rejeté du travail de ce compte, avec le motif. */
+  @Get('retours')
+  retours(@Utilisateur() u: UtilisateurConnecte) {
+    return this.service.retours(u);
+  }
+
+  /** La photo d'une pièce prise sur place, rangée dans la fiche de l'agent. */
+  @Post('agent/:id/piece')
+  @HttpCode(200)
+  @UseInterceptors(
+    FileInterceptor('fichier', {
+      limits: { fileSize: 8 * 1024 * 1024 },
+      fileFilter: (_req, f, cb) =>
+        cb(null, /\.(jpe?g|png)$/i.test(f.originalname)),
+    }),
+  )
+  pieceTerrain(
+    @Utilisateur() u: UtilisateurConnecte,
+    @Param('id', ParseIntPipe) id: number,
+    @Body() corps: { type?: string; cle?: string; ecoleId?: string },
+    @UploadedFile() fichier?: Express.Multer.File,
+  ) {
+    return this.service.pieceTerrain(u, id, corps ?? {}, fichier);
+  }
 
   /** La mission du compte (recenseur) : départements, fin, jour de l'effacement de l'appareil. */
   @Get('mission')

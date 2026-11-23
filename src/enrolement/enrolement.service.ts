@@ -352,6 +352,35 @@ export interface Trouve {
 const enClair = (code: string | null) =>
   code ? code.charAt(0) + code.slice(1).toLowerCase().replace(/_/g, ' ') : '';
 
+/** Le motif d'un dossier écarté parce que la personne est déjà connue ailleurs, en clair. */
+function texteDejaConnu(
+  t:
+    | {
+        source: string;
+        detail?: string | null;
+        statut?: string | null;
+        etablissement?: string | null;
+        departement?: string | null;
+        sure?: boolean;
+      }
+    | undefined,
+) {
+  if (!t)
+    return 'Déjà connu (plus retrouvé aujourd’hui dans nos bases : à revoir)';
+  const ou = [t.etablissement, t.departement].filter(Boolean).join(', ');
+  const quoiT =
+    t.source === 'Recrutement (Fonction publique)'
+      ? `Déjà recruté par la Fonction publique (${t.detail})`
+      : t.source === 'Base du personnel'
+        ? `Déjà dans la base du personnel : ${(t.statut ?? '').toLowerCase()}`
+        : t.source === 'Recrutés des années passées'
+          ? `Déjà recruté en ${t.detail}`
+          : t.source === 'Enrôlement d’une autre année'
+            ? `Déjà retenu à l’enrôlement (${t.detail})`
+            : `Déjà au registre : ${(t.statut ?? t.source).toLowerCase()}`;
+  return `${quoiT}${ou ? ` — ${ou}` : ''}${t.sure ? '' : ' (correspondance à vérifier)'}`;
+}
+
 @Injectable()
 export class EnrolementService implements OnApplicationBootstrap {
   constructor(
@@ -956,6 +985,43 @@ export class EnrolementService implements OnApplicationBootstrap {
    * Même personne déjà enregistrée : dans une campagne d'enrôlement, dans la base des recrutés
    * (déjà recrutée par la FP), ou dans les listes des années passées.
    */
+  /**
+   * Où en est un dossier d'enrôlement, en clair (DG, 23/11/2026 : l'opérateur de saisie ne voit
+   * pas les autres étapes) : retenu ou non, et pourquoi il n'est pas retenu.
+   */
+  private async situationDe(e: Enrole) {
+    if (e.etat === 'RETENU')
+      return { libelle: 'Retenu', motif: null, decision: this.decisionDe(e) };
+    if (e.etat === 'NON_RETENU') {
+      const motif = e.ecarteDejaConnu
+        ? texteDejaConnu(
+            (await this.comparateurConnus(e.campagneId))(
+              e.nomComplet,
+              e.dateNaissance,
+            )[0],
+          )
+        : e.motifDecision?.trim() || 'Motif non précisé par la DGRHAS';
+      return { libelle: 'Non retenu', motif, decision: this.decisionDe(e) };
+    }
+    if (e.etat === 'CONTROLE')
+      return {
+        libelle: 'Contrôlé, en attente de la décision de la DGRHAS',
+        motif: null,
+        decision: null,
+      };
+    return {
+      libelle: 'Déjà saisi, en attente du contrôle',
+      motif: null,
+      decision: null,
+    };
+  }
+
+  private decisionDe(e: Enrole) {
+    return e.decidePar
+      ? `${e.decidePar}${e.decideLe ? `, le ${new Date(e.decideLe).toLocaleDateString('fr-FR')}` : ''}`
+      : null;
+  }
+
   async doublons(nom: string, naissance: string | null, exclure?: string) {
     const mots = motsDuNom(nom);
     if (mots.length < 2) return [];
@@ -969,6 +1035,12 @@ export class EnrolementService implements OnApplicationBootstrap {
       probable: boolean;
       /** Dossier d'enrôlement trouvé : pour l'ouvrir à la bonne étape (13/11/2026). */
       dossier?: { id: string; campagneId: number; etat: string };
+      /** Retenu ou non, et pourquoi (23/11/2026). */
+      situation?: {
+        libelle: string;
+        motif: string | null;
+        decision: string | null;
+      };
     }[] = [];
     const voir = (
       source: string,
@@ -988,6 +1060,7 @@ export class EnrolementService implements OnApplicationBootstrap {
           dossier,
         });
     };
+    const dossiers = new Map<string, Enrole>();
     const ETAPES: Record<string, string> = {
       A_CONTROLER: 'étape 1 « À contrôler »',
       CONTROLE: 'étape 2 « À décider par la DGRHAS »',
@@ -1001,7 +1074,8 @@ export class EnrolementService implements OnApplicationBootstrap {
       .createQueryBuilder('e')
       .where('e.nomNormalise LIKE :m', { m: motif })
       .getMany())
-      if (e.id !== exclure)
+      if (e.id !== exclure) {
+        dossiers.set(e.id, e);
         voir(
           'Enrôlement',
           e.nomComplet,
@@ -1009,6 +1083,7 @@ export class EnrolementService implements OnApplicationBootstrap {
           `campagne ${campagnes.get(e.campagneId) ?? '?'} · ${ETAPES[e.etat] ?? e.etat}`,
           { id: e.id, campagneId: e.campagneId, etat: e.etat },
         );
+      }
     for (const a of await this.agents
       .createQueryBuilder('a')
       .where('a.nomNormalise LIKE :m', { m: motif })
@@ -1031,9 +1106,15 @@ export class EnrolementService implements OnApplicationBootstrap {
         a.dateNaissance,
         `${a.annee ?? 'année ?'} · ${a.source}`,
       );
-    return res
+    const gardes = res
       .sort((a, b) => Number(b.probable) - Number(a.probable))
       .slice(0, 10);
+    for (const r of gardes)
+      if (r.dossier) {
+        const e = dossiers.get(r.dossier.id);
+        if (e) r.situation = await this.situationDe(e);
+      }
+    return gardes;
   }
 
   private async valeurs(dto: EnroleDto, existant?: Enrole) {
@@ -1662,23 +1743,8 @@ export class EnrolementService implements OnApplicationBootstrap {
           'Déjà affecté (e)',
         );
       const connus = await this.comparateurConnus(campagneId);
-      const dejaConnu = (nom: string, naissance: string | null) => {
-        const t = connus(nom, naissance)[0];
-        if (!t)
-          return 'Déjà connu (plus retrouvé aujourd’hui dans nos bases : à revoir)';
-        const ou = [t.etablissement, t.departement].filter(Boolean).join(', ');
-        const quoiT =
-          t.source === 'Recrutement (Fonction publique)'
-            ? `Déjà recruté par la Fonction publique (${t.detail})`
-            : t.source === 'Base du personnel'
-              ? `Déjà dans la base du personnel : ${(t.statut ?? '').toLowerCase()}`
-              : t.source === 'Recrutés des années passées'
-                ? `Déjà recruté en ${t.detail}`
-                : t.source === 'Enrôlement d’une autre année'
-                  ? `Déjà retenu à l’enrôlement (${t.detail})`
-                  : `Déjà au registre : ${(t.statut ?? t.source).toLowerCase()}`;
-        return `${quoiT}${ou ? ` — ${ou}` : ''}${t.sure ? '' : ' (correspondance à vérifier)'}`;
-      };
+      const dejaConnu = (nom: string, naissance: string | null) =>
+        texteDejaConnu(connus(nom, naissance)[0]);
       const lignes = (await this.liste({ campagneId, etat: 'NON_RETENU' })).map(
         (e) => ({
           id: e.id,
