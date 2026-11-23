@@ -333,7 +333,7 @@ export class EffectifsEcolesService {
       `SELECT id, statut, "departementId", "structureId", donnees->>'LIEU_SERVICE' AS lieu,
               donnees->>'CYCLE' AS cycle, "volontaireId"
          FROM agent_recense
-        WHERE coalesce(contentieux->>'etat', 'CONFIRME') = 'CONFIRME'
+        WHERE coalesce(contentieux->>'etat', 'CONFIRME') = 'CONFIRME' AND retrait IS NULL
           AND coalesce(donnees->>'POSITION', '') NOT IN ('RETRAITE', 'DECEDE')`,
     );
     const registre = await q<{

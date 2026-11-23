@@ -212,7 +212,8 @@ export class ControleEffectifsService {
               (a."structureId" IS NOT NULL OR nullif(trim(a.donnees->>'LIEU_SERVICE'), '') IS NOT NULL) AS structure,
               a."departementId", a."volontaireId", a.contentieux->>'etat' AS contentieux,
               coalesce(s.nom, nullif(trim(a.donnees->>'LIEU_SERVICE'), '')) AS lieu
-         FROM agent_recense a LEFT JOIN structure s ON s.id = a."structureId"`,
+         FROM agent_recense a LEFT JOIN structure s ON s.id = a."structureId"
+        WHERE a.retrait IS NULL`,
     );
     const registre = await this.ds.query<
       {

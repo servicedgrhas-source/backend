@@ -270,13 +270,18 @@ export class RecensementService {
     p: Perimetre,
     alias = 'a',
   ): { sql: string; params: unknown[] } {
-    if ('tous' in p) return { sql: 'TRUE', params: [] };
+    // (les fiches de la base des retraits ne comptent plus nulle part : 23/11/2026)
+    const hors = `${alias}.retrait IS NULL`;
+    if ('tous' in p) return { sql: hors, params: [] };
     if ('departementId' in p)
       return {
-        sql: `${alias}."departementId" = $X`,
+        sql: `${hors} AND ${alias}."departementId" = $X`,
         params: [p.departementId],
       };
-    return { sql: `${alias}."structureId" = ANY($X)`, params: [p.structures] };
+    return {
+      sql: `${hors} AND ${alias}."structureId" = ANY($X)`,
+      params: [p.structures],
+    };
   }
 
   /** Structures où le compte peut rattacher un agent (pour la liste du formulaire). */

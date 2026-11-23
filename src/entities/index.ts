@@ -1700,6 +1700,15 @@ export class AgentRecense {
   /** Agent rencontré au recensement mais absent des bases : à vérifier par la DGRHAS, décidé par le DG. */
   @Column({ type: 'jsonb', nullable: true })
   contentieux: ContentieuxAgent | null;
+  /**
+   * Dans la base des retraits (23/11/2026) : { motif, le, par }. La fiche reste (numéro, historique,
+   * liens) mais ne compte plus dans les effectifs, les listes ni les statistiques.
+   */
+  @Column({ type: 'jsonb', nullable: true }) retrait: {
+    motif: string;
+    le: string;
+    par: string | null;
+  } | null;
   /** Fiches déclarées « une autre personne » (homonymes vérifiés) : plus proposées à la fusion. */
   @Column({ type: 'jsonb', default: () => "'[]'" }) distinctes: number[];
   /** SAISIE (fiche à l'écran), IMPORT (fichier Excel) ou ENROLEMENT (registre des volontaires). */

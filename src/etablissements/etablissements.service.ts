@@ -216,7 +216,7 @@ export class EtablissementsService {
     >(
       `SELECT s.id, s.nom, s.sigle, s.type, s."parentId", s."departementId", s.ordre,
               (SELECT count(*)::int FROM agent_recense a WHERE a."structureId" = s.id
-                 AND coalesce(a.contentieux->>'etat', 'CONFIRME') = 'CONFIRME') AS agents,
+                 AND coalesce(a.contentieux->>'etat', 'CONFIRME') = 'CONFIRME' AND a.retrait IS NULL) AS agents,
               (SELECT count(*)::int FROM structure e WHERE e."parentId" = s.id AND e.type = 'ETABLISSEMENT' AND e.actif) AS ecoles
          FROM structure s WHERE ${conds.join(' AND ')}`,
       params,
@@ -459,7 +459,7 @@ export class EtablissementsService {
       `SELECT s.id, s.nom, s.code, s.cycle, s.localite, d.nom AS departement, i.sigle AS inspection,
               (SELECT count(*)::int FROM classe c WHERE c."structureId" = s.id AND c."anneeScolaire" = $1) AS classes,
               (SELECT count(*)::int FROM salle x WHERE x."structureId" = s.id) AS salles,
-              (SELECT count(*)::int FROM agent_recense a WHERE a."structureId" = s.id AND coalesce(a.contentieux->>'etat', 'CONFIRME') = 'CONFIRME') AS agents,
+              (SELECT count(*)::int FROM agent_recense a WHERE a."structureId" = s.id AND coalesce(a.contentieux->>'etat', 'CONFIRME') = 'CONFIRME' AND a.retrait IS NULL) AS agents,
               count(*) OVER ()::int AS total
          FROM structure s
          LEFT JOIN departement d ON d.id = s."departementId"
@@ -810,7 +810,7 @@ export class EtablissementsService {
               donnees->>'POSITION' AS position,
               donnees->>'STATUT_ACTIVITE' AS activite,
               donnees->>'DISPONIBILITE' AS "tempsTravail"
-         FROM agent_recense WHERE "structureId" = ANY($1) AND coalesce(contentieux->>'etat', 'CONFIRME') = 'CONFIRME' ORDER BY "nomComplet"`,
+         FROM agent_recense WHERE "structureId" = ANY($1) AND coalesce(contentieux->>'etat', 'CONFIRME') = 'CONFIRME' AND retrait IS NULL ORDER BY "nomComplet"`,
       [ids],
     );
     const m = new Map<number, AgentEcole[]>();

@@ -623,7 +623,7 @@ export class SuiviService implements OnApplicationBootstrap {
       }[]
     >(
       `SELECT s.id, s.nom, s.type, d.nom AS departement,
-              (SELECT count(*)::int FROM agent_recense a WHERE a."structureId" = s.id AND coalesce(a.contentieux->>'etat', 'CONFIRME') = 'CONFIRME') AS agents,
+              (SELECT count(*)::int FROM agent_recense a WHERE a."structureId" = s.id AND coalesce(a.contentieux->>'etat', 'CONFIRME') = 'CONFIRME' AND a.retrait IS NULL) AS agents,
               count(p.*) FILTER (WHERE p.statut = 'PRESENT')::int AS presents,
               count(p.*) FILTER (WHERE p.statut = 'RETARD')::int AS retards,
               count(p.*) FILTER (WHERE p.statut = 'ABSENT_JUSTIFIE')::int AS justifies,
@@ -632,7 +632,7 @@ export class SuiviService implements OnApplicationBootstrap {
          FROM structure s
          LEFT JOIN departement d ON d.id = s."departementId"
          LEFT JOIN presence p ON p."structureId" = s.id AND p.date BETWEEN $1 AND $2
-        WHERE ${conds.join(' AND ')} AND EXISTS (SELECT 1 FROM agent_recense a WHERE a."structureId" = s.id AND coalesce(a.contentieux->>'etat', 'CONFIRME') = 'CONFIRME')
+        WHERE ${conds.join(' AND ')} AND EXISTS (SELECT 1 FROM agent_recense a WHERE a."structureId" = s.id AND coalesce(a.contentieux->>'etat', 'CONFIRME') = 'CONFIRME' AND a.retrait IS NULL)
         GROUP BY s.id, d.nom ORDER BY s.nom`,
       params,
     );

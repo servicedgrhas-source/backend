@@ -123,13 +123,14 @@ export class DashboardController {
              'aControler', count(*) FILTER (WHERE contentieux->>'etat' = 'EN_COURS'),
              'aDecider', count(*) FILTER (WHERE contentieux->>'etat' = 'CONTROLE'),
              'sansStructure', count(*) FILTER (WHERE admise AND "structureId" IS NULL),
-             'doublons', (SELECT count(*) FROM (SELECT 1 FROM agent_recense WHERE "dateNaissance" IS NOT NULL
+             'doublons', (SELECT count(*) FROM (SELECT 1 FROM agent_recense WHERE "dateNaissance" IS NOT NULL AND retrait IS NULL
                  GROUP BY "nomNormalise", "dateNaissance" HAVING count(*) > 1) x),
              'parStatut', (SELECT coalesce(json_object_agg(statut, n), '{}') FROM (
                 SELECT statut, count(*)::int AS n FROM agent_recense
-                 WHERE coalesce(contentieux->>'etat', 'CONFIRME') = 'CONFIRME' GROUP BY 1) s))
+                 WHERE coalesce(contentieux->>'etat', 'CONFIRME') = 'CONFIRME' AND retrait IS NULL GROUP BY 1) s),
+             'retraits', (SELECT count(*) FROM agent_recense WHERE retrait IS NOT NULL))
            FROM (SELECT complet, contentieux, "structureId",
-                   coalesce(contentieux->>'etat', 'CONFIRME') = 'CONFIRME' AS admise FROM agent_recense) a) AS personnel,
+                   (coalesce(contentieux->>'etat', 'CONFIRME') = 'CONFIRME' AND retrait IS NULL) AS admise FROM agent_recense) a) AS personnel,
           (SELECT json_build_object(
              'volontaires', count(*) FILTER (WHERE population = 'VOLONTAIRE' AND statut = 'EN_POSTE'),
              'communautaires', count(*) FILTER (WHERE population = 'COMMUNAUTAIRE' AND statut = 'EN_POSTE'),

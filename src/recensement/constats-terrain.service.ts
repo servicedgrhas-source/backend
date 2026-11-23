@@ -677,7 +677,7 @@ export class ConstatsTerrainService {
     >(
       `WITH base AS (
          SELECT a.id, s."departementId" FROM agent_recense a JOIN structure s ON s.id = a."structureId"
-          WHERE s.actif AND s.type = 'ETABLISSEMENT' AND coalesce(a.contentieux->>'etat', 'CONFIRME') <> 'REJETE'
+          WHERE s.actif AND s.type = 'ETABLISSEMENT' AND coalesce(a.contentieux->>'etat', 'CONFIRME') <> 'REJETE' AND a.retrait IS NULL
        ), dernier AS (
          SELECT DISTINCT ON ("agentId") "agentId", presence FROM constat_agent
           WHERE "campagneId" = $1 ORDER BY "agentId", (presence = 'PRESENT') DESC, le DESC
@@ -717,7 +717,7 @@ export class ConstatsTerrainService {
       { departementId: number; n: number }[]
     >(
       `SELECT "departementId", count(*)::int AS n FROM agent_recense
-        WHERE "campagneRecensementId" = $1 AND coalesce(contentieux->>'etat', 'CONFIRME') <> 'REJETE'
+        WHERE "campagneRecensementId" = $1 AND coalesce(contentieux->>'etat', 'CONFIRME') <> 'REJETE' AND retrait IS NULL
         GROUP BY 1`,
       [campagneId],
     );
@@ -824,7 +824,7 @@ export class ConstatsTerrainService {
          JOIN structure s ON s.id = a."structureId"
          LEFT JOIN structure i ON i.id = s."parentId"
          LEFT JOIN departement d ON d.id = s."departementId"
-        WHERE s.actif AND s.type = 'ETABLISSEMENT' AND coalesce(a.contentieux->>'etat', 'CONFIRME') <> 'REJETE' ${filtreDep}
+        WHERE s.actif AND s.type = 'ETABLISSEMENT' AND coalesce(a.contentieux->>'etat', 'CONFIRME') <> 'REJETE' AND a.retrait IS NULL ${filtreDep}
           AND NOT EXISTS (SELECT 1 FROM constat_agent k WHERE k."agentId" = a.id AND k."campagneId" = $1)
         ORDER BY d.ordre, s.nom, a."nomComplet"`,
       params,

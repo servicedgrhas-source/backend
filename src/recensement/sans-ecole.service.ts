@@ -50,13 +50,13 @@ export class SansEcoleService {
       this.ds.query<FicheLieu[]>(
         `SELECT id, statut, "departementId", trim(donnees->>'LIEU_SERVICE') AS lieu, donnees->>'CYCLE' AS cycle
            FROM agent_recense
-          WHERE "structureId" IS NULL AND coalesce(contentieux->>'etat', 'CONFIRME') = 'CONFIRME'
+          WHERE "structureId" IS NULL AND coalesce(contentieux->>'etat', 'CONFIRME') = 'CONFIRME' AND retrait IS NULL
             AND coalesce(trim(donnees->>'LIEU_SERVICE'), '') <> ''`,
       ),
       this.ds.query<FicheRattachee[]>(
         `SELECT id, "structureId", "departementId", trim(donnees->>'LIEU_SERVICE') AS lieu
            FROM agent_recense
-          WHERE "structureId" IS NOT NULL AND coalesce(contentieux->>'etat', 'CONFIRME') = 'CONFIRME'
+          WHERE "structureId" IS NOT NULL AND coalesce(contentieux->>'etat', 'CONFIRME') = 'CONFIRME' AND retrait IS NULL
             AND coalesce(trim(donnees->>'LIEU_SERVICE'), '') <> ''`,
       ),
       this.ds.query<{ id: number; nom: string }[]>(
@@ -217,7 +217,7 @@ export class SansEcoleService {
       l.reduce((n, x) => n + x.fiches, 0);
     const [{ n: sansLieu }] = await this.ds.query<{ n: number }[]>(
       `SELECT count(*)::int AS n FROM agent_recense
-        WHERE "structureId" IS NULL AND coalesce(contentieux->>'etat', 'CONFIRME') = 'CONFIRME'
+        WHERE "structureId" IS NULL AND coalesce(contentieux->>'etat', 'CONFIRME') = 'CONFIRME' AND retrait IS NULL
           AND coalesce(trim(donnees->>'LIEU_SERVICE'), '') = ''`,
     );
     return {

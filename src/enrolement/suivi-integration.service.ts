@@ -399,7 +399,7 @@ export class SuiviIntegrationService {
               nullif(trim(a.donnees->>'LIEU_SERVICE'), '') AS lieu,
               s.nom AS structure, coalesce(s."departementId", a."departementId") AS "departementId"
          FROM agent_recense a LEFT JOIN structure s ON s.id = a."structureId"
-        WHERE coalesce(a.contentieux->>'etat', 'CONFIRME') = 'CONFIRME'
+        WHERE coalesce(a.contentieux->>'etat', 'CONFIRME') = 'CONFIRME' AND a.retrait IS NULL
           AND a.statut IN ('FONCTIONNAIRE', 'CONTRACTUEL')`,
     );
     // Le premier mois de salaire, d'après les fichiers de la Solde déjà chargés (bottin)
@@ -1000,7 +1000,7 @@ export class SuiviIntegrationService {
                coalesce(s."departementId", a."departementId") AS "departementId",
                a.donnees->>'GRADE' AS grade
           FROM agent_recense a LEFT JOIN structure s ON s.id = a."structureId"
-         WHERE coalesce(a.contentieux->>'etat', 'CONFIRME') = 'CONFIRME'
+         WHERE coalesce(a.contentieux->>'etat', 'CONFIRME') = 'CONFIRME' AND a.retrait IS NULL
            AND a.statut IN ('FONCTIONNAIRE', 'CONTRACTUEL'))
       SELECT p.*, d.nom AS departement FROM p LEFT JOIN departement d ON d.id = p."departementId"
        WHERE ${conditions.join(' AND ')}`;

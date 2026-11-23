@@ -172,7 +172,7 @@ export class TerrainService implements OnApplicationBootstrap {
         grade: string | null;
       }[]
     >(
-      `${SELECT_INDEX} WHERE coalesce(a.contentieux->>'etat', 'CONFIRME') IN ('CONFIRME', 'EN_COURS', 'CONTROLE')`,
+      `${SELECT_INDEX} WHERE coalesce(a.contentieux->>'etat', 'CONFIRME') IN ('CONFIRME', 'EN_COURS', 'CONTROLE') AND a.retrait IS NULL`,
     );
     const prepares = lignes.map((l) => ({
       ...l,
@@ -494,7 +494,7 @@ export class TerrainService implements OnApplicationBootstrap {
     const r = await this.ds.query<{ id: number; e: string }[]>(
       `SELECT s.id, md5(s.xmin::text || '|' ||
               coalesce((SELECT string_agg(a.id || ':' || a.xmin::text, ',' ORDER BY a.id) FROM agent_recense a
-                         WHERE a."structureId" = s.id AND coalesce(a.contentieux->>'etat', 'CONFIRME') <> 'REJETE'), '') || '|' ||
+                         WHERE a."structureId" = s.id AND coalesce(a.contentieux->>'etat', 'CONFIRME') <> 'REJETE' AND a.retrait IS NULL), '') || '|' ||
               coalesce((SELECT string_agg(b.id || ':' || b.xmin::text, ',' ORDER BY b.id) FROM batiment b WHERE b."structureId" = s.id), '') || '|' ||
               coalesce((SELECT string_agg(x.id || ':' || x.xmin::text, ',' ORDER BY x.id) FROM salle x WHERE x."structureId" = s.id), '') || '|' ||
               coalesce((SELECT string_agg(x.id || ':' || x.xmin::text, ',' ORDER BY x.id) FROM classe x WHERE x."structureId" = s.id), '') || '|' ||
@@ -565,7 +565,7 @@ export class TerrainService implements OnApplicationBootstrap {
                   SELECT coalesce(jsonb_object_agg(k, v), '{}'::jsonb) FROM jsonb_each(donnees) AS e(k, v) WHERE k = ANY($2)
                 ) AS donnees, ${EN_CONTROLE} AS "aControler", ${CONSTAT_DE_L_AGENT}
              FROM agent_recense
-            WHERE "structureId" = ANY($1) AND ${SUR_LES_TABLETTES}
+            WHERE "structureId" = ANY($1) AND ${SUR_LES_TABLETTES} AND retrait IS NULL
             ORDER BY "nomComplet"`,
           [ids, codes],
         ),
@@ -747,7 +747,7 @@ export class TerrainService implements OnApplicationBootstrap {
               (SELECT count(*)::int FROM structure s WHERE s."departementId" = d.id AND s.actif AND s.type = 'ETABLISSEMENT') AS ecoles,
               (SELECT count(*)::int FROM agent_recense a JOIN structure s ON s.id = a."structureId"
                 WHERE s."departementId" = d.id AND s.actif AND s.type = 'ETABLISSEMENT'
-                  AND coalesce(a.contentieux->>'etat', 'CONFIRME') <> 'REJETE') AS agents
+                  AND coalesce(a.contentieux->>'etat', 'CONFIRME') <> 'REJETE' AND a.retrait IS NULL) AS agents
          FROM departement d ORDER BY d.ordre`,
     );
     const mission =
@@ -1288,7 +1288,7 @@ export class TerrainService implements OnApplicationBootstrap {
                   SELECT coalesce(jsonb_object_agg(k, v), '{}'::jsonb) FROM jsonb_each(donnees) AS e(k, v) WHERE k = ANY($2)
                 ) AS donnees, "modifieLe", ${EN_CONTROLE} AS "aControler", ${CONSTAT_DE_L_AGENT}
              FROM agent_recense
-            WHERE "structureId" = $1 AND ${SUR_LES_TABLETTES}
+            WHERE "structureId" = $1 AND ${SUR_LES_TABLETTES} AND retrait IS NULL
             ORDER BY "nomComplet"`,
           [id, codes],
         ),
