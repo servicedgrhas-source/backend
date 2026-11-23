@@ -96,8 +96,11 @@ export class TerrainController {
   }
 
   @Get('colonnes')
-  colonnes() {
-    return this.service.colonnes();
+  async colonnes() {
+    return {
+      ...this.service.colonnes(),
+      referentiels: await this.service.referentielsEcole(),
+    };
   }
 
   /** Recherche intelligente d'un agent (nom tapé comme on l'entend, ou matricule). */
@@ -167,6 +170,28 @@ export class TerrainController {
     @Param('id', ParseIntPipe) id: number,
   ) {
     return this.service.traiter(u, id);
+  }
+
+  /** Une salle vue sur place. */
+  @Post('ecole/:id/salles')
+  @HttpCode(200)
+  ajouterSalle(
+    @Utilisateur() u: UtilisateurConnecte,
+    @Param('id', ParseIntPipe) id: number,
+    @Body() corps: Record<string, unknown>,
+  ) {
+    return this.service.ajouterSalle(u, id, corps ?? {});
+  }
+
+  /** Une classe ouverte cette année, vue sur place. */
+  @Post('ecole/:id/classes')
+  @HttpCode(200)
+  ajouterClasse(
+    @Utilisateur() u: UtilisateurConnecte,
+    @Param('id', ParseIntPipe) id: number,
+    @Body() corps: Record<string, unknown>,
+  ) {
+    return this.service.ajouterClasse(u, id, corps ?? {});
   }
 
   /** Ce que l'équipe constate sur l'école (fermée, introuvable, autre nom…), « école terminée ». */

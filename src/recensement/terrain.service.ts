@@ -10,6 +10,7 @@ import {
 import { DataSource } from 'typeorm';
 import type { UtilisateurConnecte } from '../auth/auth';
 import { posteResponsable } from '../circuit/catalogue';
+import { ETATS } from '../etablissements/etablissements.service';
 import {
   chercher,
   noter,
@@ -495,6 +496,8 @@ export class TerrainService implements OnApplicationBootstrap {
               coalesce((SELECT string_agg(a.id || ':' || a.xmin::text, ',' ORDER BY a.id) FROM agent_recense a
                          WHERE a."structureId" = s.id AND coalesce(a.contentieux->>'etat', 'CONFIRME') <> 'REJETE'), '') || '|' ||
               coalesce((SELECT string_agg(b.id || ':' || b.xmin::text, ',' ORDER BY b.id) FROM batiment b WHERE b."structureId" = s.id), '') || '|' ||
+              coalesce((SELECT string_agg(x.id || ':' || x.xmin::text, ',' ORDER BY x.id) FROM salle x WHERE x."structureId" = s.id), '') || '|' ||
+              coalesce((SELECT string_agg(x.id || ':' || x.xmin::text, ',' ORDER BY x.id) FROM classe x WHERE x."structureId" = s.id), '') || '|' ||
               coalesce((SELECT string_agg(k.id || ':' || k.xmin::text, ',' ORDER BY k.id) FROM constat_agent k WHERE k."structureId" = s.id AND k."campagneId" = ${CAMPAGNE_OUVERTE_SQL}), '') || '|' ||
               coalesce((SELECT max(c.id || ':' || c.xmin::text) FROM constat_ecole c WHERE c."structureId" = s.id AND c."campagneId" = ${CAMPAGNE_OUVERTE_SQL}), '')) AS e
          FROM structure s
@@ -580,13 +583,34 @@ export class TerrainService implements OnApplicationBootstrap {
           `SELECT id, "structureId", nom, latitude, longitude, "precisionGps", "localiseLe" FROM batiment WHERE "structureId" = ANY($1) ORDER BY nom`,
           [ids],
         ),
-        this.ds.query<{ s: number; n: number }[]>(
-          `SELECT "structureId" AS s, count(*)::int AS n FROM salle WHERE "structureId" = ANY($1) GROUP BY 1`,
+        this.ds.query<
+          {
+            id: number;
+            structureId: number;
+            nom: string;
+            batimentId: number | null;
+            type: string | null;
+            capacite: number | null;
+            etat: string;
+          }[]
+        >(
+          `SELECT id, "structureId", nom, "batimentId", type, capacite, etat FROM salle WHERE "structureId" = ANY($1) ORDER BY nom`,
           [ids],
         ),
-        this.ds.query<{ s: number; n: number }[]>(
-          `SELECT "structureId" AS s, count(*)::int AS n FROM classe WHERE "structureId" = ANY($1) GROUP BY 1`,
-          [ids],
+        this.ds.query<
+          {
+            id: number;
+            structureId: number;
+            niveau: string;
+            nom: string;
+            salleId: number | null;
+            effectif: number | null;
+            effectifFilles: number | null;
+          }[]
+        >(
+          `SELECT id, "structureId", niveau, nom, "salleId", effectif, "effectifFilles" FROM classe
+            WHERE "structureId" = ANY($1) AND "anneeScolaire" = $2 ORDER BY nom`,
+          [ids, this.ecoles.annee()],
         ),
         this.ds.query<{ id: number; nom: string }[]>(
           `SELECT id, "nomComplet" AS nom FROM agent_recense WHERE id = ANY($1)`,
@@ -605,8 +629,8 @@ export class TerrainService implements OnApplicationBootstrap {
     };
     const parEcole = grouper(agents);
     const batParEcole = grouper(batiments);
-    const nSalles = new Map(salles.map((x) => [x.s, x.n]));
-    const nClasses = new Map(classes.map((x) => [x.s, x.n]));
+    const sallesParEcole = grouper(salles);
+    const classesParEcole = grouper(classes);
     const nomResp = new Map(responsables.map((x) => [x.id, x.nom]));
     const constatsEcoles = await this.constatsEcoles(ids);
     const telechargeLe = new Date().toISOString();
@@ -628,11 +652,13 @@ export class TerrainService implements OnApplicationBootstrap {
         longitude: s.longitude,
         precisionGps: s.precisionGps,
         localiseLe: s.localiseLe,
-        salles: nSalles.get(s.id) ?? 0,
-        classes: nClasses.get(s.id) ?? 0,
+        salles: sallesParEcole.get(s.id)?.length ?? 0,
+        classes: classesParEcole.get(s.id)?.length ?? 0,
         constat: constatsEcoles.get(s.id) ?? null,
       },
       batiments: batParEcole.get(s.id) ?? [],
+      listeSalles: sallesParEcole.get(s.id) ?? [],
+      listeClasses: classesParEcole.get(s.id) ?? [],
       agents: parEcole.get(s.id) ?? [],
     }));
   }
@@ -683,6 +709,7 @@ export class TerrainService implements OnApplicationBootstrap {
       telechargeLe: new Date().toISOString(),
       departementId,
       ...champs,
+      referentiels: await this.referentielsEcole(),
       structures: structures.map((s) => ({
         id: s.id,
         parentId: s.parentId,
@@ -799,38 +826,147 @@ export class TerrainService implements OnApplicationBootstrap {
    * leurs annexes géolocalisés) : créé depuis le terrain, avec sa position si elle a été prélevée.
    * Seulement dans une école du périmètre du compte (la mission, pour un recenseur).
    */
+  private refsEcole: { le: number; valeur: unknown } | null = null;
+  /**
+   * Ce que proposent les formulaires de l'école sur le terrain : les niveaux de chaque cycle (pour
+   * ouvrir une classe), les types de salles et de bâtiments, les états, l'année scolaire.
+   */
+  async referentielsEcole() {
+    if (this.refsEcole && Date.now() - this.refsEcole.le < 600_000)
+      return this.refsEcole.valeur as {
+        annee: string;
+        niveaux: Record<string, { code: string; libelle: string }[]>;
+        typesSalle: string[];
+        typesBatiment: string[];
+        etats: { code: string; libelle: string }[];
+      };
+    const refs = await this.ds.query<
+      { type: string; code: string; libelle: string; parent: string | null }[]
+    >(
+      `SELECT type, code, libelle, parent FROM referentiel
+        WHERE actif AND type IN ('NIVEAU', 'TYPE_SALLE', 'TYPE_BATIMENT') ORDER BY ordre, libelle`,
+    );
+    const niveaux: Record<string, { code: string; libelle: string }[]> = {};
+    for (const r of refs.filter((x) => x.type === 'NIVEAU'))
+      (niveaux[r.parent ?? ''] ??= []).push({
+        code: r.code,
+        libelle: r.libelle,
+      });
+    const valeur = {
+      annee: this.ecoles.annee(),
+      niveaux,
+      typesSalle: refs
+        .filter((x) => x.type === 'TYPE_SALLE')
+        .map((x) => x.libelle),
+      typesBatiment: refs
+        .filter((x) => x.type === 'TYPE_BATIMENT')
+        .map((x) => x.libelle),
+      etats: Object.entries(ETATS).map(([code, libelle]) => ({
+        code,
+        libelle,
+      })),
+    };
+    this.refsEcole = { le: Date.now(), valeur };
+    return valeur;
+  }
+
+  /**
+   * Un ajout du terrain fait une seule fois : renvoyé après une coupure (même appareil, même
+   * clé), il rend le même résultat sans créer un double.
+   */
+  private async uneFois<T extends { id: number }>(
+    u: UtilisateurConnecte,
+    sorte: string,
+    cle: unknown,
+    faire: () => Promise<T>,
+  ): Promise<T | { id: number }> {
+    const c =
+      typeof cle === 'string' && cle.length >= 2 && cle.length <= 80
+        ? createHash('sha256').update(`${u.id}|${sorte}|${cle}`).digest('hex')
+        : null;
+    if (c) {
+      const [deja] = await this.ds.query<{ resultat: { id: number } }[]>(
+        `SELECT resultat FROM envoi_terrain WHERE cle = $1`,
+        [c],
+      );
+      if (deja) return { id: deja.resultat.id };
+    }
+    const r = await faire();
+    if (c)
+      await this.ds.query(
+        `INSERT INTO envoi_terrain (cle, resultat) VALUES ($1, $2) ON CONFLICT (cle) DO NOTHING`,
+        [c, JSON.stringify({ id: r.id })],
+      );
+    return r;
+  }
+
+  /** Une salle vue sur place (avec son bâtiment, son type, sa capacité, son état). */
+  async ajouterSalle(
+    u: UtilisateurConnecte,
+    ecoleId: number,
+    d: Record<string, unknown>,
+  ) {
+    const r = await this.uneFois(u, `salle:${ecoleId}`, d.cle, () =>
+      this.ecoles.enregistrerSalle(u, ecoleId, null, d),
+    );
+    return { id: r.id };
+  }
+
+  /** Une classe ouverte cette année (niveau, nom, effectifs, salle). */
+  async ajouterClasse(
+    u: UtilisateurConnecte,
+    ecoleId: number,
+    d: Record<string, unknown>,
+  ) {
+    const r = await this.uneFois(u, `classe:${ecoleId}`, d.cle, () =>
+      this.ecoles.enregistrerClasse(u, ecoleId, null, d),
+    );
+    return { id: r.id };
+  }
+
   async ajouterBatiment(
     u: UtilisateurConnecte,
     ecoleId: number,
     d: {
+      cle?: unknown;
       nom?: unknown;
       type?: unknown;
+      niveaux?: unknown;
+      etat?: unknown;
+      anneeConstruction?: unknown;
       latitude?: unknown;
       longitude?: unknown;
       precision?: unknown;
     },
   ) {
-    const b = await this.ecoles.enregistrerBatiment(u, ecoleId, null, {
-      nom: d.nom,
-      type: d.type,
+    const nom = typeof d.nom === 'string' ? d.nom : '';
+    const r = await this.uneFois(u, `batiment:${ecoleId}`, d.cle, async () => {
+      const b = await this.ecoles.enregistrerBatiment(u, ecoleId, null, {
+        nom: d.nom,
+        type: d.type,
+        niveaux: d.niveaux,
+        etat: d.etat,
+        anneeConstruction: d.anneeConstruction,
+      });
+      if (
+        d.latitude !== undefined &&
+        d.latitude !== null &&
+        d.longitude !== undefined &&
+        d.longitude !== null
+      )
+        await this.ecoles.localiser(
+          u,
+          ecoleId,
+          {
+            latitude: d.latitude,
+            longitude: d.longitude,
+            precision: d.precision,
+          },
+          b.id,
+        );
+      return b;
     });
-    if (
-      d.latitude !== undefined &&
-      d.latitude !== null &&
-      d.longitude !== undefined &&
-      d.longitude !== null
-    )
-      await this.ecoles.localiser(
-        u,
-        ecoleId,
-        {
-          latitude: d.latitude,
-          longitude: d.longitude,
-          precision: d.precision,
-        },
-        b.id,
-      );
-    return { id: b.id, nom: b.nom };
+    return { id: r.id, nom };
   }
 
   /** Les signalements du terrain (absent, parti, inconnu ici), à traiter par la DGRHAS. */
@@ -954,13 +1090,32 @@ export class TerrainService implements OnApplicationBootstrap {
           `SELECT id, nom, latitude, longitude, "precisionGps", "localiseLe" FROM batiment WHERE "structureId" = $1 ORDER BY nom`,
           [id],
         ),
-        this.ds.query<{ n: number }[]>(
-          `SELECT count(*)::int AS n FROM salle WHERE "structureId" = $1`,
+        this.ds.query<
+          {
+            id: number;
+            nom: string;
+            batimentId: number | null;
+            type: string | null;
+            capacite: number | null;
+            etat: string;
+          }[]
+        >(
+          `SELECT id, nom, "batimentId", type, capacite, etat FROM salle WHERE "structureId" = $1 ORDER BY nom`,
           [id],
         ),
-        this.ds.query<{ n: number }[]>(
-          `SELECT count(*)::int AS n FROM classe WHERE "structureId" = $1`,
-          [id],
+        this.ds.query<
+          {
+            id: number;
+            niveau: string;
+            nom: string;
+            salleId: number | null;
+            effectif: number | null;
+            effectifFilles: number | null;
+          }[]
+        >(
+          `SELECT id, niveau, nom, "salleId", effectif, "effectifFilles" FROM classe
+            WHERE "structureId" = $1 AND "anneeScolaire" = $2 ORDER BY nom`,
+          [id, this.ecoles.annee()],
         ),
         this.ds.query<
           {
@@ -997,12 +1152,15 @@ export class TerrainService implements OnApplicationBootstrap {
         longitude: s.longitude,
         precisionGps: s.precisionGps,
         localiseLe: s.localiseLe,
-        salles: salles[0]?.n ?? 0,
-        classes: classes[0]?.n ?? 0,
+        salles: salles.length,
+        classes: classes.length,
         constat: (await this.constatsEcoles([id])).get(id) ?? null,
       },
       batiments,
+      listeSalles: salles,
+      listeClasses: classes,
       ...champs,
+      referentiels: await this.referentielsEcole(),
       agents,
     };
   }

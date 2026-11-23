@@ -231,7 +231,7 @@ export class AuthGuard implements CanActivate {
     // et positions GPS, juste avant l'effacement) et l'accusé « c'est effacé »
     if (
       req.user.role === 'RECENSEUR' &&
-      !/^\/api\/recensement\/terrain\/(mission\/efface|envoyer|ecole\/\d+\/(batiments|constat)|ecoles-signalees)$/.test(
+      !/^\/api\/recensement\/terrain\/(mission\/efface|envoyer|ecole\/\d+\/(batiments|salles|classes|constat)|ecoles-signalees)$/.test(
         req.path,
       ) &&
       !/^\/api\/etablissements\/\d+\/(batiments\/\d+\/)?localisation$/.test(
