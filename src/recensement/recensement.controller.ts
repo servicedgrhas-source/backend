@@ -76,6 +76,7 @@ function filtres(q: Record<string, string | undefined>): FiltresAgents {
     anomalies: q.anomalies === '1' || undefined,
     ajout: q.ajout || undefined,
     effectif: q.effectif?.slice(0, 40) || undefined,
+    rattachement: q.rattachement?.slice(0, 40) || undefined,
     page: nombre(q.page),
   };
 }

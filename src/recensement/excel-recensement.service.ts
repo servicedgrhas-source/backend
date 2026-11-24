@@ -10,6 +10,7 @@ import { lireClasseur } from '../common/excel';
 import { cleCompacte, enTexte, normaliser } from '../common/texte';
 import { JournalService } from '../core/core.service';
 import { AgentRecense, Structure } from '../entities';
+import { IndexStructures } from './rattachement';
 import {
   LIBELLES_TYPES,
   type ChampFiche,
@@ -499,11 +500,38 @@ export class ExcelRecensementService {
     const structures = await this.rec.agents.manager
       .getRepository(Structure)
       .find();
-    const structureParNom = new Map<string, Structure>();
+    // Rattachement d'après le lieu de service écrit : la règle prudente du démarrage (une seule
+    // école ou inspection de ce nom, de cette nature, dans le département ; sinon rien). Le nom
+    // exact ne sert plus que pour les directions et services (DG, 24/11/2026 : 16 fiches
+    // « POINTE-NOIRE 2 » rattachées à tort à une inspection qui portait alors ce nom).
+    const indexLieux = new IndexStructures(
+      structures.filter(
+        (s) =>
+          s.actif &&
+          ['ETABLISSEMENT', 'INSPECTION', 'DDEPPSA'].includes(s.type),
+      ),
+    );
+    const administratives = new Map<string, Structure[]>();
     for (const s of structures) {
-      structureParNom.set(normaliser(s.nom), s);
-      structureParNom.set(normaliser(s.sigle), s);
+      if (!s.actif || ['ETABLISSEMENT', 'INSPECTION', 'DDEPPSA'].includes(s.type))
+        continue;
+      for (const t of new Set([normaliser(s.nom), normaliser(s.sigle)])) {
+        if (!t) continue;
+        const l = administratives.get(t) ?? [];
+        l.push(s);
+        administratives.set(t, l);
+      }
     }
+    const structureDuLieu = (
+      lieu: unknown,
+      departementId: number | null,
+      cycle: unknown,
+    ) => {
+      const s = indexLieux.trouver(lieu, departementId, enTexte(cycle) || null);
+      if (s) return s.id;
+      const l = administratives.get(normaliser(lieu)) ?? [];
+      return l.length === 1 ? l[0].id : null;
+    };
 
     // Index des agents déjà recensés : n° de fiche, matricule, nom + date de naissance
     const existants = await this.rec.agents.query<
@@ -704,8 +732,13 @@ export class ExcelRecensementService {
             ? existant.structureId
             : p.principale;
       else if (donnees.LIEU_SERVICE)
-        structureId =
-          structureParNom.get(normaliser(donnees.LIEU_SERVICE))?.id ?? null;
+        structureId = structureDuLieu(
+          donnees.LIEU_SERVICE,
+          col.departementId ??
+            ('departementId' in p ? p.departementId : null) ??
+            null,
+          donnees.CYCLE,
+        );
       const struct = structureId
         ? structures.find((s) => s.id === structureId)
         : undefined;

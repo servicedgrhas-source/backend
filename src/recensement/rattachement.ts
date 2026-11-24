@@ -87,6 +87,8 @@ function cycleIndique(n: string) {
 export class IndexStructures {
   private readonly cles = new Map<string, StructureRattachable[]>();
   private readonly ddeppsa = new Map<number, StructureRattachable>();
+  /** Noms d'inspections par département (« département|nom ») : un lieu de ce nom est ambigu. */
+  private readonly nomsInspections = new Set<string>();
 
   constructor(structures: StructureRattachable[]) {
     for (const s of structures) {
@@ -106,6 +108,7 @@ export class IndexStructures {
         const k = coeur(texte(t));
         if (!k) continue;
         const cle = `${nat}|${k}`;
+        if (nat === 'INS') this.nomsInspections.add(`${s.departementId}|${k}`);
         const l = this.cles.get(cle) ?? [];
         if (!l.includes(s)) l.push(s);
         this.cles.set(cle, l);
@@ -137,7 +140,9 @@ export class IndexStructures {
 
   /**
    * Un nom sans type écrit (« MINANGOU LAURENT ») : l'école de ce nom, du cycle de la fiche, dans son
-   * département. Sans cycle sur la fiche, rien (un village a souvent une EP et un CEP).
+   * département. Sans cycle sur la fiche, rien (un village a souvent une EP et un CEP). Si une
+   * inspection du département porte aussi ce nom (« POINTE-NOIRE 2 » : l'inspection, le CEG, le
+   * lycée…), c'est le nom d'un lieu et non d'une école : rien (DG, 24/11/2026).
    */
   private sansType(
     n: string,
@@ -147,6 +152,7 @@ export class IndexStructures {
     const k = coeur(n);
     const nat = NATURE_CYCLE[cycle ?? ''];
     if (k.length < 4 || !departementId || !nat) return null;
+    if (this.nomsInspections.has(`${departementId}|${k}`)) return null;
     const c = (this.cles.get(`${nat}|${k}`) ?? []).filter(
       (s) => s.departementId === departementId,
     );

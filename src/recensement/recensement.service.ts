@@ -74,6 +74,11 @@ export interface FiltresAgents {
   ajout?: string;
   /** Une catégorie du centre de contrôle des effectifs (« En attente de matricule »…). */
   effectif?: string;
+  /**
+   * Où la fiche est rattachée : un type de structure (ETABLISSEMENT, INSPECTION, DDEPPSA…), ou
+   * SANS_LIEU (aucune structure, un lieu de service écrit), SANS_RIEN (ni structure ni lieu écrit).
+   */
+  rattachement?: string;
   page?: number;
 }
 
@@ -451,6 +456,16 @@ export class RecensementService {
     if (f.statut) ajouter('a.statut = $X', f.statut);
     if (f.departement) ajouter('a."departementId" = $X', f.departement);
     if (f.structure) ajouter('a."structureId" = $X', f.structure);
+    const lieuEcrit = `coalesce(trim(a.donnees->>'LIEU_SERVICE'), '') <> ''`;
+    if (f.rattachement === 'SANS_LIEU')
+      conds.push(`a."structureId" IS NULL AND ${lieuEcrit}`);
+    else if (f.rattachement === 'SANS_RIEN')
+      conds.push(`a."structureId" IS NULL AND NOT (${lieuEcrit})`);
+    else if (f.rattachement && /^[A-Z_]{1,40}$/.test(f.rattachement))
+      ajouter(
+        `EXISTS (SELECT 1 FROM structure s WHERE s.id = a."structureId" AND s.type = $X)`,
+        f.rattachement,
+      );
     if (f.complet === 'oui') conds.push('a.complet');
     if (f.complet === 'non') conds.push('NOT a.complet');
     if (f.manque) {
@@ -2520,8 +2535,15 @@ export class RecensementService {
     const w = fp.sql.replace('$X', '$1');
     const q = <T>(sql: string) => this.agents.query<T[]>(sql, fp.params);
     // Les comptes sont indépendants : lancés ensemble
-    const [[totaux], parStatut, parDepartement, champs, pieces, ctl] =
-      await Promise.all([
+    const [
+      [totaux],
+      parStatut,
+      parDepartement,
+      champs,
+      pieces,
+      ctl,
+      parRattachement,
+    ] = await Promise.all([
         q<{
           total: number;
           complets: number;
@@ -2546,9 +2568,19 @@ export class RecensementService {
           `SELECT x->>'code' AS code, count(*)::int AS n, sum((x->>'manque')::int)::int AS total FROM agent_recense a, jsonb_array_elements(coalesce(a.manques->'pieces','[]'::jsonb)) x WHERE ${w} GROUP BY 1 ORDER BY 2 DESC`,
         ),
         this.controles(u),
+        // Où sont rattachées les fiches (DG, 24/11/2026 : « je ne sais même pas combien de fiches
+        // ont des structures de rattachement ») : par type de structure, puis les fiches sans
+        // structure, avec ou sans lieu de service écrit
+        q<{ rattachement: string; n: number }>(
+          `SELECT coalesce(s.type, CASE WHEN coalesce(trim(a.donnees->>'LIEU_SERVICE'), '') <> '' THEN 'SANS_LIEU' ELSE 'SANS_RIEN' END) AS rattachement,
+                  count(*)::int AS n
+             FROM agent_recense a LEFT JOIN structure s ON s.id = a."structureId"
+            WHERE ${w} GROUP BY 1 ORDER BY 2 DESC`,
+        ),
       ]);
     return {
       total: totaux.total,
+      parRattachement,
       complets: totaux.complets,
       tauxMoyen: totaux.taux ?? 0,
       parStatut,
