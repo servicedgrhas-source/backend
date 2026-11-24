@@ -1,4 +1,5 @@
-import { Body, Controller, Get, Post } from '@nestjs/common';
+import { Body, Controller, Get, Post, Query, Res } from '@nestjs/common';
+import type { Response } from 'express';
 import {
   Roles,
   ROLES_TRAITEMENT,
@@ -16,6 +17,36 @@ export class SansEcoleController {
   @Get()
   analyse() {
     return this.service.analyse();
+  }
+
+  /** Exactement les fiches d'un groupe (un lieu écrit, ou un écart lieu écrit ≠ école). */
+  @Get('fiches')
+  fiches(@Query('sorte') sorte: string, @Query('cle') cle: string) {
+    return this.service.fichesDe(
+      sorte === 'ecart' ? 'ecart' : 'lieu',
+      cle ?? '',
+    );
+  }
+
+  /** L'Excel des situations à faire vérifier par les DDEPPSA (une, ou toutes). */
+  @Get('excel')
+  async excel(
+    @Query('departement') departement: string | undefined,
+    @Query('tout') tout: string | undefined,
+    @Res() res: Response,
+  ) {
+    const dep = Number(departement) || null;
+    const { tampon } = await this.service.excel(dep, tout === '1');
+    const jour = new Date().toLocaleDateString('fr-FR').replaceAll('/', '-');
+    res.setHeader(
+      'Content-Type',
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    );
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename="Agents sans ecole - a verifier par les DDEPPSA - ${jour}.xlsx"`,
+    );
+    res.send(tampon);
   }
 
   /** Rattacher et aligner (DG et administrateurs) : touche des milliers de fiches d'un coup. */
