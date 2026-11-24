@@ -38,6 +38,33 @@ export function cycleDuLieu(texte: string): string | null {
   return null;
 }
 
+/**
+ * Ce que désigne un lieu écrit : une école (avec son cycle), une inspection, une direction
+ * départementale, une administration (direction, service, cabinet…), ou rien de précis (un nom
+ * seul : « POINTE-NOIRE 2 »).
+ */
+export function natureDuLieu(
+  texte: string,
+): 'ECOLE' | 'INSPECTION' | 'DDEPPSA' | 'ADMINISTRATION' | null {
+  const t = ` ${normaliser(texte).replace(/[^A-Z0-9]+/g, ' ')} `;
+  if (/ (DDEPPSA|DISPOSITION|DIRECTION DEPARTEMENTALE|DDEP|DDENS) /.test(t))
+    return 'DDEPPSA';
+  if (
+    / (INSPECTION|INSPECTEUR|IEP|IEPA|IP|IDP|ICEG|ICGE|ILZ|CIRCONSCRIPTION) /.test(
+      t,
+    )
+  )
+    return 'INSPECTION';
+  if (cycleDuLieu(texte)) return 'ECOLE';
+  if (
+    / (DIRECTION|DIRECTEUR|DGRHAS|DGEPPSA|SERVICE|BUREAU|CABINET|MINISTERE|SECRETARIAT|INRAP|DIRECTION GENERALE|ADMINISTRATION) /.test(
+      t,
+    )
+  )
+    return 'ADMINISTRATION';
+  return null;
+}
+
 const CYCLES_ECOLE = new Set([
   'PRESCOLAIRE',
   'PRIMAIRE',
@@ -115,8 +142,11 @@ export function rapprocherLieux(
       });
       continue;
     }
+    // Un nom seul (« POINTE-NOIRE 2 » : ni école, ni inspection écrite) n'est jamais sûr : c'est
+    // souvent un quartier ou une circonscription (DG, 24/11/2026)
     const sur =
       !!cycle &&
+      natureDuLieu(l.texte) !== null &&
       !!l.departementId &&
       m.r >= 0.95 &&
       (!deux || m.r - deux.r >= 0.05);

@@ -33,10 +33,15 @@ export class SansEcoleController {
   async excel(
     @Query('departement') departement: string | undefined,
     @Query('tout') tout: string | undefined,
+    @Query('par') par: string | undefined,
     @Res() res: Response,
   ) {
     const dep = Number(departement) || null;
-    const { tampon } = await this.service.excel(dep, tout === '1');
+    // Une ligne par lieu écrit (écoles et structures à reconnaître), ou une ligne par personne
+    const parLieu = par === 'lieu';
+    const { tampon } = parLieu
+      ? await this.service.excelLieux(dep, tout === '1')
+      : await this.service.excel(dep, tout === '1');
     const jour = new Date().toLocaleDateString('fr-FR').replaceAll('/', '-');
     res.setHeader(
       'Content-Type',
@@ -44,7 +49,9 @@ export class SansEcoleController {
     );
     res.setHeader(
       'Content-Disposition',
-      `attachment; filename="Agents sans ecole - a verifier par les DDEPPSA - ${jour}.xlsx"`,
+      parLieu
+        ? `attachment; filename="Lieux ecrits a reconnaitre - ${jour}.xlsx"`
+        : `attachment; filename="Agents sans ecole - a verifier par les DDEPPSA - ${jour}.xlsx"`,
     );
     res.send(tampon);
   }
@@ -54,8 +61,31 @@ export class SansEcoleController {
   @Post('appliquer')
   appliquer(
     @Utilisateur() u: UtilisateurConnecte,
-    @Body() corps: { rattacher?: unknown; aligner?: unknown },
+    @Body()
+    corps: {
+      rattacher?: unknown;
+      aligner?: unknown;
+      detacher?: unknown;
+      deplacer?: unknown;
+    },
   ) {
+    const paires = (v: unknown) =>
+      Array.isArray(v)
+        ? (v as { cle?: unknown; structureId?: unknown }[])
+            .filter(
+              (x) =>
+                typeof x?.cle === 'string' && Number.isInteger(x?.structureId),
+            )
+            .map((x) => ({
+              cle: x.cle as string,
+              structureId: x.structureId as number,
+            }))
+            .slice(0, 20000)
+        : [];
+    const textes = (v: unknown) =>
+      Array.isArray(v)
+        ? v.filter((x): x is string => typeof x === 'string').slice(0, 20000)
+        : [];
     const rattacher = Array.isArray(corps?.rattacher)
       ? (corps.rattacher as { cle?: unknown; structureId?: unknown }[])
           .filter(
@@ -73,6 +103,11 @@ export class SansEcoleController {
           .filter((x): x is string => typeof x === 'string')
           .slice(0, 20000)
       : [];
-    return this.service.appliquer(u, { rattacher, aligner });
+    return this.service.appliquer(u, {
+      rattacher,
+      aligner,
+      detacher: textes(corps?.detacher),
+      deplacer: paires(corps?.deplacer),
+    });
   }
 }

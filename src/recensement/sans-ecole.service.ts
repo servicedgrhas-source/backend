@@ -4,7 +4,25 @@ import { DataSource } from 'typeorm';
 import type { UtilisateurConnecte } from '../auth/auth';
 import { normaliser } from '../common/texte';
 import { JournalService } from '../core/core.service';
-import { rapprocherLieux, type StructureSansEcole } from './sans-ecole';
+import {
+  natureDuLieu,
+  rapprocherLieux,
+  type StructureSansEcole,
+} from './sans-ecole';
+
+const NOMS_CYCLES: Record<string, string> = {
+  PRESCOLAIRE: 'préscolaire',
+  PRIMAIRE: 'primaire',
+  COLLEGE: 'collège',
+  LYCEE: 'lycée',
+  ALPHABETISATION: 'alphabétisation',
+};
+const NATURES: Record<string, string> = {
+  ECOLE: 'École',
+  INSPECTION: 'Inspection',
+  DDEPPSA: 'Direction départementale (DDEPPSA)',
+  ADMINISTRATION: 'Administration (direction, service…)',
+};
 
 interface FicheLieu {
   id: number;
@@ -19,6 +37,7 @@ interface FicheRattachee {
   structureId: number;
   departementId: number | null;
   lieu: string;
+  cycle: string | null;
 }
 
 const cleLieu = (dep: number | null, lieu: string, cycle: string | null) =>
@@ -55,13 +74,15 @@ export class SansEcoleService {
         `SELECT id, statut, "departementId", trim(donnees->>'LIEU_SERVICE') AS lieu, donnees->>'CYCLE' AS cycle
            FROM agent_recense
           WHERE "structureId" IS NULL AND coalesce(contentieux->>'etat', 'CONFIRME') = 'CONFIRME' AND retrait IS NULL
-            AND coalesce(trim(donnees->>'LIEU_SERVICE'), '') <> ''`,
+            AND coalesce(trim(donnees->>'LIEU_SERVICE'), '') <> ''
+          ORDER BY id`,
       ),
       this.ds.query<FicheRattachee[]>(
-        `SELECT id, "structureId", "departementId", trim(donnees->>'LIEU_SERVICE') AS lieu
+        `SELECT id, "structureId", "departementId", trim(donnees->>'LIEU_SERVICE') AS lieu, donnees->>'CYCLE' AS cycle
            FROM agent_recense
           WHERE "structureId" IS NOT NULL AND coalesce(contentieux->>'etat', 'CONFIRME') = 'CONFIRME' AND retrait IS NULL
-            AND coalesce(trim(donnees->>'LIEU_SERVICE'), '') <> ''`,
+            AND coalesce(trim(donnees->>'LIEU_SERVICE'), '') <> ''
+          ORDER BY id`,
       ),
       this.ds.query<{ id: number; nom: string }[]>(
         `SELECT id, nom FROM departement`,
@@ -114,14 +135,14 @@ export class SansEcoleService {
     const parId = new Map(structures.map((s) => [s.id, s]));
     const ecarts = new Map<
       string,
-      { cle: string; lieu: string; structureId: number; ids: number[] }
+      {
+        cle: string;
+        lieu: string;
+        structureId: number;
+        ids: number[];
+        cycles: Record<string, number>;
+      }
     >();
-    const lieuxAVerifier: {
-      cle: string;
-      texte: string;
-      departementId: number | null;
-      cycleFiche: string | null;
-    }[] = [];
     for (const f of avec) {
       const s = parId.get(f.structureId);
       if (!s) continue;
@@ -138,24 +159,65 @@ export class SansEcoleService {
         lieu: f.lieu,
         structureId: f.structureId,
         ids: [],
+        cycles: {},
       };
-      if (!e.ids.length)
-        lieuxAVerifier.push({
-          cle,
-          texte: f.lieu,
-          departementId: s.departementId,
-          cycleFiche: s.cycle,
-        });
       e.ids.push(f.id);
+      if (f.cycle) e.cycles[f.cycle] = (e.cycles[f.cycle] ?? 0) + 1;
       ecarts.set(cle, e);
     }
-    // Le lieu écrit désigne-t-il la même école (écrite autrement) ou une autre ?
-    const props = rapprocherLieux(lieuxAVerifier, structures);
-    for (const [cle, e] of ecarts) {
-      const p = props.get(cle);
-      if (p?.structureId === e.structureId) ecarts.delete(cle);
-    }
-    return { ecarts, props };
+    // Le cycle des fiches du groupe (le plus fréquent)
+    const cycleDe = (e: { cycles: Record<string, number> }) =>
+      Object.entries(e.cycles).sort(
+        (a, b) => b[1] - a[1] || a[0].localeCompare(b[0]),
+      )[0]?.[0] ?? null;
+    // Le lieu écrit désigne-t-il la même structure (écrite autrement) ou une autre ? Lu avec le
+    // cycle des fiches (un agent de lycée), et avec celui de la structure : si l'une des deux
+    // lectures retrouve la structure de rattachement, ce n'est pas un écart.
+    const lire = (avecCycleFiche: boolean) =>
+      rapprocherLieux(
+        [...ecarts.values()].map((e) => {
+          const s = parId.get(e.structureId)!;
+          return {
+            cle: e.cle,
+            texte: e.lieu,
+            departementId: s.departementId,
+            cycleFiche: (avecCycleFiche ? cycleDe(e) : null) ?? s.cycle,
+          };
+        }),
+        structures,
+      );
+    const props = lire(true);
+    const propsStructure = lire(false);
+    for (const [cle, e] of ecarts)
+      if (
+        props.get(cle)?.structureId === e.structureId ||
+        propsStructure.get(cle)?.structureId === e.structureId
+      )
+        ecarts.delete(cle);
+    return { ecarts, props, cycleDe };
+  }
+
+  /**
+   * Pourquoi un rattachement est douteux (DG, 24/11/2026 : 16 agents de lycée rattachés à une
+   * inspection préscolaire parce que leur lieu écrit était « POINTE-NOIRE 2 »), ou null.
+   */
+  private douteux(
+    lieu: string,
+    s: StructureSansEcole,
+    cycleFiches: string | null,
+  ) {
+    if (s.cycle && cycleFiches && s.cycle !== cycleFiches)
+      return `Agents du ${NOMS_CYCLES[cycleFiches] ?? cycleFiches}, rattachés à une structure du ${NOMS_CYCLES[s.cycle] ?? s.cycle}.`;
+    const n = natureDuLieu(lieu);
+    if (s.type === 'INSPECTION' && n !== 'INSPECTION')
+      return n === 'ECOLE'
+        ? 'Le lieu écrit est une école, mais la fiche est rattachée à une inspection.'
+        : 'Le lieu écrit est un simple nom de lieu (ni école ni inspection), rattaché à une inspection.';
+    if (s.type === 'DDEPPSA' && n === 'ECOLE')
+      return 'Le lieu écrit est une école, mais la fiche est rattachée à la direction départementale.';
+    if (s.type === 'ETABLISSEMENT' && (n === 'INSPECTION' || n === 'DDEPPSA'))
+      return 'Le lieu écrit est une inspection ou une direction, mais la fiche est rattachée à une école.';
+    return null;
   }
 
   async analyse() {
@@ -228,26 +290,39 @@ export class SansEcoleService {
       .sort(
         (a, b) => b.fiches - a.fiches || a.lieu.localeCompare(b.lieu, 'fr'),
       );
-    const { ecarts, props: pe } = this.ecarts(avec, structures);
+    const { ecarts, props: pe, cycleDe } = this.ecarts(avec, structures);
     const listeEcarts = [...ecarts.values()]
       .map((e) => {
         const s = parId.get(e.structureId);
         const p = pe.get(e.cle);
+        const cycle = cycleDe(e);
+        // Une autre structure que le lieu écrit désigne (sûre, ou à confirmer)
+        const autre =
+          p?.structureId && p.structureId !== e.structureId
+            ? resume(p.structureId)
+            : null;
         return {
           cle: e.cle,
           lieu: e.lieu,
           fiches: e.ids.length,
           ids: e.ids,
+          cycle,
           departementId: s?.departementId ?? null,
           departement: s?.departementId
             ? (nomDep.get(s.departementId) ?? null)
             : null,
           rattachee: resume(e.structureId),
-          // Le lieu écrit désigne sûrement une autre structure : à vérifier fiche par fiche
-          autre: p?.etat === 'SUR' ? resume(p.structureId) : null,
+          autre,
+          autreSure: !!autre && p?.etat === 'SUR' && !!natureDuLieu(e.lieu),
+          autres: (p?.autres ?? [])
+            .filter((id) => id !== e.structureId)
+            .map(resume)
+            .filter(Boolean),
+          douteux: s ? this.douteux(e.lieu, s, cycle) : null,
         };
       })
-      .sort((a, b) => b.fiches - a.fiches);
+      // Les rattachements douteux d'abord
+      .sort((a, b) => +!!b.douteux - +!!a.douteux || b.fiches - a.fiches);
     const somme = (l: { fiches: number }[]) =>
       l.reduce((n, x) => n + x.fiches, 0);
     const [{ n: sansLieu }] = await this.ds.query<{ n: number }[]>(
@@ -263,6 +338,7 @@ export class SansEcoleService {
         probable: somme(lieux.filter((l) => l.etat === 'PROBABLE')),
         introuvable: somme(lieux.filter((l) => l.etat === 'INTROUVABLE')),
         ecarts: somme(listeEcarts),
+        douteux: somme(listeEcarts.filter((e) => e.douteux)),
       },
       lieux,
       ecarts: listeEcarts,
@@ -298,13 +374,15 @@ export class SansEcoleService {
         inspection: string | null;
         cycle: string | null;
         ecole: string | null;
+        source: string | null;
       }[]
     >(
       `SELECT a.id, a."nomComplet" AS nom, a.statut, to_char(a."dateNaissance", 'DD/MM/YYYY') AS naissance,
               coalesce(nullif(trim(a.matricule), ''), nullif(trim(a.donnees->>'MATRICULE_SOLDE'), '')) AS matricule,
               nullif(trim(coalesce(a.donnees->>'TELEPHONE_1', a.telephone, '')), '') AS telephone,
               trim(a.donnees->>'LIEU_SERVICE') AS lieu, nullif(trim(a.donnees->>'INSPECTION'), '') AS inspection,
-              a.donnees->>'CYCLE' AS cycle, s.nom AS ecole
+              a.donnees->>'CYCLE' AS cycle, s.nom AS ecole,
+              nullif(trim(a.liaison->'volontaire'->>'LIEU_SERVICE'), '') AS source
          FROM agent_recense a LEFT JOIN structure s ON s.id = a."structureId"
         WHERE a.id = ANY($1) ORDER BY a."nomComplet"`,
       [ids],
@@ -473,6 +551,131 @@ export class SansEcoleService {
   }
 
   /**
+   * Les lieux écrits sur les fiches sans structure, UNE LIGNE PAR LIEU (DG, 24/11/2026 : « faire
+   * sortir les écoles ou administrations écrites sur les fiches, où le système propose de les
+   * rattacher, et même celles qu'il ne trouve pas ») : ce que c'est, combien de fiches, ce que le
+   * système propose, et trois colonnes pour la réponse (nom exact dans l'organigramme, ou structure
+   * à créer). Une réponse par lieu corrige d'un coup toutes ses fiches.
+   */
+  async excelLieux(departementId: number | null, tout: boolean) {
+    const { lieux } = await this.calcul();
+    const SITUATIONS: Record<string, string> = {
+      INTROUVABLE: 'Introuvable dans l’organigramme',
+      PROBABLE: 'Proposée : à confirmer',
+      SUR: 'Trouvée (sûre)',
+    };
+    const ordre = ['INTROUVABLE', 'PROBABLE', 'SUR'];
+    const choisis = lieux
+      .filter((l) => tout || l.etat !== 'SUR')
+      .filter(
+        (l) => departementId === null || l.departementId === departementId,
+      )
+      .sort(
+        (a, b) =>
+          (a.departement ?? 'zz').localeCompare(b.departement ?? 'zz', 'fr') ||
+          ordre.indexOf(a.etat) - ordre.indexOf(b.etat) ||
+          b.fiches - a.fiches ||
+          a.lieu.localeCompare(b.lieu, 'fr'),
+      );
+    const wb = new ExcelJS.Workbook();
+    wb.creator = 'SIGRHAS-MEPPSA';
+    const entete = (f: ExcelJS.Worksheet) => {
+      const r = f.getRow(1);
+      r.font = { bold: true, color: { argb: 'FFFFFFFF' } };
+      r.fill = {
+        type: 'pattern',
+        pattern: 'solid',
+        fgColor: { argb: 'FF0F5132' },
+      };
+      r.alignment = { vertical: 'middle', wrapText: true };
+      r.height = 42;
+      f.views = [{ state: 'frozen', ySplit: 1 }];
+    };
+    const syn = wb.addWorksheet('Synthèse');
+    const colonnesSyn = ordre.filter((o) => tout || o !== 'SUR');
+    syn.columns = [
+      { header: 'DDEPPSA (département)', width: 28 },
+      ...colonnesSyn.flatMap((o) => [
+        { header: `${SITUATIONS[o]} : lieux`, width: 18 },
+        { header: `${SITUATIONS[o]} : fiches`, width: 18 },
+      ]),
+      { header: 'Total des lieux', width: 14 },
+      { header: 'Total des fiches', width: 14 },
+    ];
+    const parDep = new Map<string, Record<string, [number, number]>>();
+    for (const l of choisis) {
+      const d = l.departement ?? 'Département non indiqué';
+      const x = parDep.get(d) ?? {};
+      const [nl, nf] = x[l.etat] ?? [0, 0];
+      x[l.etat] = [nl + 1, nf + l.fiches];
+      parDep.set(d, x);
+    }
+    for (const [d, x] of parDep)
+      syn.addRow([
+        d,
+        ...colonnesSyn.flatMap((o) => x[o] ?? [0, 0]),
+        Object.values(x).reduce((s, v) => s + v[0], 0),
+        Object.values(x).reduce((s, v) => s + v[1], 0),
+      ]);
+    entete(syn);
+
+    const f = wb.addWorksheet('Lieux à reconnaître');
+    f.columns = [
+      { header: 'N°', width: 7 },
+      { header: 'DDEPPSA (département)', width: 22 },
+      { header: 'Lieu de service écrit sur les fiches', width: 38 },
+      { header: 'Ce que c’est (d’après le texte)', width: 24 },
+      { header: 'Cycle des fiches', width: 14 },
+      { header: 'Nombre de fiches', width: 11 },
+      { header: 'Situation', width: 26 },
+      { header: 'Structure proposée par le système', width: 36 },
+      { header: 'Autres structures possibles', width: 36 },
+      {
+        header:
+          'RÉPONSE : nom exact de l’école ou de la structure dans l’organigramme',
+        width: 40,
+      },
+      {
+        header: 'Si elle n’existe pas : à créer (type, cycle, localité)',
+        width: 36,
+      },
+      { header: 'Observation', width: 30 },
+    ];
+    let n = 0;
+    for (const l of choisis)
+      f.addRow([
+        ++n,
+        l.departement ?? '',
+        l.lieu,
+        NATURES[natureDuLieu(l.lieu) ?? ''] ?? 'Nom seul (non précisé)',
+        l.cycle ? (NOMS_CYCLES[l.cycle] ?? l.cycle) : '',
+        l.fiches,
+        SITUATIONS[l.etat] ?? l.etat,
+        l.proposee?.nom ?? '',
+        l.autres
+          .map((a) => a?.nom)
+          .filter(Boolean)
+          .join(' ; '),
+        '',
+        '',
+        '',
+      ]);
+    entete(f);
+    f.autoFilter = { from: 'A1', to: 'L1' };
+    for (const c of ['J', 'K', 'L'])
+      f.getColumn(c).eachCell((cell, r) => {
+        if (r > 1)
+          cell.fill = {
+            type: 'pattern',
+            pattern: 'solid',
+            fgColor: { argb: 'FFFFF4CC' },
+          };
+      });
+    const tampon = Buffer.from(await wb.xlsx.writeBuffer());
+    return { tampon, lignes: n };
+  }
+
+  /**
    * Rattache les fiches des lieux choisis à leur école ; pour un écart, écrit le nom de l'école de
    * rattachement dans le lieu de service. Seules les fiches encore dans le même cas changent.
    */
@@ -481,14 +684,33 @@ export class SansEcoleService {
     choix: {
       rattacher: { cle: string; structureId: number }[];
       aligner: string[];
+      /** Écarts dont le rattachement est faux : les fiches repassent « sans école ». */
+      detacher?: string[];
+      /** Écarts à rattacher à une autre structure (du même département). */
+      deplacer?: { cle: string; structureId: number }[];
     },
   ) {
+    const detacher = choix.detacher ?? [];
+    const deplacer = choix.deplacer ?? [];
     // (les fiches vont changer : l'analyse gardée ne vaut plus)
     memoireAnalyse = null;
     const { structures, sans, avec } = await this.donnees();
     const parId = new Map(structures.map((s) => [s.id, s]));
     const { groupes } = this.groupes(sans, structures);
-    const res = { rattachees: 0, alignees: 0, refus: [] as string[] };
+    const res = {
+      rattachees: 0,
+      alignees: 0,
+      detachees: 0,
+      deplacees: 0,
+      refus: [] as string[],
+    };
+    const marque = `${u.nom} ${new Date().toISOString().slice(0, 10)}`;
+    const corriges: {
+      lieu: string;
+      ancienne: number;
+      nouvelle: number | null;
+      fiches: number;
+    }[] = [];
     const traces: { lieu: string; structureId: number; fiches: number }[] = [];
     await this.ds.transaction(async (m) => {
       for (const c of choix.rattacher) {
@@ -530,8 +752,73 @@ export class SansEcoleService {
         res.rattachees += n;
         traces.push({ lieu: g.lieu, structureId: s.id, fiches: n });
       }
+      const nLignes = (r: unknown[]) =>
+        Array.isArray(r[0]) ? (r[0] as unknown[]).length : r.length;
+      const { ecarts } =
+        choix.aligner.length || detacher.length || deplacer.length
+          ? this.ecarts(avec, structures)
+          : { ecarts: new Map<string, never>() };
+      // Rattachement faux : la fiche n'est plus rattachée (elle revient dans « sans école », avec
+      // son lieu écrit), et le rattachement automatique ne la reprendra pas
+      for (const cle of detacher) {
+        const e = ecarts.get(cle);
+        if (!e) {
+          res.refus.push('Un écart a déjà été traité : rechargez la page.');
+          continue;
+        }
+        const r = await m.query<unknown[]>(
+          `UPDATE agent_recense
+              SET "structureId" = NULL,
+                  liaison = coalesce(liaison, '{}'::jsonb) - 'rattachementAuto'
+                    || jsonb_build_object('detache', jsonb_build_object('par', $3::text, 'ancienne', $2::int))
+            WHERE id = ANY($1) AND "structureId" = $2 RETURNING id`,
+          [e.ids, e.structureId, marque],
+        );
+        res.detachees += nLignes(r);
+        corriges.push({
+          lieu: e.lieu,
+          ancienne: e.structureId,
+          nouvelle: null,
+          fiches: nLignes(r),
+        });
+      }
+      for (const d of deplacer) {
+        const e = ecarts.get(d.cle);
+        const s = parId.get(d.structureId);
+        const avant = e ? parId.get(e.structureId) : undefined;
+        if (!e || !s) {
+          res.refus.push(
+            'Un écart a déjà été traité, ou la structure est fermée : rechargez la page.',
+          );
+          continue;
+        }
+        if (
+          avant?.departementId &&
+          s.departementId &&
+          s.departementId !== avant.departementId
+        ) {
+          res.refus.push(
+            `« ${e.lieu} » : choisissez une structure de son département.`,
+          );
+          continue;
+        }
+        const r = await m.query<unknown[]>(
+          `UPDATE agent_recense
+              SET "structureId" = $3,
+                  liaison = coalesce(liaison, '{}'::jsonb) - 'rattachementAuto' - 'detache'
+                    || jsonb_build_object('rattachementLieu', $4::text)
+            WHERE id = ANY($1) AND "structureId" = $2 RETURNING id`,
+          [e.ids, e.structureId, s.id, marque],
+        );
+        res.deplacees += nLignes(r);
+        corriges.push({
+          lieu: e.lieu,
+          ancienne: e.structureId,
+          nouvelle: s.id,
+          fiches: nLignes(r),
+        });
+      }
       if (choix.aligner.length) {
-        const { ecarts } = this.ecarts(avec, structures);
         for (const cle of choix.aligner) {
           const e = ecarts.get(cle);
           const s = e ? parId.get(e.structureId) : undefined;
@@ -547,11 +834,18 @@ export class SansEcoleService {
         }
       }
     });
-    if (!res.rattachees && !res.alignees && res.refus.length)
+    if (
+      !res.rattachees &&
+      !res.alignees &&
+      !res.detachees &&
+      !res.deplacees &&
+      res.refus.length
+    )
       throw new BadRequestException(res.refus.slice(0, 3).join(' '));
     await this.journal.log(u, 'AGENTS_SANS_ECOLE', 'agent_recense', null, {
       ...res,
       lieux: traces,
+      corriges,
     });
     return res;
   }

@@ -336,6 +336,7 @@ export class RecensementService {
     >(
       `SELECT id, donnees->>'LIEU_SERVICE' AS lieu, "departementId", donnees->>'CYCLE' AS cycle FROM agent_recense
         WHERE "structureId" IS NULL AND coalesce(donnees->>'LIEU_SERVICE', '') <> ''
+          AND NOT (coalesce(liaison, '{}'::jsonb) ? 'detache')
           ${ids ? 'AND id = ANY($1)' : ''}`,
       ids ? [ids] : [],
     );
@@ -2544,40 +2545,40 @@ export class RecensementService {
       ctl,
       parRattachement,
     ] = await Promise.all([
-        q<{
-          total: number;
-          complets: number;
-          taux: number | null;
-        }>(
-          `SELECT count(*)::int AS total, count(*) FILTER (WHERE complet)::int AS complets, round(avg(taux))::int AS taux FROM agent_recense a WHERE ${w}`,
-        ),
-        q<{ statut: string; n: number; complets: number }>(
-          `SELECT statut, count(*)::int AS n, count(*) FILTER (WHERE complet)::int AS complets FROM agent_recense a WHERE ${w} GROUP BY 1 ORDER BY 2 DESC`,
-        ),
-        q<{
-          departementId: number | null;
-          n: number;
-          complets: number;
-        }>(
-          `SELECT "departementId", count(*)::int AS n, count(*) FILTER (WHERE complet)::int AS complets FROM agent_recense a WHERE ${w} GROUP BY 1 ORDER BY 2 DESC`,
-        ),
-        q<{ code: string; n: number }>(
-          `SELECT x AS code, count(*)::int AS n FROM agent_recense a, jsonb_array_elements_text(coalesce(a.manques->'champs','[]'::jsonb)) x WHERE ${w} GROUP BY 1 ORDER BY 2 DESC`,
-        ),
-        q<{ code: string; n: number; total: number }>(
-          `SELECT x->>'code' AS code, count(*)::int AS n, sum((x->>'manque')::int)::int AS total FROM agent_recense a, jsonb_array_elements(coalesce(a.manques->'pieces','[]'::jsonb)) x WHERE ${w} GROUP BY 1 ORDER BY 2 DESC`,
-        ),
-        this.controles(u),
-        // Où sont rattachées les fiches (DG, 24/11/2026 : « je ne sais même pas combien de fiches
-        // ont des structures de rattachement ») : par type de structure, puis les fiches sans
-        // structure, avec ou sans lieu de service écrit
-        q<{ rattachement: string; n: number }>(
-          `SELECT coalesce(s.type, CASE WHEN coalesce(trim(a.donnees->>'LIEU_SERVICE'), '') <> '' THEN 'SANS_LIEU' ELSE 'SANS_RIEN' END) AS rattachement,
+      q<{
+        total: number;
+        complets: number;
+        taux: number | null;
+      }>(
+        `SELECT count(*)::int AS total, count(*) FILTER (WHERE complet)::int AS complets, round(avg(taux))::int AS taux FROM agent_recense a WHERE ${w}`,
+      ),
+      q<{ statut: string; n: number; complets: number }>(
+        `SELECT statut, count(*)::int AS n, count(*) FILTER (WHERE complet)::int AS complets FROM agent_recense a WHERE ${w} GROUP BY 1 ORDER BY 2 DESC`,
+      ),
+      q<{
+        departementId: number | null;
+        n: number;
+        complets: number;
+      }>(
+        `SELECT "departementId", count(*)::int AS n, count(*) FILTER (WHERE complet)::int AS complets FROM agent_recense a WHERE ${w} GROUP BY 1 ORDER BY 2 DESC`,
+      ),
+      q<{ code: string; n: number }>(
+        `SELECT x AS code, count(*)::int AS n FROM agent_recense a, jsonb_array_elements_text(coalesce(a.manques->'champs','[]'::jsonb)) x WHERE ${w} GROUP BY 1 ORDER BY 2 DESC`,
+      ),
+      q<{ code: string; n: number; total: number }>(
+        `SELECT x->>'code' AS code, count(*)::int AS n, sum((x->>'manque')::int)::int AS total FROM agent_recense a, jsonb_array_elements(coalesce(a.manques->'pieces','[]'::jsonb)) x WHERE ${w} GROUP BY 1 ORDER BY 2 DESC`,
+      ),
+      this.controles(u),
+      // Où sont rattachées les fiches (DG, 24/11/2026 : « je ne sais même pas combien de fiches
+      // ont des structures de rattachement ») : par type de structure, puis les fiches sans
+      // structure, avec ou sans lieu de service écrit
+      q<{ rattachement: string; n: number }>(
+        `SELECT coalesce(s.type, CASE WHEN coalesce(trim(a.donnees->>'LIEU_SERVICE'), '') <> '' THEN 'SANS_LIEU' ELSE 'SANS_RIEN' END) AS rattachement,
                   count(*)::int AS n
              FROM agent_recense a LEFT JOIN structure s ON s.id = a."structureId"
             WHERE ${w} GROUP BY 1 ORDER BY 2 DESC`,
-        ),
-      ]);
+      ),
+    ]);
     return {
       total: totaux.total,
       parRattachement,
