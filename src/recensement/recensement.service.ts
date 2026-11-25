@@ -72,6 +72,8 @@ export interface FiltresAgents {
   anomalies?: boolean;
   /** Agents ajoutés au recensement : A_CONTROLER, A_DECIDER, ACCEPTES ou REJETES. */
   ajout?: string;
+  /** Agents ajoutés pendant ce recensement (campagne). */
+  campagne?: number;
   /** Une catégorie du centre de contrôle des effectifs (« En attente de matricule »…). */
   effectif?: string;
   /**
@@ -454,6 +456,7 @@ export class RecensementService {
     };
     if (f.ajout && etatAjout[f.ajout])
       ajouter(`a.contentieux->>'etat' = $X`, etatAjout[f.ajout]);
+    if (f.campagne) ajouter('a."campagneRecensementId" = $X', f.campagne);
     if (f.statut) ajouter('a.statut = $X', f.statut);
     if (f.departement) ajouter('a."departementId" = $X', f.departement);
     if (f.structure) ajouter('a."structureId" = $X', f.structure);
@@ -1225,11 +1228,16 @@ export class RecensementService {
    * Modifications faites au recensement qui attendent le contrôle, dans le périmètre du compte :
    * l'agent, qui a modifié et quand, et chaque rubrique avec son ancienne et sa nouvelle valeur.
    */
-  async modificationsAControler(u: UtilisateurConnecte) {
+  async modificationsAControler(u: UtilisateurConnecte, campagne?: number) {
     const p = await this.perimetre(u);
     const fp = this.filtrePerimetre(p);
     let i = 0;
-    const where = fp.sql.replace(/\$X/g, () => `$${++i}`);
+    let where = fp.sql.replace(/\$X/g, () => `$${++i}`);
+    // Les modifications d'un seul recensement (page « Contrôle des données » de ce recensement)
+    if (campagne) {
+      fp.params.push(campagne);
+      where = `${where ? `${where} AND ` : ''}m."campagneId" = $${++i}`;
+    }
     const lignes = await this.agents.query<
       {
         id: number;

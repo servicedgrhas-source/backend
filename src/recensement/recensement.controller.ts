@@ -75,6 +75,7 @@ function filtres(q: Record<string, string | undefined>): FiltresAgents {
     controle: q.controle || undefined,
     anomalies: q.anomalies === '1' || undefined,
     ajout: q.ajout || undefined,
+    campagne: nombre(q.campagne),
     effectif: q.effectif?.slice(0, 40) || undefined,
     rattachement: q.rattachement?.slice(0, 40) || undefined,
     page: nombre(q.page),
@@ -222,8 +223,11 @@ export class RecensementController {
 
   /** Modifications faites au recensement qui attendent le contrôle (ancienne et nouvelle valeur). */
   @Get('modifications')
-  modifications(@Utilisateur() u: UtilisateurConnecte) {
-    return this.rec.modificationsAControler(u);
+  modifications(
+    @Utilisateur() u: UtilisateurConnecte,
+    @Query('campagne') campagne?: string,
+  ) {
+    return this.rec.modificationsAControler(u, nombre(campagne));
   }
 
   /** Bureau du contrôle : valider ou rejeter une ou plusieurs modifications à la fois. */
