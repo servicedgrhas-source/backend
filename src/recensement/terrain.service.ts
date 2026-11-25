@@ -64,6 +64,8 @@ export const COLONNES_TERRAIN = [
   'DIPLOME_PRO',
   'CYCLE',
   'SPECIALITE',
+  // Une ligne par diplôme, comme les enfants (25/11/2026)
+  'AUTRES_DIPLOMES',
   'DATE_PRISE_SERVICE',
   'PRESENCE_POSTE',
   'TELEPHONE_1',
@@ -1044,6 +1046,12 @@ export class TerrainService implements OnApplicationBootstrap {
           colonnes: (ch.colonnes ?? []).map((x) => ({
             code: x.code,
             libelle: x.libelle,
+            type: x.type,
+            // Une case « liste » d'un tableau (le diplôme) : ses choix
+            options: (x.options ?? []).map((o) => ({
+              code: o.code,
+              libelle: o.libelle,
+            })),
           })),
           obligatoirePour: ch.obligatoirePour ?? [],
           aide: ch.aide ?? '',
