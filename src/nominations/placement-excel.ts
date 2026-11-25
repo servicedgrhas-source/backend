@@ -206,7 +206,7 @@ export async function excelPlacement(
       x.border = bords;
     });
     row.height = 32;
-    ws.views = [{ state: 'frozen', ySplit: l }];
+    // (pas de volets figés : le DG ne les veut pas, 25/11/2026)
     ws.autoFilter = {
       from: { row: l, column: 1 },
       to: { row: l, column: noms.length },
