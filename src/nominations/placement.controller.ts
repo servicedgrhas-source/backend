@@ -1,10 +1,12 @@
-import { Body, Controller, Get, Post, Query } from '@nestjs/common';
+import { Body, Controller, Get, Post, Query, Res } from '@nestjs/common';
+import type { Response } from 'express';
 import {
   Roles,
   ROLES_TRAITEMENT,
   Utilisateur,
   type UtilisateurConnecte,
 } from '../auth/auth';
+import { excelPlacement } from './placement-excel';
 import { PlacementNominationsService } from './placement.service';
 
 /** Placer les nommés dans l'organigramme : essai, puis enregistrement (DG et administrateurs). */
@@ -16,6 +18,28 @@ export class PlacementNominationsController {
   @Get()
   analyse(@Query('annee') annee?: string) {
     return this.service.analyse(annee || undefined);
+  }
+
+  /** En Excel, une feuille par situation (à envoyer aux DDEPPSA) ; un département ou tous. */
+  @Get('excel')
+  async excel(
+    @Query('annee') annee: string | undefined,
+    @Query('departement') departement: string | undefined,
+    @Res() res: Response,
+  ) {
+    const r = await this.service.analyse(annee || undefined);
+    const dep = departement?.trim() || null;
+    const contenu = await excelPlacement(r, dep);
+    const nom = `Placement des nommés ${r.annee ?? ''}${dep ? ` - ${dep}` : ''}.xlsx`;
+    res.setHeader(
+      'Content-Type',
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    );
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename="${nom.replace(/[^ -~]/g, '_')}"; filename*=UTF-8''${encodeURIComponent(nom)}`,
+    );
+    res.send(contenu);
   }
 
   @Roles('DG')
