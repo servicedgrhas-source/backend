@@ -58,6 +58,11 @@ export interface UtilisateurConnecte {
   informatique?: boolean;
   /** Compte suspendu par l'outil de détection : toute requête est refusée. */
   suspendu?: boolean;
+  /**
+   * Recenseur bloqué dont l'appareil doit être effacé (25/11/2026) : sa session ne sert qu'à
+   * l'effacement (toute autre requête dit à l'appareil d'effacer).
+   */
+  effacementSeul?: boolean;
 }
 
 /** Types de fichiers qu'un visiteur ne reçoit jamais (filet de sécurité derrière les adresses). */
@@ -237,6 +242,12 @@ export class AuthGuard implements CanActivate {
     req.user = await this.sessions.profilDuJeton(jeton);
     // Outil de détection (08/11/2026) : compte suspendu, puis règles de la requête
     if (req.user.suspendu) throw compteSignale();
+    // Recenseur bloqué, effacement demandé : rien d'autre que « c'est effacé »
+    if (
+      req.user.effacementSeul &&
+      req.path !== '/api/recensement/terrain/mission/efface'
+    )
+      throw effacerAppareil();
     // Recenseur dont l'appareil doit être effacé : seuls passent l'envoi de ce qui attend (lignes
     // et positions GPS, juste avant l'effacement) et l'accusé « c'est effacé »
     if (

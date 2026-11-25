@@ -378,8 +378,9 @@ export class RecenseursService {
   }
 
   /**
-   * Arrêter la mission de ce recenseur et effacer son appareil (perdu, volé, recenseur retiré) :
-   * à sa prochaine connexion, l'appareil efface tout ce qu'il garde, puis le compte se ferme.
+   * Effacer les données de l'appareil de ce recenseur (25/11/2026) : à sa prochaine connexion,
+   * l'appareil envoie ce qui attend, efface toutes ses données et le dit ; le compte continue et
+   * la base se retélécharge. Appareil perdu, recenseur retiré : le bloquer aussi.
    */
   async effacer(moi: UtilisateurConnecte, id: string) {
     const r = await this.un(id);
@@ -421,16 +422,19 @@ export class RecenseursService {
 
   async debloquer(moi: UtilisateurConnecte, id: string) {
     const r = await this.un(id);
+    // Un effacement déjà fait ne reviendra pas ; un effacement en attente reste demandé
     await this.ds.query(
-      `UPDATE recenseur SET "bloqueLe" = NULL, "bloquePar" = NULL WHERE "utilisateurId" = $1`,
+      `UPDATE recenseur SET "bloqueLe" = NULL, "bloquePar" = NULL,
+              "effacerLe" = CASE WHEN "effaceLe" IS NOT NULL AND "effaceLe" >= "effacerLe" THEN NULL ELSE "effacerLe" END
+        WHERE "utilisateurId" = $1`,
       [id],
     );
-    // (un appareil déjà effacé reste fermé : « Reprendre » le rouvre)
-    await this.ds.query(
-      `UPDATE utilisateur u SET actif = true FROM recenseur r
-        WHERE u.id = $1 AND r."utilisateurId" = u.id AND r."effaceLe" IS NULL AND r."effacerLe" IS NULL`,
-      [id],
-    );
+    // Le compte se rouvre toujours (DG, 25/11/2026 : « si on débloque, il peut se reconnecter ») ;
+    // les essais ratés pendant le blocage sont oubliés
+    await this.ds.query(`UPDATE utilisateur SET actif = true WHERE id = $1`, [
+      id,
+    ]);
+    await this.sessions.debloquer(id);
     await this.journal.log(moi, 'RECENSEUR_DEBLOQUE', 'recenseur', id, {
       code: r.code,
     });
@@ -484,17 +488,31 @@ export class RecenseursService {
     };
   }
 
-  /** L'appareil a tout effacé : on le note et le compte se ferme. */
+  /**
+   * L'appareil a effacé ses données. Effacement demandé par la DGRHAS : la demande est levée (elle
+   * ne revient plus) et le compte continue. Fin de mission : le compte se ferme.
+   */
   async accuseEfface(u: UtilisateurConnecte) {
     if (u.role !== 'RECENSEUR') return { ok: true };
+    const demande = await this.sessions.effacementDemande(u.id);
     await this.ds.query(
-      `UPDATE recenseur SET "effaceLe" = now() WHERE "utilisateurId" = $1`,
+      `UPDATE recenseur SET "effaceLe" = now(), "effacerLe" = NULL WHERE "utilisateurId" = $1`,
       [u.id],
     );
-    await this.ds.query(`UPDATE utilisateur SET actif = false WHERE id = $1`, [
-      u.id,
-    ]);
-    await this.journal.log(u, 'RECENSEUR_APPAREIL_EFFACE', 'recenseur', u.id);
+    // Fin de mission (la date est passée) : le compte se ferme. Sinon (accusé en double, effacement
+    // fait sur place) le compte reste ouvert
+    const r = await this.un(u.id);
+    const aujourdhui = new Date().toLocaleDateString('en-CA', {
+      timeZone: 'Africa/Brazzaville',
+    });
+    if (!demande && r.fin && aujourdhui > r.fin)
+      await this.ds.query(
+        `UPDATE utilisateur SET actif = false WHERE id = $1`,
+        [u.id],
+      );
+    await this.journal.log(u, 'RECENSEUR_APPAREIL_EFFACE', 'recenseur', u.id, {
+      demandeDgrhas: demande,
+    });
     return { ok: true };
   }
 

@@ -184,9 +184,19 @@ export class SessionService {
       ])
       .where('u.id = :id', { id: contenu.id })
       .getOne();
-    if (u && !u.actif && u.role === 'RECENSEUR' && (await this.recenseurBloque(u.id)))
-      throw new UnauthorizedException(MESSAGE_RECENSEUR_BLOQUE);
-    if (!u || !u.actif)
+    // Recenseur bloqué : refusé, sauf si son appareil doit être effacé (la session ne sert qu'à cela)
+    let effacementSeul = false;
+    if (
+      u &&
+      !u.actif &&
+      u.role === 'RECENSEUR' &&
+      (await this.recenseurBloque(u.id))
+    ) {
+      if (!(await this.effacementDemande(u.id)))
+        throw new UnauthorizedException(MESSAGE_RECENSEUR_BLOQUE);
+      effacementSeul = true;
+    }
+    if (!u || (!u.actif && !effacementSeul))
       throw new UnauthorizedException(
         'Ce compte est désactivé ou n’existe plus.',
       );
@@ -207,6 +217,7 @@ export class SessionService {
       aCode: !!u.codeCreeLe,
       finAcces: u.finAcces,
       ...(u.suspenduLe ? { suspendu: true } : {}),
+      ...(effacementSeul ? { effacementSeul: true } : {}),
     };
   }
 
@@ -219,10 +230,13 @@ export class SessionService {
     return !!r[0]?.b;
   }
 
-  /** Le DG a demandé d'effacer l'appareil de ce recenseur (et l'appareil ne l'a pas encore fait). */
+  /**
+   * Le DG a demandé d'effacer l'appareil de ce recenseur, et l'appareil ne l'a pas encore fait (un
+   * effacement déjà accusé ne revient jamais : c'était la récidive, 25/11/2026).
+   */
   async effacementDemande(id: string): Promise<boolean> {
     const r = await this.users.manager.query<{ e: boolean }[]>(
-      `SELECT ("effacerLe" IS NOT NULL) AS e FROM recenseur WHERE "utilisateurId" = $1`,
+      `SELECT ("effacerLe" IS NOT NULL AND ("effaceLe" IS NULL OR "effaceLe" < "effacerLe")) AS e FROM recenseur WHERE "utilisateurId" = $1`,
       [id],
     );
     return !!r[0]?.e;
@@ -280,10 +294,22 @@ export class SessionService {
     );
     const codeOk = !u?.codeChiffre || codeValide(saisie.code, u.codeChiffre);
 
-    // Recenseur bloqué par la DGRHAS, bon mot de passe : on le lui dit (ce n'est pas un essai raté)
-    if (u && !u.actif && motOk && codeOk && u.role === 'RECENSEUR' && (await this.recenseurBloque(u.id)))
-      throw new UnauthorizedException(MESSAGE_RECENSEUR_BLOQUE);
-    if (!u || !u.actif || !motOk || !codeOk) {
+    // Recenseur bloqué par la DGRHAS, bon mot de passe : on le lui dit (ce n'est pas un essai raté).
+    // Si son appareil doit être effacé, il entre quand même : sa session ne sert qu'à l'effacement
+    let pourEffacer = false;
+    if (
+      u &&
+      !u.actif &&
+      motOk &&
+      codeOk &&
+      u.role === 'RECENSEUR' &&
+      (await this.recenseurBloque(u.id))
+    ) {
+      if (!(await this.effacementDemande(u.id)))
+        throw new UnauthorizedException(MESSAGE_RECENSEUR_BLOQUE);
+      pourEffacer = true;
+    }
+    if (!u || (!u.actif && !pourEffacer) || !motOk || !codeOk) {
       const motif = !u
         ? 'compte inconnu'
         : !motOk
@@ -316,9 +342,9 @@ export class SessionService {
       );
       throw compteSignale();
     }
-    // Recenseur dont l'appareil doit être effacé : l'appareil l'apprend en se connectant
-    if (u.role === 'RECENSEUR' && (await this.effacementDemande(u.id)))
-      throw effacerAppareil();
+    // (Recenseur dont l'appareil doit être effacé : il se connecte normalement, et sa première
+    // requête le dit à l'appareil, qui efface puis l'accuse avec sa session. Refuser la connexion
+    // faisait effacer l'appareil sans qu'il puisse l'accuser : l'effacement revenait sans fin.)
     const echecsAvant = u.echecsConnexion ?? 0;
     if (u.bloqueJusqua) await this.debloquer(u.id);
     else

@@ -28,6 +28,14 @@ async function bootstrap() {
   // Réponses compressées (gzip) : le JSON pèse environ dix fois moins sur le réseau. Seuls les
   // types qui s'y prêtent le sont (pas les PDF ni les images), et pas les très petites réponses.
   app.use(compression({ threshold: 1024 }));
+  // Les réponses de l'API ne se gardent pas dans le navigateur (25/11/2026) : un « effacez
+  // l'appareil » (410) gardé en cache revenait après l'effacement, qui recommençait sans fin.
+  // (Un fichier téléchargé peut donner ses propres règles de cache après.)
+  app.use((req: Request, res: Response, next: NextFunction) => {
+    if (req.path.startsWith('/api/'))
+      res.setHeader('Cache-Control', 'no-store');
+    next();
+  });
   // Outil de détection (08/11/2026) : après chaque réponse, les refus en série et les adresses
   // inconnues ou pièges (une route inexistante ne passe jamais par le contrôle des droits)
   const securite = app.get(SecuriteService);
