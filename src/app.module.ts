@@ -108,6 +108,8 @@ import { NominationsService } from './nominations/nominations.service';
 import { PlacementNominationsController } from './nominations/placement.controller';
 import { PlacementNominationsService } from './nominations/placement.service';
 import { SuiviController } from './etablissements/suivi.controller';
+import { ClassesDeclareesController } from './etablissements/classes-declarees.controller';
+import { ClassesDeclareesService } from './etablissements/classes-declarees.service';
 import { RepertoireEcolesController } from './etablissements/repertoire-ecoles.controller';
 import { RepertoireEcolesService } from './etablissements/repertoire-ecoles.service';
 import { SuiviService } from './etablissements/suivi.service';
@@ -171,6 +173,7 @@ import { ReferentielsService } from './referentiels/referentiels.service';
     PlacementNominationsController,
     SuiviController,
     RepertoireEcolesController,
+    ClassesDeclareesController,
     SansEcoleController,
     RetraitsController,
     TerrainController,
@@ -275,6 +278,7 @@ import { ReferentielsService } from './referentiels/referentiels.service';
     PlacementNominationsService,
     SuiviService,
     RepertoireEcolesService,
+    ClassesDeclareesService,
     DemandesService,
     PrestationsService,
     ExcelRecensementService,

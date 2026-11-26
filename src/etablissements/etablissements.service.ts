@@ -457,7 +457,8 @@ export class EtablissementsService {
       }[]
     >(
       `SELECT s.id, s.nom, s.code, s.cycle, s.localite, d.nom AS departement, i.sigle AS inspection,
-              (SELECT count(*)::int FROM classe c WHERE c."structureId" = s.id AND c."anneeScolaire" = $1) AS classes,
+              coalesce(nullif((SELECT count(*)::int FROM classe c WHERE c."structureId" = s.id AND c."anneeScolaire" = $1), 0),
+                       (SELECT k.nombre FROM classes_declarees k WHERE k."structureId" = s.id AND k."anneeScolaire" = $1), 0) AS classes,
               (SELECT count(*)::int FROM salle x WHERE x."structureId" = s.id) AS salles,
               (SELECT count(*)::int FROM agent_recense a WHERE a."structureId" = s.id AND coalesce(a.contentieux->>'etat', 'CONFIRME') = 'CONFIRME' AND a.retrait IS NULL) AS agents,
               count(*) OVER ()::int AS total
@@ -783,7 +784,13 @@ export class EtablissementsService {
         order: { ordre: 'ASC', libelle: 'ASC' },
         select: ['code', 'libelle'],
       }),
-      besoins: await this.besoins(s, classes, agents.get(id) ?? []),
+      besoins: await this.besoins(
+        s,
+        classes,
+        agents.get(id) ?? [],
+        undefined,
+        await this.classesDeclarees(id, annee),
+      ),
     };
   }
 
@@ -925,20 +932,44 @@ export class EtablissementsService {
     return { ok: true, specialite: libelle };
   }
 
+  /** Nombre de classes du fichier des allocations budgétaires, pour une école et une année. */
+  async classesDeclarees(id: number, annee: string) {
+    const r = await this.classes.query<{ nombre: number }[]>(
+      `SELECT nombre FROM classes_declarees WHERE "structureId" = $1 AND "anneeScolaire" = $2`,
+      [id, annee],
+    );
+    return r[0]?.nombre ?? null;
+  }
+
+  async classesDeclareesDe(annee: string) {
+    const r = await this.classes.query<{ id: number; nombre: number }[]>(
+      `SELECT "structureId" AS id, nombre FROM classes_declarees WHERE "anneeScolaire" = $1`,
+      [annee],
+    );
+    return new Map(r.map((x) => [x.id, x.nombre]));
+  }
+
   /** Besoin en enseignants d'une école pour ses classes ouvertes. */
   async besoins(
     s: Pick<Structure, 'cycle'>,
     classes: Pick<Classe, 'niveau'>[],
     agents: AgentEcole[],
     prog?: Awaited<ReturnType<EtablissementsService['programmes']>>,
+    declarees?: number | null,
   ) {
     const H = this.heuresEnseignant(s.cycle);
     const enseignants = agents.filter((a) => a.enseignant && a.enPoste);
+    // Nombre de classes du fichier des allocations budgétaires : seulement quand aucune classe
+    // n'est saisie une par une pour l'année (DG, 26/11/2026)
+    const nDeclarees = !classes.length && declarees ? declarees : 0;
     const base = {
       heuresEnseignant: H,
-      classes: classes.length,
+      classes: classes.length || nDeclarees,
+      classesDeclarees: nDeclarees > 0,
       enseignants: enseignants.length,
     };
+    const avisDeclarees =
+      'Nombre de classes du fichier des allocations budgétaires (classes non saisies une par une).';
     if (!s.cycle)
       return {
         ...base,
@@ -948,24 +979,62 @@ export class EtablissementsService {
         alertes: ['Cycle de l’école à indiquer dans l’organigramme.'],
       };
     if (POLYVALENTS.includes(s.cycle)) {
-      const ecart = enseignants.length - classes.length;
+      const nClasses = classes.length || nDeclarees;
+      const ecart = enseignants.length - nClasses;
       return {
         ...base,
         mode: 'CLASSE' as const,
         lignes: [],
         total: {
           heures: null,
-          besoin: classes.length,
+          besoin: nClasses,
           enPlace: enseignants.length,
           ecart,
           etat: etat(ecart),
         },
         alertes: classes.length
           ? []
-          : ['Aucune classe saisie pour cette année.'],
+          : nDeclarees
+            ? [avisDeclarees]
+            : ['Aucune classe saisie pour cette année.'],
       };
     }
     const p = prog ?? (await this.programmes(s.cycle));
+    if (nDeclarees) {
+      // Les niveaux ne sont pas connus : heures moyennes d'une classe du cycle, sans détail par matière
+      const parClasse = [...p.parNiveau.values()]
+        .map((l) => l.reduce((n, x) => n + x.heures, 0))
+        .filter((h) => h > 0);
+      const moyenne = parClasse.length
+        ? parClasse.reduce((x, y) => x + y, 0) / parClasse.length
+        : 0;
+      const totalH = arrondi(nDeclarees * moyenne);
+      const besoin = arrondi(totalH / H);
+      const ecart = arrondi(enseignants.length - besoin);
+      return {
+        ...base,
+        mode: 'MATIERE' as const,
+        sansMatiere: 0,
+        lignes: [],
+        total: moyenne
+          ? {
+              heures: totalH,
+              besoin,
+              enPlace: enseignants.length,
+              ecart,
+              etat: etat(ecart),
+            }
+          : null,
+        alertes: [
+          `${avisDeclarees} Besoin estimé avec les heures moyennes d’une classe du cycle ; le détail par matière demande les classes saisies une par une.`,
+          ...(moyenne
+            ? []
+            : [
+                'Programme (heures par matière) manquant : à compléter dans Administration › Référentiels › Programmes.',
+              ]),
+        ],
+      };
+    }
     const heures = new Map<string, number>();
     const sansProgramme = new Set<string>();
     for (const c of classes) {
@@ -1041,10 +1110,12 @@ export class EtablissementsService {
     const annee = this.annee(f.annee);
     const ids = (
       await this.classes.query<{ id: number }[]>(
-        `SELECT DISTINCT c."structureId" AS id FROM classe c WHERE c."anneeScolaire" = $1`,
+        `SELECT DISTINCT c."structureId" AS id FROM classe c WHERE c."anneeScolaire" = $1
+         UNION SELECT k."structureId" FROM classes_declarees k WHERE k."anneeScolaire" = $1`,
         [annee],
       )
     ).map((x) => x.id);
+    const declarees = await this.classesDeclareesDe(annee);
     let ecoles = ids.length
       ? await this.structures.find({
           where: { id: In(ids), type: 'ETABLISSEMENT' },
@@ -1103,6 +1174,7 @@ export class EtablissementsService {
         classes.filter((c) => c.structureId === e.id),
         agents.get(e.id) ?? [],
         e.cycle ? progs.get(e.cycle) : undefined,
+        declarees.get(e.id),
       );
       if (!b.total) continue;
       parEcole.push({

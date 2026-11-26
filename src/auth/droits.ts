@@ -170,6 +170,7 @@ export const RUBRIQUES_API: Record<string, string[]> = {
   '/ecoles/a-controler': ['ecoles-controle'],
   // Répertoire officiel des établissements (20/11/2026) : noms et écoles manquantes
   '/ecoles/repertoire': ['ecoles-repertoire'],
+  '/ecoles/classes-du-fichier': ['classes-declarees'],
   // Noms des écoles : préfixe du cycle + nom propre (21/11/2026)
   '/ecoles/noms': ['ecoles-noms'],
   '/ecoles/besoins': ['etablissements/besoins'],
