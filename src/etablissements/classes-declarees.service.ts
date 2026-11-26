@@ -19,7 +19,9 @@ import { nomOfficiel, ressemblanceEcoles } from './repertoire-ecoles.service';
  * pas saisies une par une. Essai d'abord ; seules les lignes cochées sont enregistrées.
  */
 
-export type EtatClasses = 'SURE' | 'PROBABLE' | 'ABSENTE' | 'IGNOREE';
+/** ENREGISTREE : école retrouvée dont le même nombre de classes est déjà enregistré (rien à refaire). */
+export type EtatClasses =
+  'SURE' | 'PROBABLE' | 'ABSENTE' | 'ENREGISTREE' | 'IGNOREE';
 
 export interface LigneClasses {
   /** « feuille|ligne » : retrouve la ligne du fichier à l'enregistrement. */
@@ -375,6 +377,16 @@ export class ClassesDeclareesService {
       const p = s?.parentId ? insp.get(s.parentId) : undefined;
       const classesSaisies = s ? (nSaisies.get(s.id) ?? 0) : 0;
       const dejaDeclare = s ? (nDeclarees.get(s.id) ?? null) : null;
+      // Déjà fait (même nombre, pour la même école) : sorti des listes à traiter
+      if (s && dejaDeclare === x.nombre) {
+        pourquoi =
+          etat === 'PROBABLE'
+            ? `confirmée : « ${s.nom} »`
+            : etat === 'SURE' && pourquoi
+              ? pourquoi
+              : null;
+        etat = 'ENREGISTREE';
+      }
       return {
         cle: x.cle,
         feuille: x.feuille,
@@ -393,8 +405,8 @@ export class ClassesDeclareesService {
         classesSaisies,
         dejaDeclare,
         pourquoi,
-        // Déjà fait (même nombre) : rien à cocher ; une absente n'est ajoutée que cochée à la main
-        cochee: etat === 'SURE' && dejaDeclare !== x.nombre,
+        // Une absente n'est ajoutée que cochée à la main
+        cochee: etat === 'SURE',
         departementId: x.depId,
         nomPropose:
           etat === 'ABSENTE' ? nomOfficiel(x.nomFichier, x.cycle) : null,
@@ -421,6 +433,7 @@ export class ClassesDeclareesService {
       SURE: 0,
       PROBABLE: 0,
       ABSENTE: 0,
+      ENREGISTREE: 0,
       IGNOREE: 0,
     } as Record<EtatClasses, number>;
     for (const x of sortie) compteurs[x.etat]++;
