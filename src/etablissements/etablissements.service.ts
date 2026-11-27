@@ -631,7 +631,6 @@ export class EtablissementsService {
         .filter(Boolean)
         .join(' · '),
       nomFeuille: 'Personnel',
-      portrait: true,
       figer: false,
       entetes: [
         'N°',
