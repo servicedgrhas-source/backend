@@ -34,6 +34,10 @@ export interface ListeExportee {
   rouges?: [number, number][];
   /** Dernière ligne sous le tableau (« Arrêtée la présente liste à … »). */
   fin?: string;
+  /** A4 portrait (paysage par défaut). */
+  portrait?: boolean;
+  /** false : le haut du tableau ne reste pas bloqué au défilement dans Excel (DG, 25/11/2026). */
+  figer?: boolean;
 }
 
 /** Mention en bas des listes imprimées ou exportées (DG, 12/11/2026). */
@@ -55,7 +59,7 @@ export async function excelListe(l: ListeExportee) {
   const ws = wb.addWorksheet((l.nomFeuille ?? 'Liste').slice(0, 31), {
     pageSetup: {
       paperSize: 9,
-      orientation: 'landscape',
+      orientation: l.portrait ? 'portrait' : 'landscape',
       fitToPage: true,
       fitToWidth: 1,
       fitToHeight: 0,
@@ -131,7 +135,7 @@ export async function excelListe(l: ListeExportee) {
     color: { argb: 'FF52525B' },
   }).getCell(1).alignment = { horizontal: 'left', wrapText: true };
   ws.columns = l.largeurs.map((width) => ({ width }));
-  ws.views = [{ state: 'frozen', ySplit: t.number }];
+  if (l.figer !== false) ws.views = [{ state: 'frozen', ySplit: t.number }];
   ws.autoFilter = {
     from: { row: t.number, column: 1 },
     to: { row: t.number, column: n },
@@ -247,7 +251,11 @@ export async function wordListe(l: ListeExportee) {
       {
         properties: {
           page: {
-            size: { orientation: PageOrientation.LANDSCAPE },
+            size: {
+              orientation: l.portrait
+                ? PageOrientation.PORTRAIT
+                : PageOrientation.LANDSCAPE,
+            },
             margin: { top: 700, bottom: 700, left: 700, right: 700 },
           },
         },

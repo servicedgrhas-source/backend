@@ -142,6 +142,25 @@ export class EtablissementsController {
     );
   }
 
+  /** Personnel d'une école : « json » (impression), « excel » ou « word » ; filtre « temps ». */
+  @Get(':id/personnel/export/:format')
+  async exporterPersonnel(
+    @Utilisateur() u: UtilisateurConnecte,
+    @Param('id', ParseIntPipe) id: number,
+    @Param('format') format: string,
+    @Query('temps') temps: string | undefined,
+    @Res() res: Response,
+  ) {
+    const r = await this.service.exportPersonnelEcole(
+      u,
+      id,
+      ['TEMPS_PLEIN', 'TEMPS_PARTIEL', 'AUCUN'].includes(temps ?? '')
+        ? temps
+        : undefined,
+    );
+    return envoyerListe(res, format, `Personnel ${r.ecole}`.slice(0, 120), r);
+  }
+
   /** Matière enseignée par un enseignant de l'école (rubrique « Spécialité » de sa fiche). */
   @Put(':id/emploi-du-temps/reglages')
   reglagesEdt(

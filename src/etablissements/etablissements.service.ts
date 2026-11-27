@@ -73,6 +73,9 @@ export interface AgentEcole {
   enPoste: boolean;
   /** « Disponibilité » de la fiche : TEMPS_PLEIN, TEMPS_PARTIEL (null : non renseigné). */
   tempsTravail?: string | null;
+  matricule?: string | null;
+  grade?: string | null;
+  sexe?: string | null;
 }
 
 export interface LigneBesoin {
@@ -561,6 +564,116 @@ export class EtablissementsService {
   }
 
   /**
+   * Personnel d'une école à imprimer ou exporter (DG, 27/11/2026) : dans l'ordre de l'écran (les
+   * enseignants à temps plein d'abord), avec le filtre « Temps de travail » choisi.
+   */
+  async exportPersonnelEcole(
+    u: UtilisateurConnecte,
+    id: number,
+    temps?: string,
+  ) {
+    const s = await this.structure(u, id);
+    const [agents, parent, dep, prog] = await Promise.all([
+      this.agentsDe([id]),
+      s.parentId
+        ? this.structures.findOne({ where: { id: s.parentId } })
+        : null,
+      this.nomDepartement(s.departementId ?? undefined),
+      ['COLLEGE', 'LYCEE'].includes(s.cycle ?? '')
+        ? this.programmes(s.cycle!)
+        : null,
+    ]);
+    const rang = (a: AgentEcole) =>
+      (a.enseignant ? 0 : 3) +
+      (a.tempsTravail === 'TEMPS_PLEIN'
+        ? 0
+        : a.tempsTravail === 'TEMPS_PARTIEL'
+          ? 1
+          : 2);
+    const tous = agents.get(id) ?? [];
+    const choisis = tous
+      .filter((a) =>
+        !temps
+          ? true
+          : temps === 'AUCUN'
+            ? !a.tempsTravail
+            : a.tempsTravail === temps,
+      )
+      .map((a, i) => ({ a, i }))
+      .sort((x, y) => rang(x.a) - rang(y.a) || x.i - y.i)
+      .map((x) => x.a);
+    const enseignants = choisis.filter((a) => a.enseignant).length;
+    const enPoste = choisis.filter((a) => a.enPoste).length;
+    const TEMPS: Record<string, string> = {
+      TEMPS_PLEIN: 'Temps plein',
+      TEMPS_PARTIEL: 'Temps partiel',
+      AUCUN: 'Temps de travail non renseigné',
+    };
+    const STATUT: Record<string, string> = {
+      FONCTIONNAIRE: 'Fonctionnaire',
+      CONTRACTUEL: 'Contractuel',
+      VOLONTAIRE: 'Volontaire',
+      COMMUNAUTAIRE: 'Communautaire',
+    };
+    const matiere = (a: AgentEcole) => {
+      const m = prog ? this.matiereAgent(a, prog.matieres) : null;
+      return (m && prog?.matieres.get(m)) || a.specialite || '';
+    };
+    const liste: ListeExportee = {
+      titre: `PERSONNEL DE L’ÉCOLE ${s.nom.toUpperCase()}`,
+      sousTitre: [
+        s.cycle ? (LIBELLE_CYCLE_ECOLE[s.cycle] ?? s.cycle) : null,
+        parent?.nom,
+        dep && `Département : ${dep}`,
+        temps && TEMPS[temps],
+        `${choisis.length.toLocaleString('fr-FR')} agent(s), dont ${enseignants.toLocaleString('fr-FR')} enseignant(s)`,
+      ]
+        .filter(Boolean)
+        .join(' · '),
+      nomFeuille: 'Personnel',
+      portrait: true,
+      figer: false,
+      entetes: [
+        'N°',
+        'Matricule',
+        'Nom et prénoms',
+        'Sexe',
+        'Statut',
+        'Grade',
+        'Qualification',
+        'Fonction dans l’école',
+        prog ? 'Matière' : 'Spécialité',
+        'Temps de travail',
+        'En poste',
+      ],
+      largeurs: [5, 11, 28, 6, 13, 12, 18, 18, 16, 12, 8],
+      nombres: [0],
+      lignes: choisis.map((a, i) => [
+        i + 1,
+        a.matricule ?? '',
+        a.nomComplet,
+        (a.sexe ?? '').slice(0, 1).toUpperCase(),
+        STATUT[a.statut] ?? a.statut ?? '',
+        a.grade ?? '',
+        a.fonction ?? '',
+        a.fonctionStructure ?? (a.enseignant ? 'Enseignant' : ''),
+        matiere(a),
+        a.tempsTravail ? (TEMPS[a.tempsTravail] ?? a.tempsTravail) : '',
+        a.enPoste ? 'Oui' : 'Non',
+      ]),
+      fin: `Arrêtée la présente liste à ${choisis.length.toLocaleString('fr-FR')} agent(s), dont ${enseignants.toLocaleString('fr-FR')} enseignant(s) ; ${enPoste.toLocaleString('fr-FR')} en poste.`,
+    };
+    return {
+      ecole: s.nom,
+      total: choisis.length,
+      enseignants,
+      enPoste,
+      lignes: liste.lignes,
+      liste,
+    };
+  }
+
+  /**
    * Liste des structures administratives à imprimer ou exporter (DG, 08/11/2026), dans l'ordre de
    * l'organigramme, chacune en retrait sous celle dont elle dépend. Filtres : recherche (sigle ou
    * nom), type, département.
@@ -809,9 +922,13 @@ export class EtablissementsService {
         position: string | null;
         activite: string | null;
         tempsTravail: string | null;
+        matricule: string | null;
+        grade: string | null;
+        sexe: string | null;
       }[]
     >(
-      `SELECT id, "structureId", "nomComplet", statut, donnees->>'FONCTION' AS fonction,
+      `SELECT id, "structureId", "nomComplet", statut, matricule, donnees->>'GRADE' AS grade,
+              coalesce(donnees->>'GENRE', donnees->>'SEXE') AS sexe, donnees->>'FONCTION' AS fonction,
               donnees->>'FONCTION_STRUCTURE' AS "fonctionStructure",
               donnees->>'SPECIALITE' AS specialite, donnees->>'DIPLOME_PRO' AS diplome,
               donnees->>'POSITION' AS position,
@@ -832,6 +949,9 @@ export class EtablissementsService {
         specialite: l.specialite,
         diplome: l.diplome,
         tempsTravail: l.tempsTravail || null,
+        matricule: l.matricule,
+        grade: l.grade,
+        sexe: l.sexe,
         // Volontaires et communautaires sans fonction écrite : ce sont des enseignants
         enseignant:
           ENSEIGNANT.test(f) ||
